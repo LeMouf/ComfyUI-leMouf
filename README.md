@@ -1,5 +1,8 @@
 # ComfyUI-leMouf
 
+![License](https://img.shields.io/github/license/LeMouf/ComfyUI-leMouf)
+![Latest Release](https://img.shields.io/github/v/release/LeMouf/ComfyUI-leMouf?include_prereleases)
+
 Custom nodes for ComfyUI by **leMouf**.
 
 This repository is the home of a growing collection of nodes focused on sharing
