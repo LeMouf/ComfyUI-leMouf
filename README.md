@@ -67,6 +67,12 @@ Recommended naming:
 - `loop_basic_image_sd15.json`
 - `loop_basic_image_sdxl.json`
 
+## Panel Toggle
+
+You can show/hide the leMouf Loop panel using:
+- ComfyUI menu item: **Show/Hide leMouf Loop panel**
+- Keyboard shortcut: `Alt+L`
+
 ## License
 
 Apache License 2.0. See `LICENSE` and `NOTICE`.
