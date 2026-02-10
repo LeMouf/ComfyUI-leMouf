@@ -10,7 +10,7 @@ tools, techniques, and practical building blocks for creators.
 
 ## Status
 
-Current version: `0.1.1` (MVP implemented)
+Current version: `0.2.0` (MVP implemented)
 
 Implemented MVP:
 - Loop Return (payload capture)
@@ -39,7 +39,7 @@ Key features:
 
 2. Restart ComfyUI.
 
-## MVP: Workflow Loop Orchestrator
+## MVP: Loop Pipeline
 
 This MVP provides an **interactive cycle stepper**:
 - validate + start a loop from the current UI workflow

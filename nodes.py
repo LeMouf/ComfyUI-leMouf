@@ -4,10 +4,9 @@ ComfyUI-leMouf nodes.
 
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import json
 import os
+import re
 import shutil
 import threading
 import time
@@ -42,7 +41,6 @@ class LoopManifestEntry:
     status: str
     prompt_id: Optional[str] = None
     decision: Optional[str] = None
-    info: Optional[str] = None
     outputs: Dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
@@ -57,6 +55,10 @@ class LoopState:
     current_cycle: int = 0
     current_retry: int = 0
     overrides: Dict[str, Any] = field(default_factory=dict)
+    loop_map: Optional[Dict[str, Any]] = None
+    loop_map_error: Optional[str] = None
+    payload: Optional[Any] = None
+    payload_error: Optional[str] = None
     workflow: Optional[Dict[str, Any]] = None
     workflow_meta: Optional[Dict[str, Any]] = None
     workflow_source: str = "path"
@@ -109,11 +111,15 @@ class LoopRegistry:
             state.current_retry = 0
             state.last_error = None
             state.manifest = []
+            state.loop_map_error = None
+            state.payload_error = None
             if not keep_workflow:
                 state.workflow = None
                 state.workflow_meta = None
                 state.workflow_source = "path"
                 state.overrides = {}
+                state.loop_map = None
+                state.payload = None
             state.updated_at = time.time()
             return state
 
@@ -161,16 +167,6 @@ REGISTRY = LoopRegistry()
 # -------------------------
 
 
-def _parse_overrides(raw: str) -> Dict[str, Any]:
-    if not raw:
-        return {}
-    try:
-        data = json.loads(raw)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
 def _apply_overrides(workflow: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
     # overrides: { "NodeID.Param": value }
     if not overrides:
@@ -190,6 +186,298 @@ def _apply_overrides(workflow: Dict[str, Any], overrides: Dict[str, Any]) -> Dic
         if isinstance(inputs, dict):
             inputs[param] = value
     return wf
+
+
+def _parse_json_field(raw: Any, label: str) -> Tuple[Optional[Any], Optional[str]]:
+    if raw is None:
+        return None, None
+    if isinstance(raw, (dict, list)):
+        return raw, None
+    text = str(raw).strip()
+    if not text:
+        return None, None
+    try:
+        return json.loads(text), None
+    except Exception as exc:
+        return None, f"{label} json error: {exc}"
+
+
+def _auto_seed(loop_id: str, cycle_index: int, retry_index: int) -> int:
+    import hashlib
+
+    key = f"{loop_id}:{cycle_index}:{retry_index}"
+    digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+    return int(digest[:8], 16)
+
+
+def _tokenize_path(expr: str, cycle_index: int) -> List[Any]:
+    tokens: List[Any] = []
+    text = expr.strip()
+    if not text:
+        return tokens
+    if text.startswith("$payload"):
+        text = text[len("$payload") :]
+    if text.startswith("."):
+        text = text[1:]
+    while text:
+        if text[0] == "[":
+            end = text.find("]")
+            if end == -1:
+                break
+            raw = text[1:end].strip()
+            if raw in ("cycle_index", "$cycle_index"):
+                tokens.append(int(cycle_index))
+            elif (raw.startswith("'") and raw.endswith("'")) or (raw.startswith('"') and raw.endswith('"')):
+                tokens.append(raw[1:-1])
+            elif raw.isdigit() or (raw.startswith("-") and raw[1:].isdigit()):
+                tokens.append(int(raw))
+            else:
+                tokens.append(raw)
+            text = text[end + 1 :]
+            if text.startswith("."):
+                text = text[1:]
+        else:
+            next_dot = text.find(".")
+            next_bracket = text.find("[")
+            cut = None
+            if next_dot == -1 and next_bracket == -1:
+                cut = len(text)
+            elif next_dot == -1:
+                cut = next_bracket
+            elif next_bracket == -1:
+                cut = next_dot
+            else:
+                cut = min(next_dot, next_bracket)
+            part = text[:cut]
+            if part:
+                tokens.append(part)
+            text = text[cut:]
+            if text.startswith("."):
+                text = text[1:]
+    return tokens
+
+
+def _get_by_tokens(root: Any, tokens: List[Any]) -> Any:
+    value = root
+    for token in tokens:
+        if isinstance(value, dict):
+            value = value.get(token)
+        elif isinstance(value, list) and isinstance(token, int):
+            if 0 <= token < len(value):
+                value = value[token]
+            else:
+                return None
+        else:
+            return None
+    return value
+
+
+def _resolve_cycle_payload(payload: Any, cycle_index: int, cycle_source: Optional[str]) -> Any:
+    if cycle_source:
+        tokens = _tokenize_path(cycle_source, cycle_index)
+        return _get_by_tokens(payload, tokens) if tokens else payload
+    if isinstance(payload, list):
+        if 0 <= cycle_index < len(payload):
+            return payload[cycle_index]
+        return None
+    return payload
+
+
+def _resolve_from_path(payload: Any, path: str, cycle_index: int) -> Any:
+    if not path:
+        return None
+    tokens = _tokenize_path(path, cycle_index)
+    if not tokens:
+        return None
+    return _get_by_tokens(payload, tokens)
+
+
+def _iter_meta_nodes(workflow_meta: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(workflow_meta, dict):
+        return []
+    nodes = workflow_meta.get("nodes")
+    if not isinstance(nodes, list):
+        return []
+    return nodes
+
+
+def _meta_title(meta: Dict[str, Any]) -> str:
+    for key in ("title", "name"):
+        value = meta.get(key)
+        if value:
+            return str(value)
+    props = meta.get("properties")
+    if isinstance(props, dict):
+        for key in ("title", "Node name for S&R"):
+            value = props.get(key)
+            if value:
+                return str(value)
+    return ""
+
+
+def _resolve_node_ids(
+    selector: Any, prompt: Dict[str, Any], workflow_meta: Optional[Dict[str, Any]]
+) -> List[str]:
+    if selector is None:
+        return []
+    if isinstance(selector, list):
+        ids: List[str] = []
+        for item in selector:
+            ids.extend(_resolve_node_ids(item, prompt, workflow_meta))
+        return list(dict.fromkeys(ids))
+    if not isinstance(selector, str):
+        return []
+
+    text = selector.strip()
+    if not text:
+        return []
+    if text.startswith("id:"):
+        return [text[3:]]
+
+    if text.startswith("type:"):
+        type_name = text[5:]
+        return [str(node_id) for node_id, node in prompt.items() if str(node.get("class_type") or "") == type_name]
+
+    if text.startswith("re:"):
+        pattern = text[3:]
+        try:
+            regex = re.compile(pattern)
+        except Exception:
+            return []
+        ids = []
+        for meta in _iter_meta_nodes(workflow_meta):
+            title = _meta_title(meta)
+            if regex.search(title):
+                ids.append(str(meta.get("id")))
+        if ids:
+            return ids
+        return [
+            str(node_id)
+            for node_id, node in prompt.items()
+            if regex.search(str(node.get("class_type") or ""))
+        ]
+
+    tag = text if text.startswith("@") else f"@{text}"
+    ids = []
+    for meta in _iter_meta_nodes(workflow_meta):
+        title = _meta_title(meta)
+        if tag in title:
+            ids.append(str(meta.get("id")))
+    return ids
+
+
+def _build_overrides_from_map(
+    loop_map: Optional[Dict[str, Any]],
+    payload: Any,
+    loop_id: str,
+    cycle_index: int,
+    retry_index: int,
+    prompt: Dict[str, Any],
+    workflow_meta: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not isinstance(loop_map, dict):
+        return {}
+    mappings = loop_map.get("mappings")
+    if not isinstance(mappings, list):
+        return {}
+    cycle_source = loop_map.get("cycle_source") if isinstance(loop_map.get("cycle_source"), str) else None
+    cycle_payload = _resolve_cycle_payload(payload, cycle_index, cycle_source)
+    overrides: Dict[str, Any] = {}
+
+    def resolve_special(value: Any) -> Any:
+        if isinstance(value, str):
+            if value == "$auto_seed":
+                return _auto_seed(loop_id, cycle_index, retry_index)
+            if value == "$cycle_index":
+                return cycle_index
+            if value == "$retry_index":
+                return retry_index
+        return value
+
+    for entry in mappings:
+        if not isinstance(entry, dict):
+            continue
+        from_path = str(entry.get("from") or "").strip()
+        to_cfg = entry.get("to") if isinstance(entry.get("to"), dict) else {}
+        node_selector = to_cfg.get("node")
+        input_name = to_cfg.get("input")
+        if not from_path or not node_selector or not input_name:
+            continue
+        value = resolve_special(_resolve_from_path(cycle_payload, from_path, cycle_index))
+        if value is None and "fallback" in entry:
+            value = resolve_special(entry.get("fallback"))
+        if retry_index > 0 and "on_retry" in entry:
+            value = resolve_special(entry.get("on_retry"))
+        if value is None:
+            continue
+        node_ids = _resolve_node_ids(node_selector, prompt, workflow_meta)
+        if not node_ids:
+            continue
+        for node_id in node_ids:
+            overrides[f"{node_id}.{input_name}"] = value
+    return overrides
+
+
+def _extract_loop_config(
+    prompt: Dict[str, Any],
+) -> Tuple[
+    Optional[Dict[str, Any]],
+    Optional[str],
+    Optional[Any],
+    Optional[str],
+    bool,
+    bool,
+]:
+    loop_map: Optional[Dict[str, Any]] = None
+    loop_map_error: Optional[str] = None
+    payload: Optional[Any] = None
+    payload_error: Optional[str] = None
+    loop_map_found = False
+    payload_found = False
+
+    for node in prompt.values():
+        class_type = str(node.get("class_type") or "")
+        inputs = node.get("inputs") if isinstance(node.get("inputs"), dict) else {}
+        if class_type == "LoopMap":
+            loop_map_found = True
+            raw = inputs.get("map_json")
+            loop_map, loop_map_error = _parse_json_field(raw, "loop_map")
+        elif class_type == "LoopPayload":
+            payload_found = True
+            raw = inputs.get("payload_json")
+            payload, payload_error = _parse_json_field(raw, "payload")
+        if loop_map_found and payload_found:
+            break
+    return loop_map, loop_map_error, payload, payload_error, loop_map_found, payload_found
+
+
+def _workflows_dir() -> str:
+    return os.path.join(os.path.dirname(__file__), "workflows")
+
+
+def _list_workflow_files() -> List[str]:
+    folder = _workflows_dir()
+    if not os.path.isdir(folder):
+        return []
+    files = []
+    for name in os.listdir(folder):
+        if not name.lower().endswith(".json"):
+            continue
+        full = os.path.join(folder, name)
+        if os.path.isfile(full):
+            files.append(name)
+    return sorted(files)
+
+
+def _load_workflow_file(name: str) -> Dict[str, Any]:
+    safe = os.path.basename(name or "")
+    if not safe or safe != name:
+        raise RuntimeError("invalid_name")
+    full = os.path.join(_workflows_dir(), safe)
+    if not os.path.isfile(full):
+        raise RuntimeError("not_found")
+    with open(full, "r", encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def _resolve_loop_id(loop_id: str) -> Optional[str]:
@@ -249,56 +537,6 @@ def _update_latest_pending(
     return entry
 
 
-def _run_async(coro):
-    if PromptServer is None:
-        raise RuntimeError("PromptServer not available")
-    loop = PromptServer.instance.loop
-    try:
-        running_loop = asyncio.get_running_loop()
-    except RuntimeError:
-        running_loop = None
-    if running_loop and running_loop == loop:
-        raise RuntimeError("Cannot block the running event loop")
-    if loop.is_running():
-        return asyncio.run_coroutine_threadsafe(coro, loop).result()
-    return asyncio.get_event_loop().run_until_complete(coro)
-
-
-def _enqueue_workflow(workflow: Dict[str, Any], loop_id: str) -> Tuple[Optional[str], Optional[str]]:
-    if PromptServer is None:
-        return None, "PromptServer not available"
-
-    prompt_id = str(uuid.uuid4())
-    ps = PromptServer.instance
-
-    try:
-        # Accept either a raw prompt dict or a wrapper containing "prompt"
-        prompt = workflow.get("prompt") if isinstance(workflow, dict) and "prompt" in workflow else workflow
-        if execution is None:
-            return None, "Execution module not available"
-
-        valid, err, outputs_to_execute, node_errors = _run_async(
-            execution.validate_prompt(prompt_id, prompt, None)
-        )
-        if not valid:
-            return None, f"Invalid prompt: {err}"
-
-        number = ps.number
-        ps.number += 1
-
-        extra_data: Dict[str, Any] = {"client_id": loop_id, "create_time": int(time.time() * 1000)}
-        sensitive: Dict[str, Any] = {}
-        if hasattr(execution, "SENSITIVE_EXTRA_DATA_KEYS"):
-            for sensitive_val in execution.SENSITIVE_EXTRA_DATA_KEYS:
-                if sensitive_val in extra_data:
-                    sensitive[sensitive_val] = extra_data.pop(sensitive_val)
-
-        ps.prompt_queue.put((number, prompt_id, prompt, extra_data, outputs_to_execute, sensitive))
-        return prompt_id, None
-    except Exception as exc:
-        return None, str(exc)
-
-
 def _save_images(
     images,
     loop_id: str,
@@ -307,21 +545,74 @@ def _save_images(
 ) -> List[Dict[str, Any]]:
     try:
         import numpy as np
+        import torch
         from PIL import Image
         import folder_paths
     except Exception as exc:
         raise RuntimeError(f"Image save dependencies missing: {exc}") from exc
 
+    def normalize_batch(value):
+        if value is None:
+            return []
+        if isinstance(value, torch.Tensor):
+            if value.dim() == 4:
+                return [value[i] for i in range(value.shape[0])]
+            if value.dim() == 3:
+                return [value]
+        if isinstance(value, np.ndarray):
+            if value.ndim == 4:
+                return [value[i] for i in range(value.shape[0])]
+            if value.ndim == 3:
+                return [value]
+        if isinstance(value, (list, tuple)):
+            items = []
+            for item in value:
+                if isinstance(item, torch.Tensor):
+                    if item.dim() == 4:
+                        items.extend([item[i] for i in range(item.shape[0])])
+                    elif item.dim() == 3:
+                        items.append(item)
+                elif isinstance(item, np.ndarray):
+                    if item.ndim == 4:
+                        items.extend([item[i] for i in range(item.shape[0])])
+                    elif item.ndim == 3:
+                        items.append(item)
+                else:
+                    items.append(item)
+            return items
+        return [value]
+
+    batch = normalize_batch(images)
+    if not batch:
+        return []
+
+    first = batch[0]
+    if isinstance(first, torch.Tensor):
+        height, width = first.shape[0], first.shape[1]
+    elif isinstance(first, np.ndarray):
+        height, width = first.shape[0], first.shape[1]
+    else:
+        raise RuntimeError("Unsupported image payload type")
+
     output_dir = folder_paths.get_output_directory()
     prefix = f"lemouf_loop/{loop_id}/cycle_{cycle_index:04}_r{retry_index:02}"
     full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-        prefix, output_dir, images[0].shape[1], images[0].shape[0]
+        prefix, output_dir, width, height
     )
 
     results: List[Dict[str, Any]] = []
-    for batch_number, image in enumerate(images):
-        i = 255.0 * image.cpu().numpy()
-        img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+    for batch_number, image in enumerate(batch):
+        if isinstance(image, torch.Tensor):
+            i = 255.0 * image.cpu().numpy()
+        elif isinstance(image, np.ndarray):
+            i = image
+        else:
+            raise RuntimeError("Unsupported image payload type")
+        if i.dtype != np.uint8:
+            if i.max() <= 1.0:
+                i = i * 255.0
+            i = np.clip(i, 0, 255).astype(np.uint8)
+        img = Image.fromarray(i)
         filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
         file = f"{filename_with_batch_num}_{counter:05}_.png"
         img.save(os.path.join(full_output_folder, file))
@@ -329,6 +620,112 @@ def _save_images(
         counter += 1
 
     return results
+
+
+def _safe_json_value(value: Any, max_items: int = 50) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (bytes, bytearray)):
+        return {"_type": "bytes", "size": len(value)}
+    try:
+        import numpy as np
+
+        if isinstance(value, np.generic):
+            return value.item()
+    except Exception:
+        pass
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for idx, (k, v) in enumerate(value.items()):
+            if idx >= max_items:
+                result["__truncated__"] = len(value)
+                break
+            result[str(k)] = _safe_json_value(v, max_items=max_items)
+        return result
+    if isinstance(value, (list, tuple)):
+        items = []
+        for idx, item in enumerate(value):
+            if idx >= max_items:
+                items.append(f"...({len(value) - max_items} more)")
+                break
+            items.append(_safe_json_value(item, max_items=max_items))
+        return items
+    return str(value)
+
+
+def _looks_like_images(value: Any) -> bool:
+    try:
+        import numpy as np
+        import torch
+    except Exception:
+        np = None  # type: ignore
+        torch = None  # type: ignore
+
+    if torch is not None and isinstance(value, torch.Tensor):
+        return value.dim() in (3, 4)
+    if np is not None and isinstance(value, np.ndarray):
+        return value.ndim in (3, 4)
+    if isinstance(value, (list, tuple)) and value:
+        return any(_looks_like_images(item) for item in value)
+    return False
+
+
+def _is_saved_file_list(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and value
+        and all(isinstance(item, dict) and "filename" in item for item in value)
+    )
+
+
+def _extract_outputs(
+    payload: Any,
+    loop_id: str,
+    cycle_index: int,
+    retry_index: int,
+) -> Dict[str, Any]:
+    outputs: Dict[str, Any] = {}
+    if payload is None:
+        return outputs
+
+    def maybe_images(value: Any) -> None:
+        if value is None:
+            return
+        if _is_saved_file_list(value):
+            outputs["images"] = value
+            return
+        if _looks_like_images(value):
+            try:
+                outputs["images"] = _save_images(value, loop_id, cycle_index, retry_index)
+            except Exception as exc:
+                outputs["save_error"] = str(exc)
+
+    if isinstance(payload, dict):
+        if "images" in payload or "image" in payload:
+            maybe_images(payload.get("images", payload.get("image")))
+        if "text" in payload:
+            outputs["text"] = _safe_json_value(payload.get("text"))
+        if "json" in payload:
+            outputs["json"] = _safe_json_value(payload.get("json"))
+        if "audio" in payload:
+            outputs["audio"] = _safe_json_value(payload.get("audio"))
+        if "video" in payload:
+            outputs["video"] = _safe_json_value(payload.get("video"))
+        if not outputs:
+            outputs["json"] = _safe_json_value(payload)
+        return outputs
+
+    if _looks_like_images(payload):
+        maybe_images(payload)
+        return outputs
+
+    if isinstance(payload, str):
+        outputs["text"] = payload
+    elif isinstance(payload, (bytes, bytearray)):
+        outputs["binary"] = {"size": len(payload)}
+    else:
+        outputs["json"] = _safe_json_value(payload)
+    return outputs
 
 
 def _export_approved(loop_id: str) -> Tuple[int, str]:
@@ -465,6 +862,9 @@ def _ensure_routes() -> None:
                 "current_cycle": s.current_cycle,
                 "current_retry": s.current_retry,
                 "overrides": s.overrides,
+                "loop_map": s.loop_map,
+                "loop_map_error": s.loop_map_error,
+                "payload_error": s.payload_error,
                 "workflow_source": s.workflow_source,
                 "manifest": [entry.__dict__ for entry in s.manifest],
                 "last_error": s.last_error,
@@ -484,7 +884,25 @@ def _ensure_routes() -> None:
         workflow_meta = payload.get("workflow")
         if not loop_id or not isinstance(prompt, dict):
             return web.json_response({"error": "invalid_payload"}, status=400)
-        REGISTRY.set_workflow(loop_id, prompt, "ui", workflow_meta=workflow_meta if isinstance(workflow_meta, dict) else None)
+        meta = workflow_meta if isinstance(workflow_meta, dict) else None
+        REGISTRY.set_workflow(loop_id, prompt, "ui", workflow_meta=meta)
+        (
+            loop_map,
+            loop_map_error,
+            payload_data,
+            payload_error,
+            loop_map_found,
+            payload_found,
+        ) = _extract_loop_config(prompt)
+        updates: Dict[str, Any] = {}
+        if loop_map_found or loop_map_error:
+            updates["loop_map"] = loop_map
+            updates["loop_map_error"] = loop_map_error
+        if payload_found or payload_error:
+            updates["payload"] = payload_data
+            updates["payload_error"] = payload_error
+        if updates:
+            REGISTRY.update(loop_id, **updates)
         return web.json_response({"ok": True})
 
     async def loop_step(request):
@@ -515,7 +933,15 @@ def _ensure_routes() -> None:
         s.current_retry = retry_index
         s.status = "running"
 
-        wf = _apply_overrides(s.workflow, s.overrides)
+        overrides = dict(s.overrides or {})
+        try:
+            map_overrides = _build_overrides_from_map(
+                s.loop_map, s.payload, loop_id, cycle_index, retry_index, s.workflow, s.workflow_meta
+            )
+            overrides.update(map_overrides)
+        except Exception as exc:
+            s.last_error = str(exc)
+        wf = _apply_overrides(s.workflow, overrides)
         prompt_id, err = await _enqueue_workflow_async(wf, loop_id)
         if err:
             s.status = "error"
@@ -602,6 +1028,29 @@ def _ensure_routes() -> None:
             return web.json_response({"error": "not_found"}, status=404)
         return web.json_response({"ok": True})
 
+    async def workflows_list(_request):
+        folder = _workflows_dir()
+        files = _list_workflow_files()
+        return web.json_response(
+            {
+                "workflows": files,
+                "folder": folder,
+                "exists": os.path.isdir(folder),
+                "count": len(files),
+            }
+        )
+
+    async def workflows_load(request):
+        payload = await request.json()
+        name = payload.get("name")
+        if not name:
+            return web.json_response({"error": "missing_name"}, status=400)
+        try:
+            workflow = _load_workflow_file(str(name))
+        except RuntimeError as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        return web.json_response({"ok": True, "workflow": workflow, "name": name})
+
     add_route("GET", "/lemouf/loop/list", loop_list)
     add_route("GET", "/lemouf/loop/{loop_id}", loop_get)
     add_route("POST", "/lemouf/loop/create", loop_create)
@@ -612,6 +1061,8 @@ def _ensure_routes() -> None:
     add_route("POST", "/lemouf/loop/config", loop_config)
     add_route("POST", "/lemouf/loop/export_approved", loop_export_approved)
     add_route("POST", "/lemouf/loop/reset", loop_reset)
+    add_route("GET", "/lemouf/workflows/list", workflows_list)
+    add_route("POST", "/lemouf/workflows/load", workflows_load)
 
     PromptServer.instance._lemouf_loop_routes = True
 
@@ -621,136 +1072,72 @@ def _ensure_routes() -> None:
 # -------------------------
 
 
-class WorkflowLoopOrchestrator:
+class LoopMap:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "workflow_source": (["path", "ui"], {"default": "path"}),
-                "workflow_path": ("STRING", {"default": "", "multiline": False}),
-                "cycles": ("INT", {"default": 1, "min": 1, "max": 100000}),
-                "mode": (["interactive", "batch", "end"], {"default": "interactive"}),
-                "overrides_json": ("STRING", {"default": "", "multiline": True}),
-                "loop_id": ("STRING", {"default": "", "multiline": False}),
-            },
-            "optional": {
-                "autostart": ("BOOLEAN", {"default": False}),
-            },
+                "map_json": (
+                    "STRING",
+                    {
+                        "default": '{\n  "schema": "lemouf.loopmap.v1",\n  "mappings": []\n}',
+                        "multiline": True,
+                    },
+                )
+            }
         }
 
-    RETURN_TYPES = ("STRING", "STRING", "INT", "INT")
-    RETURN_NAMES = ("loop_id", "status", "cycle_index", "total_cycles")
-    FUNCTION = "run"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("map_json",)
+    FUNCTION = "noop"
     CATEGORY = "leMouf/Loop"
 
-    def run(
-        self,
-        workflow_source: str,
-        workflow_path: str,
-        cycles: int,
-        mode: str,
-        overrides_json: str,
-        loop_id: str,
-        autostart: bool = False,
-    ):
-        _ensure_routes()
-        loop_id = loop_id.strip() or None
-        state = REGISTRY.create_or_get(loop_id)
-        overrides = _parse_overrides(overrides_json)
-        REGISTRY.update(
-            state.loop_id,
-            total_cycles=int(cycles),
-            mode=mode,
-            overrides=overrides,
-            workflow_source=workflow_source,
-        )
-
-        if workflow_source == "path" and workflow_path:
-            try:
-                with open(workflow_path, "r", encoding="utf-8") as f:
-                    workflow = json.load(f)
-                REGISTRY.set_workflow(state.loop_id, workflow, "path")
-            except Exception as exc:
-                REGISTRY.update(state.loop_id, status="error", last_error=str(exc))
-        elif workflow_source == "ui":
-            # workflow must be provided via UI endpoint
-            pass
-
-        # MVP: autostart is best-effort (queues a first cycle)
-        if autostart:
-            s = REGISTRY.get(state.loop_id)
-            if s and s.workflow:
-                s.current_cycle = 0
-                s.current_retry = 0
-                s.status = "running"
-                wf = _apply_overrides(s.workflow, s.overrides)
-                prompt_id, err = _enqueue_workflow(wf, s.loop_id)
-                if err:
-                    s.status = "error"
-                    s.last_error = err
-                else:
-                    REGISTRY.add_manifest(
-                        s.loop_id,
-                        LoopManifestEntry(
-                            cycle_index=0,
-                            retry_index=0,
-                            status="queued",
-                            prompt_id=prompt_id,
-                        ),
-                    )
-
-        s = REGISTRY.get(state.loop_id)
-        status = s.status if s else "unknown"
-        cycle_index = s.current_cycle if s else 0
-        total_cycles = s.total_cycles if s else cycles
-        return (state.loop_id, status, cycle_index, total_cycles)
+    def noop(self, map_json: str):
+        return (map_json,)
 
 
-class LoopContext:
+class LoopPayload:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {"loop_id": ("STRING", {"default": "", "multiline": False})},
+            "required": {
+                "payload_json": ("STRING", {"default": "[]", "multiline": True}),
+            }
+        }
+
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("payload",)
+    FUNCTION = "noop"
+    CATEGORY = "leMouf/Loop"
+
+    def noop(self, payload_json: str):
+        value, _err = _parse_json_field(payload_json, "payload")
+        return (value if value is not None else [],)
+
+
+class LoopPipelineStep:
+    @classmethod
+    def INPUT_TYPES(cls):
+        workflows = _list_workflow_files()
+        if not workflows:
+            workflows = ["(none)"]
+        return {
+            "required": {
+                "role": (["generate", "execute"],),
+                "workflow": (workflows,),
+            },
             "optional": {
-                "base_seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
-                "seed_mode": (["cycle", "cycle+retry", "hash"], {"default": "cycle+retry"}),
+                "flow": ("PIPELINE",),
             },
         }
 
-    RETURN_TYPES = ("STRING", "INT", "INT", "BOOLEAN", "INT", "INT")
-    RETURN_NAMES = ("loop_id", "cycle_index", "retry_index", "is_retry", "total_cycles", "seed")
-    FUNCTION = "get"
-    CATEGORY = "leMouf/Loop"
+    RETURN_TYPES = ("PIPELINE",)
+    RETURN_NAMES = ("flow",)
+    FUNCTION = "noop"
+    CATEGORY = "leMouf/Pipeline"
 
-    @classmethod
-    def IS_CHANGED(cls, loop_id: str, base_seed: int = 0, seed_mode: str = "cycle+retry"):
-        loop_id = (loop_id or "").strip()
-        s = REGISTRY.get(loop_id)
-        if not s:
-            return f"{loop_id}|0|0|{base_seed}|{seed_mode}"
-        return f"{loop_id}|{s.current_cycle}|{s.current_retry}|{base_seed}|{seed_mode}"
-
-    def _calc_seed(self, loop_id: str, cycle_index: int, retry_index: int, base_seed: int, mode: str) -> int:
-        if mode == "hash":
-            payload = f"{loop_id}|{cycle_index}|{retry_index}|{base_seed}".encode("utf-8")
-            digest = hashlib.sha256(payload).hexdigest()
-            return int(digest[:16], 16)
-        if mode == "cycle":
-            return (base_seed + cycle_index) & 0xFFFFFFFFFFFFFFFF
-        return (base_seed + (cycle_index * 100000) + retry_index) & 0xFFFFFFFFFFFFFFFF
-
-    def get(self, loop_id: str, base_seed: int = 0, seed_mode: str = "cycle+retry"):
-        _ensure_routes()
-        loop_id = (loop_id or "").strip()
-        if not loop_id:
-            seed = self._calc_seed("", 0, 0, base_seed, seed_mode)
-            return ("", 0, 0, False, 0, seed)
-        s = REGISTRY.get(loop_id)
-        if not s:
-            seed = self._calc_seed(loop_id, 0, 0, base_seed, seed_mode)
-            return (loop_id, 0, 0, False, 0, seed)
-        seed = self._calc_seed(loop_id, s.current_cycle, s.current_retry, base_seed, seed_mode)
-        return (loop_id, s.current_cycle, s.current_retry, s.current_retry > 0, s.total_cycles, seed)
+    def noop(self, role: str, workflow: str, flow: str = ""):
+        return (flow or "",)
 
 
 class LoopReturn:
@@ -761,15 +1148,12 @@ class LoopReturn:
                 "loop_id": ("STRING", {"default": "", "multiline": False}),
             },
             "optional": {
-                "cycle_index": ("INT", {"default": -1, "min": -1, "max": 100000}),
-                "retry_index": ("INT", {"default": -1, "min": -1, "max": 100000}),
-                "info": ("STRING", {"default": "", "multiline": True}),
-                "images": ("IMAGE",),
+                "payload": ("*",),
             },
         }
 
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("info",)
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("payload",)
     FUNCTION = "put"
     CATEGORY = "leMouf/Loop"
     OUTPUT_NODE = True
@@ -778,48 +1162,37 @@ class LoopReturn:
     def IS_CHANGED(
         cls,
         loop_id: str,
-        cycle_index: int = -1,
-        retry_index: int = -1,
-        info: str = "",
-        images=None,
+        payload=None,
     ):
         loop_id = (loop_id or "").strip()
         s = REGISTRY.get(loop_id) if loop_id else None
         if not s:
-            return f"{loop_id}|{cycle_index}|{retry_index}|{info}"
-        return f"{loop_id}|{s.current_cycle}|{s.current_retry}|{cycle_index}|{retry_index}"
+            return f"{loop_id}"
+        return f"{loop_id}|{s.current_cycle}|{s.current_retry}"
 
     def put(
         self,
         loop_id: str,
-        cycle_index: int = -1,
-        retry_index: int = -1,
-        info: str = "",
-        images=None,
+        payload=None,
     ):
         _ensure_routes()
         loop_id = _resolve_loop_id(loop_id)
         if not loop_id:
-            return (info,)
+            return (payload,)
 
         s = REGISTRY.get(loop_id)
         if not s:
-            return (info,)
+            return (payload,)
 
-        if cycle_index < 0:
-            cycle_index = s.current_cycle
-        if retry_index < 0:
-            retry_index = s.current_retry
+        cycle_index = s.current_cycle
+        retry_index = s.current_retry
         prompt_id = None
         if get_executing_context is not None:
             ctx = get_executing_context()
             prompt_id = getattr(ctx, "prompt_id", None) if ctx else None
-        outputs: Dict[str, Any] = {}
-        if images is not None:
-            try:
-                outputs["images"] = _save_images(images, loop_id, cycle_index, retry_index)
-            except Exception as exc:
-                outputs["save_error"] = str(exc)
+        outputs = _extract_outputs(payload, loop_id, cycle_index, retry_index)
+        if s.payload is None and isinstance(outputs.get("json"), list):
+            s.payload = outputs.get("json")
 
         entry = None
         if prompt_id:
@@ -827,7 +1200,6 @@ class LoopReturn:
                 loop_id,
                 prompt_id,
                 status="returned",
-                info=info,
                 outputs=outputs,
             )
         if not entry:
@@ -836,7 +1208,6 @@ class LoopReturn:
                 cycle_index,
                 retry_index,
                 status="returned",
-                info=info,
                 outputs=outputs,
             )
         if not entry:
@@ -845,7 +1216,6 @@ class LoopReturn:
                 cycle_index,
                 retry_index,
                 status="returned",
-                info=info,
                 outputs=outputs,
             )
         if not entry:
@@ -855,23 +1225,24 @@ class LoopReturn:
                     cycle_index=cycle_index,
                     retry_index=retry_index,
                     status="returned",
-                    info=info,
                     prompt_id=prompt_id,
                     outputs=outputs,
                 ),
             )
-        return (info,)
+        return (payload,)
 
 
 NODE_CLASS_MAPPINGS = {
-    "WorkflowLoopOrchestrator": WorkflowLoopOrchestrator,
-    "LoopContext": LoopContext,
+    "LoopMap": LoopMap,
+    "LoopPayload": LoopPayload,
+    "LoopPipelineStep": LoopPipelineStep,
     "LoopReturn": LoopReturn,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "WorkflowLoopOrchestrator": "Workflow Loop Orchestrator (leMouf)",
-    "LoopContext": "Loop Context (leMouf)",
+    "LoopMap": "Loop Map (leMouf)",
+    "LoopPayload": "Loop Payload (leMouf)",
+    "LoopPipelineStep": "Loop Pipeline Step (leMouf)",
     "LoopReturn": "Loop Return (leMouf)",
 }
 

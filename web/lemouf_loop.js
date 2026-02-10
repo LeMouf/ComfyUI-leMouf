@@ -1,5 +1,11 @@
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
+import { el } from "./ui/dom.js";
+import { injectStyles } from "./ui/styles.js";
+import { createPayloadView } from "./ui/payload_view.js";
+import { createPipelineGraphView } from "./ui/pipeline_graph.js";
+import { createHomeScreen } from "./ui/home_screen.js";
+import { createRunScreen } from "./ui/run_screen.js";
 
 let lastApiError = "";
 
@@ -8,24 +14,6 @@ if (window.__lemoufLoopRegistered) {
 } else {
   window.__lemoufLoopRegistered = true;
   console.log("[leMouf Loop] extension loaded");
-}
-
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (k.startsWith("on") && typeof v === "function") {
-      node.addEventListener(k.slice(2).toLowerCase(), v);
-    } else {
-      node.setAttribute(k, v);
-    }
-  }
-  for (const child of children) {
-    if (typeof child === "string") node.appendChild(document.createTextNode(child));
-    else if (child) node.appendChild(child);
-  }
-  return node;
 }
 
 async function safeJson(res) {
@@ -87,516 +75,6 @@ async function apiPost(path, data) {
   return safeJson(res);
 }
 
-function injectStyles() {
-  if (document.getElementById("lemouf-loop-style")) return;
-  const style = el("style", { id: "lemouf-loop-style" }, [
-    `
-    .lemouf-loop-panel {
-      position: fixed;
-      top: 0;
-      right: 0;
-      bottom: 0;
-      width: var(--lemouf-gutter, 420px);
-      background: linear-gradient(180deg, #f6f0e6, #efe3d3);
-      border: 1px solid #c7b7a6;
-      border-radius: 12px 0 0 12px;
-      padding: 12px 12px 12px 16px;
-      font-family: "Trebuchet MS", "Segoe UI", sans-serif;
-      color: #3b2f24;
-      box-shadow: 0 8px 30px rgba(40, 30, 20, 0.18);
-      z-index: 1000;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .lemouf-loop-title {
-      font-weight: 700;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-      text-transform: uppercase;
-      font-size: 12px;
-    }
-    .lemouf-loop-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-    }
-    .lemouf-loop-header .lemouf-loop-title {
-      margin-bottom: 0;
-    }
-    .lemouf-loop-header-btn {
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
-      border: 1px solid #b59c86;
-      background: #f6f0e6;
-      color: #5b4637;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      line-height: 1;
-    }
-    .lemouf-loop-header-btn:hover {
-      filter: brightness(0.98);
-    }
-    .lemouf-loop-loopid {
-      font-size: 11px;
-      color: #6b5a4a;
-      margin-bottom: 6px;
-      opacity: 0.85;
-    }
-    .lemouf-loop-poststart {
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      gap: 8px;
-    }
-    .lemouf-loop-poststart-top {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      flex: 1;
-      min-height: 0;
-    }
-    .lemouf-loop-poststart-bottom {
-      margin-top: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    .lemouf-loop-resizer {
-      position: absolute;
-      left: 0;
-      top: 0;
-      bottom: 0;
-      width: 8px;
-      cursor: ew-resize;
-      background: rgba(90, 70, 55, 0.08);
-      border-right: 1px solid rgba(90, 70, 55, 0.2);
-    }
-    .lemouf-loop-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-    .lemouf-loop-row > * { flex: 1 1 120px; }
-    .lemouf-loop-btn {
-      background: #5b4637;
-      color: #f7f2ea;
-      border: none;
-      border-radius: 8px;
-      padding: 6px 8px;
-      cursor: pointer;
-      font-size: 12px;
-    }
-    .lemouf-loop-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-      filter: grayscale(0.2);
-      box-shadow: none;
-    }
-    .lemouf-loop-btn.alt { background: #8a6b4f; }
-    .lemouf-loop-btn.ghost { background: transparent; border: 1px solid #5b4637; color: #5b4637; }
-    .lemouf-loop-inline {
-      display: flex;
-      align-items: stretch;
-      gap: 6px;
-      margin-bottom: 8px;
-    }
-    .lemouf-loop-inline label {
-      font-size: 12px;
-      display: inline-flex;
-      align-items: center;
-      padding: 0 6px;
-      border-radius: 6px;
-      background: #e7d7c6;
-      color: #3b2f24;
-      border: 1px solid #b59c86;
-      white-space: nowrap;
-    }
-    .lemouf-loop-inline input,
-    .lemouf-loop-inline button {
-      height: 30px;
-    }
-    .lemouf-loop-inline input {
-      width: auto;
-      flex: 1 1 auto;
-      min-width: 0;
-      padding: 0 8px;
-    }
-    .lemouf-loop-inline button {
-      flex: 0 0 auto;
-      padding: 0 12px;
-      border-radius: 8px;
-    }
-    .lemouf-loop-action {
-      position: relative;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      border-radius: 10px;
-      padding: 7px 10px;
-      border: 1px solid transparent;
-      transition: transform 120ms ease, box-shadow 120ms ease, filter 120ms ease;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-    }
-    .lemouf-loop-action::before {
-      display: inline-block;
-      font-size: 12px;
-    }
-    .lemouf-loop-action.approve {
-      background: linear-gradient(180deg, #2f7a4f, #246a43);
-      color: #f7f2ea;
-      border-color: rgba(0, 0, 0, 0.15);
-    }
-    .lemouf-loop-action.approve::before { content: "✓"; }
-    .lemouf-loop-action.reject {
-      background: linear-gradient(180deg, #a03a2e, #8a2e24);
-      color: #f7f2ea;
-      border-color: rgba(0, 0, 0, 0.15);
-    }
-    .lemouf-loop-action.reject::before { content: "✕"; }
-    .lemouf-loop-action.replay {
-      background: linear-gradient(180deg, #8a6b4f, #6d533b);
-      color: #f7f2ea;
-      border-color: rgba(0, 0, 0, 0.15);
-    }
-    .lemouf-loop-action.replay::before { content: "↻"; }
-    .lemouf-loop-action:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 14px rgba(40, 30, 20, 0.2);
-      filter: brightness(1.03);
-    }
-    .lemouf-loop-action:active {
-      transform: translateY(0);
-      box-shadow: none;
-    }
-    .lemouf-loop-accordion {
-      border: 1px solid #c7b7a6;
-      border-radius: 10px;
-      background: rgba(255, 250, 243, 0.6);
-      padding: 6px;
-      margin-bottom: 8px;
-    }
-    .lemouf-loop-accordion summary {
-      cursor: pointer;
-      font-weight: 700;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #5b4637;
-      list-style: none;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .lemouf-loop-accordion summary::-webkit-details-marker {
-      display: none;
-    }
-    .lemouf-loop-accordion summary::before {
-      content: "▸";
-      font-size: 12px;
-      transition: transform 120ms ease;
-    }
-    .lemouf-loop-accordion[open] summary::before {
-      transform: rotate(90deg);
-    }
-    .lemouf-loop-field { font-size: 12px; }
-    .lemouf-loop-field input, .lemouf-loop-field select, .lemouf-loop-field textarea {
-      width: 100%;
-      border-radius: 6px;
-      border: 1px solid #b59c86;
-      padding: 4px 6px;
-      font-size: 12px;
-      background: #fffaf3;
-      color: #3b2f24;
-    }
-    .lemouf-loop-manifest {
-      flex: 1;
-      min-height: 140px;
-      overflow: auto;
-      background: #fffaf3;
-      border: 1px solid #b59c86;
-      border-radius: 8px;
-      padding: 6px;
-      font-size: 11px;
-    }
-    .lemouf-loop-status {
-      font-size: 11px;
-      color: #5b4637;
-      white-space: pre-wrap;
-    }
-    .lemouf-loop-manifest-row {
-      margin-bottom: 6px;
-      padding-bottom: 6px;
-      border-bottom: 1px dashed rgba(90, 70, 55, 0.25);
-    }
-    .lemouf-loop-manifest-row:last-child {
-      margin-bottom: 0;
-      padding-bottom: 0;
-      border-bottom: none;
-    }
-    .lemouf-loop-gallery {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 6px;
-    }
-    .lemouf-loop-cycle {
-      margin-bottom: 10px;
-      padding-bottom: 10px;
-      border-bottom: 1px dashed rgba(90, 70, 55, 0.25);
-    }
-    .lemouf-loop-cycle:last-child {
-      margin-bottom: 0;
-      padding-bottom: 0;
-      border-bottom: none;
-    }
-    .lemouf-loop-cycle-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 700;
-      margin-bottom: 10px;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-      color: #3b2f24;
-    }
-    .lemouf-loop-cycle-strip {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    .lemouf-loop-result-card {
-      position: relative;
-      display: inline-flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 4px;
-    }
-    .lemouf-loop-thumb-actions {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 0 8px;
-      opacity: 0;
-      transition: opacity 120ms ease;
-      pointer-events: none;
-    }
-    .lemouf-loop-result-card:hover .lemouf-loop-thumb-actions {
-      opacity: 1;
-      pointer-events: auto;
-    }
-    .lemouf-loop-thumb-action {
-      width: 26px;
-      height: 26px;
-      border-radius: 999px;
-      border: 1px solid rgba(60, 45, 35, 0.2);
-      background: rgba(255, 250, 243, 0.92);
-      color: #3b2f24;
-      font-size: 13px;
-      font-weight: 700;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      box-shadow: 0 4px 10px rgba(20, 16, 12, 0.2);
-      transition: transform 120ms ease, opacity 120ms ease;
-    }
-    .lemouf-loop-thumb-action.approve { color: #1f6a44; }
-    .lemouf-loop-thumb-action.reject { color: #8a2e24; }
-    .lemouf-loop-result-card.is-deciding .lemouf-loop-thumb-actions {
-      opacity: 1;
-    }
-    .lemouf-loop-spinner {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 22px;
-      height: 22px;
-      margin: -11px 0 0 -11px;
-      border-radius: 50%;
-      border: 2px solid rgba(91, 70, 55, 0.25);
-      border-top-color: rgba(91, 70, 55, 0.85);
-      animation: lemouf-spin 0.8s linear infinite;
-      display: none;
-      pointer-events: none;
-    }
-    .lemouf-loop-result-card.is-loading .lemouf-loop-spinner,
-    .lemouf-loop-preview.is-loading .lemouf-loop-spinner {
-      display: block;
-    }
-    @keyframes lemouf-spin {
-      to { transform: rotate(360deg); }
-    }
-    .lemouf-loop-result-badge {
-      position: absolute;
-      top: -6px;
-      left: -6px;
-      background: #5b4637;
-      color: #f7f2ea;
-      border-radius: 999px;
-      padding: 2px 6px;
-      font-size: 9px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
-    }
-    .lemouf-loop-result-badge.approve { background: #2f7a4f; }
-    .lemouf-loop-result-badge.reject { background: #a03a2e; }
-    .lemouf-loop-result-badge.replay { background: #8a6b4f; }
-    .lemouf-loop-result-badge.queued { background: #6b6b6b; }
-    .lemouf-loop-result-badge.running { background: #9a7b2f; }
-    .lemouf-loop-result-badge.returned { background: #2f5f7a; }
-    .lemouf-loop-result-badge.error { background: #7a2f2f; }
-    .lemouf-loop-result-badge.pending { background: #5b4637; }
-    .lemouf-loop-result-placeholder {
-      width: 96px;
-      height: 96px;
-      border-radius: 6px;
-      border: 1px dashed #b59c86;
-      background: #fffaf3;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 10px;
-      color: #7a6756;
-      text-align: center;
-      padding: 6px;
-    }
-    .lemouf-loop-thumb {
-      width: 96px;
-      height: 96px;
-      object-fit: cover;
-      border-radius: 6px;
-      border: 1px solid #b59c86;
-      background: #fff;
-      cursor: pointer;
-    }
-    .lemouf-loop-preview {
-      border: 1px solid #b59c86;
-      border-radius: 10px;
-      background: #fffaf3;
-      padding: 6px;
-      position: relative;
-    }
-    .lemouf-loop-preview-img {
-      width: 100%;
-      height: auto;
-      max-height: 220px;
-      object-fit: contain;
-      border-radius: 8px;
-      border: 1px solid #d6c4b2;
-      background: #fff;
-      cursor: pointer;
-      display: none;
-    }
-    .lemouf-loop-preview-empty {
-      font-size: 11px;
-      color: #7a6756;
-      text-align: center;
-      padding: 18px 8px;
-    }
-    .lemouf-loop-progress {
-      border: 1px solid #b59c86;
-      border-radius: 8px;
-      background: #fffaf3;
-      padding: 6px 8px;
-      font-size: 11px;
-    }
-    .lemouf-loop-progress-track {
-      position: relative;
-      height: 10px;
-      border-radius: 999px;
-      background: #e7d7c6;
-      overflow: hidden;
-      margin-top: 6px;
-    }
-    .lemouf-loop-progress-bar {
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, #5b4637, #8a6b4f);
-      transition: width 120ms linear;
-    }
-    .lemouf-loop-progress.indeterminate .lemouf-loop-progress-bar {
-      width: 35%;
-      animation: lemouf-indeterminate 1.2s ease-in-out infinite;
-    }
-    @keyframes lemouf-indeterminate {
-      0% { transform: translateX(-60%); }
-      100% { transform: translateX(260%); }
-    }
-    .lemouf-loop-progress-meta {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-    }
-    .lemouf-loop-progress-node {
-      font-weight: 600;
-      color: #5b4637;
-      max-width: 60%;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .lemouf-loop-progress-state {
-      color: #7a6756;
-    }
-    .lemouf-loop-lightbox {
-      position: fixed;
-      inset: 0;
-      background: rgba(20, 16, 12, 0.78);
-      display: none;
-      align-items: center;
-      justify-content: center;
-      z-index: 2000;
-      padding: 24px;
-    }
-    .lemouf-loop-lightbox.is-open {
-      display: flex;
-    }
-    .lemouf-loop-lightbox img {
-      max-width: 92vw;
-      max-height: 92vh;
-      border-radius: 12px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      background: #fff;
-    }
-    .lemouf-loop-lightbox button {
-      position: absolute;
-      top: 16px;
-      right: 16px;
-      background: #f6f0e6;
-      color: #3b2f24;
-      border: 1px solid #c7b7a6;
-      border-radius: 999px;
-      padding: 6px 10px;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 600;
-    }
-    .lemouf-loop-badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 999px;
-      background: #d7c1a8;
-      font-size: 10px;
-      margin-left: 6px;
-    }
-    `,
-  ]);
-  document.head.appendChild(style);
-}
-
 async function getCurrentPromptPayload() {
   const candidates = [
     app,
@@ -652,6 +130,60 @@ function hasType(types, needle) {
   return types.some((value) => value === needle || value.includes(needle));
 }
 
+function extractPipelineSteps(prompt) {
+  if (!prompt || typeof prompt !== "object") return [];
+  const steps = [];
+  const incoming = new Map();
+  const outgoing = new Map();
+  for (const [nodeId, node] of Object.entries(prompt)) {
+    if (String(node?.class_type || "") !== "LoopPipelineStep") continue;
+    const inputs = node?.inputs || {};
+    const rawIndex = Number(inputs.step_index);
+    const fallbackIndex = Number.isFinite(rawIndex) ? rawIndex : Number(nodeId);
+    const role = String(inputs.role || "");
+    const workflow = String(inputs.workflow || "");
+    const id = String(nodeId);
+    steps.push({ id, role, workflow, stepIndex: Number.isFinite(rawIndex) ? rawIndex : fallbackIndex });
+    const flow = inputs.flow;
+    if (Array.isArray(flow) && flow.length >= 1) {
+      const src = String(flow[0]);
+      incoming.set(id, src);
+      if (!outgoing.has(src)) outgoing.set(src, []);
+      outgoing.get(src).push(id);
+    }
+  }
+
+  if (!steps.length) return [];
+  const stepMap = new Map(steps.map((s) => [s.id, s]));
+  const visited = new Set();
+  const order = [];
+  const sortIds = (ids) =>
+    ids.sort((a, b) => {
+      const sa = stepMap.get(a);
+      const sb = stepMap.get(b);
+      if (sa && sb && sa.stepIndex !== sb.stepIndex) return sa.stepIndex - sb.stepIndex;
+      return a.localeCompare(b);
+    });
+
+  const startIds = sortIds(steps.map((s) => s.id).filter((id) => !incoming.has(id)));
+  const walk = (id) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const step = stepMap.get(id);
+    if (step) order.push(step);
+    const nexts = outgoing.get(id) || [];
+    sortIds(nexts);
+    for (const nextId of nexts) walk(nextId);
+  };
+  for (const id of startIds) walk(id);
+  if (order.length < steps.length) {
+    const remaining = steps.filter((s) => !visited.has(s.id));
+    remaining.sort((a, b) => (a.stepIndex || 0) - (b.stepIndex || 0));
+    order.push(...remaining);
+  }
+  return order;
+}
+
 function validateWorkflow(prompt, workflowNodes) {
   const errors = [];
   const warnings = [];
@@ -664,47 +196,36 @@ function validateWorkflow(prompt, workflowNodes) {
     return { ok: false, errors, warnings };
   }
 
-  const hasLoopContext = hasType(types, "LoopContext") || hasType(types, "Loop Context");
   const hasLoopReturn = hasType(types, "LoopReturn") || hasType(types, "Loop Return");
-  const hasKSampler = hasType(types, "KSampler");
+  const hasLoopMap = hasType(types, "LoopMap") || hasType(types, "Loop Map");
+  const hasPipelineStep =
+    hasType(types, "LoopPipelineStep") || hasType(types, "Loop Pipeline Step");
 
-  if (!hasLoopContext) errors.push("Missing Loop Context node.");
+  if (hasPipelineStep) {
+    if (!hasLoopMap) errors.push("Missing Loop Map node (required for pipeline).");
+    return { ok: errors.length === 0, errors, warnings };
+  }
+
   if (!hasLoopReturn) errors.push("Missing Loop Return node.");
-  if (!hasKSampler) warnings.push("No KSampler node found.");
+  if (!hasLoopMap) warnings.push("Loop Map node not found (payload mapping disabled).");
 
   if (prompt && typeof prompt === "object") {
+    let returnHasPayload = false;
     const entries = Object.entries(prompt);
-    const loopContexts = entries.filter(([, node]) => String(node?.class_type || "") === "LoopContext");
-    const ksamplers = entries.filter(([, node]) => {
-      const t = String(node?.class_type || "");
-      return t === "KSampler" || t === "KSamplerAdvanced";
-    });
-    let seedLinked = false;
-    if (ksamplers.length && loopContexts.length) {
-      const loopIds = new Set(loopContexts.map(([id]) => String(id)));
-      for (const [, node] of ksamplers) {
-        const seed = node?.inputs?.seed;
-        if (Array.isArray(seed) && loopIds.has(String(seed[0]))) {
-          seedLinked = true;
-          break;
-        }
-      }
-    }
-    if (!seedLinked) {
-      errors.push("KSampler.seed is not linked to LoopContext.seed.");
-    }
-
-    let returnHasImages = false;
     const loopReturns = entries.filter(([, node]) => String(node?.class_type || "") === "LoopReturn");
     for (const [, node] of loopReturns) {
-      const imagesInput = node?.inputs?.images;
-      if (Array.isArray(imagesInput)) {
-        returnHasImages = true;
+      const payloadInput = node?.inputs?.payload;
+      if (Array.isArray(payloadInput)) {
+        returnHasPayload = true;
+        break;
+      }
+      if (payloadInput !== undefined && payloadInput !== null && payloadInput !== "") {
+        returnHasPayload = true;
         break;
       }
     }
-    if (!returnHasImages) {
-      warnings.push("Loop Return has no images input linked.");
+    if (!returnHasPayload) {
+      warnings.push("Loop Return has no payload input linked.");
     }
   } else {
     warnings.push("Graph linkage checks require a synced workflow.");
@@ -717,10 +238,43 @@ function getComfyApp() {
   return window?.comfyAPI?.app?.app || app || window?.app || null;
 }
 
+async function loadWorkflowData(data) {
+  const comfyApp = getComfyApp();
+  if (!comfyApp || !data) return false;
+  try {
+    if (typeof comfyApp.loadGraphData === "function") {
+      await comfyApp.loadGraphData(data);
+      return true;
+    }
+    if (typeof comfyApp.loadWorkflow === "function") {
+      await comfyApp.loadWorkflow(data);
+      return true;
+    }
+    if (comfyApp.graph && typeof comfyApp.graph.configure === "function") {
+      comfyApp.graph.configure(data);
+      comfyApp.graph.setDirtyCanvas?.(true, true);
+      comfyApp.canvas?.resize?.();
+      return true;
+    }
+  } catch (err) {
+    console.warn("[leMouf Loop] load workflow failed:", err);
+  }
+  return false;
+}
+
 function getGutterRoot() {
   const first = document.body?.firstElementChild;
   if (first && first.tagName === "DIV") return first;
   return document.body;
+}
+
+function findMenuContainer() {
+  return (
+    document.querySelector("#comfyui-menu") ||
+    document.querySelector(".comfy-menu") ||
+    document.querySelector(".comfyui-menu") ||
+    document.querySelector(".comfy-menu-list")
+  );
 }
 
 function getSelectedNodes(canvas) {
@@ -771,58 +325,6 @@ function badgeClassForDecision(decision) {
   return "pending";
 }
 
-function getLoopContextNode(loopId) {
-  const comfyApp = getComfyApp();
-  const nodes = comfyApp?.rootGraph?.nodes || comfyApp?.graph?.nodes || [];
-  if (!nodes?.length) return null;
-  const byLoopId = nodes.filter((node) =>
-    node?.widgets?.some((w) => w?.name === "loop_id" && String(w?.value || "") === String(loopId || ""))
-  );
-  if (byLoopId.length) return byLoopId[0];
-  const byType = nodes.find((node) => String(node?.type || "").includes("LoopContext"));
-  if (byType) return byType;
-  const byTitle = nodes.find((node) => String(node?.title || "").includes("Loop Context"));
-  return byTitle || null;
-}
-
-function getWidgetValue(node, name) {
-  return node?.widgets?.find((w) => w?.name === name)?.value;
-}
-
-function parseSeedValue(value) {
-  if (value === null || value === undefined || value === "") return 0n;
-  if (typeof value === "bigint") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return BigInt(Math.floor(value));
-  const asString = String(value).trim();
-  if (!asString) return 0n;
-  try {
-    return BigInt(asString);
-  } catch {
-    return 0n;
-  }
-}
-
-async function computeSeed(loopId, cycleIndex, retryIndex, baseSeed, mode) {
-  const base = parseSeedValue(baseSeed);
-  const cycle = BigInt(Number.isFinite(cycleIndex) ? cycleIndex : 0);
-  const retry = BigInt(Number.isFinite(retryIndex) ? retryIndex : 0);
-  if (mode === "hash") {
-    const payload = `${loopId}|${cycleIndex}|${retryIndex}|${baseSeed}`;
-    const data = new TextEncoder().encode(payload);
-    const digest = await crypto.subtle.digest("SHA-256", data);
-    const bytes = new Uint8Array(digest);
-    let hex = "";
-    for (let i = 0; i < 8; i += 1) {
-      hex += bytes[i].toString(16).padStart(2, "0");
-    }
-    return BigInt(`0x${hex}`).toString();
-  }
-  const mask = (1n << 64n) - 1n;
-  if (mode === "cycle") {
-    return ((base + cycle) & mask).toString();
-  }
-  return ((base + cycle * 100000n + retry) & mask).toString();
-}
 
 function shortId(value) {
   const text = String(value || "");
@@ -855,12 +357,35 @@ app.registerExtension({
     const statusBadge = el("span", { class: "lemouf-loop-badge", text: "idle" });
     const cycleBadge = el("span", { class: "lemouf-loop-badge", text: "cycle 0/0" });
     const retryBadge = el("span", { class: "lemouf-loop-badge", text: "r0" });
-    const seedBadge = el("span", { class: "lemouf-loop-badge", text: "seed ?" });
     const overridesBox = el("textarea", { rows: 4 });
     const manifestBox = el("div", { class: "lemouf-loop-manifest" });
     const actionStatus = el("div", { class: "lemouf-loop-status", text: "" });
-    const compatStatus = el("div", { class: "lemouf-loop-status", text: "" });
-    const cyclesInput = el("input", { type: "number", min: 1, value: 1 });
+    const homeScreen = createHomeScreen();
+    const {
+      root: preStartSection,
+      pipelineSelect,
+      pipelineStatus,
+      pipelineNav,
+      pipelineLoadBtn,
+      pipelineRefreshBtn,
+      pipelineStartBtn,
+      pipelineStartRow,
+      cyclesRow,
+      cyclesInput,
+      validateBtn,
+      compatStatus,
+    } = homeScreen;
+    const openLightbox = (src) => {
+      if (!src) return;
+      if (lightboxImg) {
+        lightboxImg.src = src;
+        lightbox.classList.add("is-open");
+      } else {
+        window.open(src, "_blank");
+      }
+    };
+    const payloadView = createPayloadView({ buildImageSrc, openLightbox });
+    const payloadSection = payloadView.root;
     const autoSyncToggle = el("input", { type: "checkbox", checked: true });
     const autoSyncLabel = el("label", { text: "Auto-sync WF" });
     autoSyncLabel.style.display = "flex";
@@ -871,6 +396,7 @@ app.registerExtension({
     let lastWorkflowSignature = null;
     let workflowDirty = false;
     let workflowSyncInFlight = false;
+    let currentWorkflowName = null;
     let lastValidationSignature = null;
     let validationInFlight = false;
     let validationRetryTimer = null;
@@ -879,6 +405,8 @@ app.registerExtension({
     const VALIDATION_RETRY_DELAY = 900;
     let currentLoopId = "";
     let hasStarted = false;
+    let panelVisible = true;
+    let menuToggleItem = null;
     let lastStepPromptId = null;
     let autoRefreshTimer = null;
     let autoRefreshAttempts = 0;
@@ -891,7 +419,21 @@ app.registerExtension({
       status: "idle",
       loopPercent: null,
     };
+    const PANEL_VERSION = "0.2.0";
     let panel = null;
+    let headerBackBtn = null;
+    let headerMenu = null;
+    let closeHeaderMenu = null;
+    let pipelineActiveStepId = null;
+    let pipelineSelectedStepId = null;
+    const pipelineState = {
+      steps: [],
+      lastRun: null,
+    };
+    let pipelinePayloadEntry = null;
+    let pipelineGraphView = null;
+    let currentScreen = "home";
+    let pendingScreen = null;
 
     const progressNode = el("div", { class: "lemouf-loop-progress-node", text: "Idle" });
     const progressStateText = el("div", { class: "lemouf-loop-progress-state", text: "0%" });
@@ -941,13 +483,7 @@ app.registerExtension({
     const previewWrap = el("div", { class: "lemouf-loop-preview" }, [previewEmpty, previewImg, previewSpinner]);
     previewImg.addEventListener("click", () => {
       const full = previewImg.dataset.full || previewImg.src;
-      if (!full) return;
-      if (lightboxImg) {
-        lightboxImg.src = full;
-        lightbox.classList.add("is-open");
-      } else {
-        window.open(full, "_blank");
-      }
+      openLightbox(full);
     });
     previewImg.addEventListener("load", () => {
       previewWrap.classList.remove("is-loading");
@@ -964,23 +500,229 @@ app.registerExtension({
       compatStatus.textContent = msg || "";
     };
 
+    const setPipelineStatus = (msg) => {
+      pipelineStatus.textContent = msg || "";
+    };
+
+    const setPipelineGraphStatus = (msg) => {
+      pipelineGraphView?.setStatus(msg || "");
+    };
+
+    const setPipelineLoaded = (loaded) => {
+      const show = Boolean(loaded);
+      pipelineNav.style.display = show ? "" : "none";
+      pipelineStartRow.style.display = show ? "" : "none";
+      compatStatus.style.display = show ? "" : "none";
+    };
+
     const setCurrentLoopId = (loopId) => {
       currentLoopId = loopId || "";
       loopIdLabel.textContent = currentLoopId ? `Loop ${shortId(currentLoopId)}` : "No loop";
     };
 
-    const setStarted = (value) => {
-      hasStarted = Boolean(value);
-      if (postStartSection) {
-        postStartSection.style.display = hasStarted ? "" : "none";
+    const setScreen = (name) => {
+      currentScreen = name;
+      if (!preStartSection || !payloadSection || !postStartSection) {
+        pendingScreen = name;
+        return;
       }
-      if (preStartSection) {
-        preStartSection.style.display = hasStarted ? "none" : "";
-      }
-      if (panel) {
-        panel.classList.toggle("lemouf-loop-started", hasStarted);
-      }
+      if (preStartSection) preStartSection.style.display = name === "home" ? "" : "none";
+      if (payloadSection) payloadSection.style.display = name === "payload" ? "" : "none";
+      if (postStartSection) postStartSection.style.display = name === "run" ? "" : "none";
+      hasStarted = name === "run";
+      if (panel) panel.classList.toggle("lemouf-loop-started", hasStarted);
+      if (headerBackBtn) headerBackBtn.style.display = name !== "home" ? "" : "none";
+      if (typeof closeHeaderMenu === "function") closeHeaderMenu();
+      if (name === "payload") updatePayloadSection();
+      pendingScreen = null;
     };
+
+    const setStarted = (value) => {
+      setScreen(value ? "run" : "home");
+    };
+
+    const PIPELINE_KEY = "lemoufLoopPipelineName";
+    let pipelineWorkflowList = [];
+    const pipelineWorkflowCache = new Map();
+    const refreshPipelineList = async ({ silent = false } = {}) => {
+      const res = await apiGet("/lemouf/workflows/list");
+      const list = res?.workflows;
+      pipelineWorkflowList = Array.isArray(list) ? list.slice() : [];
+      pipelineSelect.innerHTML = "";
+      if (!Array.isArray(list) || list.length === 0) {
+        pipelineSelect.appendChild(el("option", { value: "", text: "No workflows found" }));
+        pipelineSelect.disabled = true;
+        pipelineLoadBtn.disabled = true;
+        const folder = res?.folder ? `Folder: ${res.folder}` : "Folder: workflows/";
+        if (!silent) setPipelineStatus(`No workflows found. ${folder}`);
+        return;
+      }
+      for (const name of list) {
+        pipelineSelect.appendChild(el("option", { value: name, text: name }));
+      }
+      pipelineSelect.disabled = false;
+      pipelineLoadBtn.disabled = false;
+      const saved = localStorage.getItem(PIPELINE_KEY);
+      if (saved && list.includes(saved)) pipelineSelect.value = saved;
+      else pipelineSelect.value = list[0];
+      if (!silent) setPipelineStatus("");
+    };
+
+    const loadPipelineWorkflow = async () => {
+      const name = pipelineSelect.value;
+      if (!name) {
+        setPipelineStatus("Select a workflow first.");
+        return;
+      }
+      localStorage.setItem(PIPELINE_KEY, name);
+      setPipelineStatus("Loading pipeline...");
+      const ok = await loadWorkflowByName(name);
+      if (!ok) {
+        setPipelineStatus("Failed to inject workflow into UI.");
+        return;
+      }
+      setPipelineStatus(`Pipeline loaded: ${name}`);
+      setPipelineLoaded(true);
+      workflowDirty = true;
+      setTimeout(() => {
+        runValidation(true);
+        setCurrentWorkflow({ force: true, silent: true });
+      }, 250);
+    };
+
+    const loadWorkflowByName = async (name, { force = false, silent = false } = {}) => {
+      if (!name) return false;
+      if (!force && currentWorkflowName === name && !workflowDirty) {
+        if (!silent) {
+          setStatus(`Workflow already loaded: ${name}`);
+        }
+        try {
+          const comfyApp = getComfyApp();
+          comfyApp?.graph?.setDirtyCanvas?.(true, true);
+          comfyApp?.canvas?.resize?.();
+        } catch {}
+        return true;
+      }
+      const res = await apiPost("/lemouf/workflows/load", { name });
+      if (!res?.workflow) return false;
+      const ok = await loadWorkflowData(res.workflow);
+      if (ok) {
+        currentWorkflowName = name;
+        workflowDirty = false;
+      }
+      return ok;
+    };
+
+    const getWorkflowInfo = async (name) => {
+      if (!name || name === "(none)") return { ok: false, error: "No workflow selected." };
+      if (pipelineWorkflowCache.has(name)) return pipelineWorkflowCache.get(name);
+      const res = await apiPost("/lemouf/workflows/load", { name });
+      if (!res?.workflow) {
+        const info = { ok: false, error: lastApiError || "Load failed." };
+        pipelineWorkflowCache.set(name, info);
+        return info;
+      }
+      const wf = res.workflow;
+      const nodes = Array.isArray(wf?.nodes) ? wf.nodes : [];
+      const types = nodes.map((n) => String(n?.type || n?.class_type || ""));
+      const info = {
+        ok: true,
+        hasLoopReturn: types.some((t) => t.includes("LoopReturn")),
+        hasLoopMap: types.some((t) => t.includes("LoopMap")),
+        hasLoopPayload: types.some((t) => t.includes("LoopPayload")),
+        hasPipeline: types.some((t) => t.includes("LoopPipelineStep")),
+      };
+      pipelineWorkflowCache.set(name, info);
+      return info;
+    };
+
+    const formatDuration = (ms) => {
+      if (!ms || !Number.isFinite(ms)) return "";
+      const s = ms / 1000;
+      if (s < 60) return `${s.toFixed(1)}s`;
+      const m = Math.floor(s / 60);
+      const r = s - m * 60;
+      return `${m}m ${r.toFixed(0)}s`;
+    };
+
+    const updatePayloadSection = () => {
+      payloadView.setEntry(pipelinePayloadEntry);
+    };
+
+    pipelineGraphView = createPipelineGraphView({
+      getWorkflowInfo,
+      formatDuration,
+      onNavigate: navigateToPipelineStep,
+      getActiveStepId: () => pipelineActiveStepId,
+      getSelectedStepId: () => pipelineSelectedStepId,
+      getRunState: () => pipelineState.lastRun,
+    });
+    pipelineNav.append(pipelineGraphView.root, pipelineGraphView.status);
+
+    const validatePipelineSteps = async (steps) => {
+      if (!steps || steps.length === 0) return false;
+      const executeStep = steps.find((s) => s.role === "execute");
+      if (!executeStep) return false;
+      for (const step of steps) {
+        if (!step.workflow || step.workflow === "(none)") return false;
+        const info = await getWorkflowInfo(step.workflow);
+        if (!info.ok || !info.hasLoopReturn) return false;
+      }
+      return true;
+    };
+
+    const updatePipelineStep = (id, status, meta = {}) => {
+      if (!pipelineState.lastRun) return;
+      if (!pipelineState.lastRun.steps) pipelineState.lastRun.steps = {};
+      const entry = pipelineState.lastRun.steps[id] || {};
+      pipelineState.lastRun.steps[id] = { ...entry, status, ...meta };
+    };
+
+    const waitForManifest = async (predicate, { timeoutMs = 120000 } = {}) => {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const data = await refreshLoopDetail();
+        if (data && predicate(data)) return data;
+        await new Promise((r) => setTimeout(r, 800));
+      }
+      return null;
+    };
+
+    const renderPipelineGraph = async (steps) => {
+      if (!pipelineGraphView) return;
+      await pipelineGraphView.render(steps);
+      updatePayloadSection();
+    };
+
+    async function navigateToPipelineStep(step) {
+      if (!step || !step.workflow || step.workflow === "(none)") return;
+      setStatus(`Loading workflow: ${step.workflow}`);
+      const ok = await loadWorkflowByName(step.workflow);
+      if (!ok) {
+        setStatus(`Failed to load workflow: ${step.workflow}`);
+        return;
+      }
+      pipelineSelectedStepId = step.id;
+      await renderPipelineGraph(pipelineState.steps.length ? pipelineState.steps : [step]);
+      workflowDirty = true;
+      if (step.role === "execute") {
+        setScreen("run");
+        await setCurrentWorkflow({ force: true, silent: true });
+        await refreshLoopDetail();
+      } else {
+        setScreen("payload");
+        await runValidation(true);
+      }
+      setStatus(`Workflow loaded: ${step.workflow}`);
+    }
+
+    pipelineSelect.addEventListener("change", () => {
+      const name = pipelineSelect.value;
+      if (name) localStorage.setItem(PIPELINE_KEY, name);
+    });
+    pipelineLoadBtn.addEventListener("click", loadPipelineWorkflow);
+    pipelineRefreshBtn.addEventListener("click", () => refreshPipelineList());
+    pipelineStartBtn.addEventListener("click", () => validateAndStart());
 
     const applyGutterWidth = (width) => {
       const clamped = Math.max(300, Math.min(720, Math.round(width)));
@@ -1001,6 +743,43 @@ app.registerExtension({
         comfyApp?.graph?.setDirtyCanvas?.(true, true);
       } catch {}
       return clamped;
+    };
+
+    const clearGutter = () => {
+      document.documentElement.style.removeProperty("--lemouf-gutter");
+      const root = getGutterRoot();
+      if (root) {
+        root.style.width = "";
+        root.style.maxWidth = "";
+        root.style.paddingRight = "";
+        root.style.marginRight = "";
+        root.style.transition = "";
+      }
+      try {
+        const comfyApp = getComfyApp();
+        comfyApp?.canvas?.resize?.();
+        comfyApp?.graph?.setDirtyCanvas?.(true, true);
+      } catch {}
+    };
+
+    const updateToggleUI = () => {
+      if (menuToggleItem) menuToggleItem.textContent = panelVisible ? "Hide leMouf Loop panel" : "Show leMouf Loop panel";
+    };
+
+    const setPanelVisible = (value) => {
+      panelVisible = Boolean(value);
+      if (panel) panel.style.display = panelVisible ? "" : "none";
+      if (panelVisible) {
+        applyGutterWidth(currentGutter);
+      } else {
+        clearGutter();
+      }
+      localStorage.setItem("lemoufLoopPanelVisible", panelVisible ? "1" : "0");
+      updateToggleUI();
+    };
+
+    const togglePanel = () => {
+      setPanelVisible(!panelVisible);
     };
 
     const refreshLoops = async (selectLoopId = null) => {
@@ -1031,15 +810,6 @@ app.registerExtension({
       progressState.loopPercent = total ? Math.min(100, Math.round((current / total) * 100)) : null;
       const retry = Number(data.current_retry || 0);
       retryBadge.textContent = `r${retry}`;
-      const ctxNode = getLoopContextNode(loopId);
-      const baseSeed = getWidgetValue(ctxNode, "base_seed");
-      const seedMode = getWidgetValue(ctxNode, "seed_mode") || "cycle+retry";
-      try {
-        const seed = await computeSeed(loopId, current, retry, baseSeed, seedMode);
-        seedBadge.textContent = `seed ${seed}`;
-      } catch {
-        seedBadge.textContent = "seed ?";
-      }
       cyclesInput.value = total || 1;
       if (data.status === "running" && progressState.status !== "running") {
         progressState.status = "running";
@@ -1207,16 +977,23 @@ app.registerExtension({
       if (!hasStarted) {
         const manifest = data.manifest || [];
         if (manifest.length > 0 || data.status === "running" || data.status === "complete") {
-          setStarted(true);
+          setScreen("run");
         }
       }
       const isComplete = data.status === "complete";
       exportBtn.style.display = isComplete ? "" : "none";
       exitBtn.style.display = isComplete ? "" : "none";
-      headerExitBtn.style.display = hasStarted ? "" : "none";
       actionRow.style.display = isComplete ? "none" : "";
       if (isComplete) {
         setStatus("Loop complete ✅");
+        if (pipelineState.lastRun && pipelineState.steps.length) {
+          const execStep = pipelineState.steps.find((s) => s.role === "execute");
+          if (execStep) {
+            updatePipelineStep(execStep.id, "done", { endedAt: Date.now() });
+            pipelineState.lastRun.endedAt = Date.now();
+            renderPipelineGraph(pipelineState.steps);
+          }
+        }
       }
       return data;
     };
@@ -1358,7 +1135,7 @@ app.registerExtension({
       updateProgressUI();
       await refreshLoopDetail();
       setStatus("Cycle queued.");
-      setStarted(true);
+      setScreen("run");
       startAutoRefresh();
     };
 
@@ -1464,7 +1241,7 @@ app.registerExtension({
     const resetToStart = async () => {
       setStatus("");
       setCompatStatus("");
-      setStarted(false);
+      setScreen("home");
       const loopId = currentLoopId;
       if (loopId) {
         await apiPost("/lemouf/loop/reset", { loop_id: loopId, keep_workflow: true });
@@ -1474,7 +1251,6 @@ app.registerExtension({
       retryBadge.textContent = "r0";
       cycleBadge.textContent = "cycle 0/0";
       statusBadge.textContent = "idle";
-      seedBadge.textContent = "seed ?";
       progressState = { promptId: null, value: 0, max: 0, node: "", status: "idle", loopPercent: null };
       updateProgressUI();
       previewImg.style.display = "none";
@@ -1482,6 +1258,18 @@ app.registerExtension({
       manifestBox.innerHTML = "";
       await refreshLoops();
       await runValidation(true);
+    };
+
+    const setupToggleControls = () => {
+      if (!menuToggleItem) {
+        const menu = findMenuContainer();
+        if (menu) {
+          menuToggleItem = el("button", { class: "lemouf-loop-menu-item", text: "Toggle leMouf Loop panel" });
+          menuToggleItem.addEventListener("click", togglePanel);
+          menu.appendChild(menuToggleItem);
+        }
+      }
+      updateToggleUI();
     };
 
     const formatValidationMessage = (result) => {
@@ -1525,27 +1313,146 @@ app.registerExtension({
     const runValidation = async (force = false) => {
       if (validationInFlight) return null;
       validationInFlight = true;
-      const payload = await getCurrentPromptPayload();
-      const prompt =
-        payload?.output ??
-        payload?.prompt ??
-        (payload && typeof payload === "object" ? payload : null);
-      const workflowNodes = Array.isArray(payload?.workflow?.nodes) ? payload.workflow.nodes : null;
-      const signature = signatureFromPrompt(prompt);
-      if (!force && signature && signature === lastValidationSignature) {
+      try {
+        const payload = await getCurrentPromptPayload();
+        const prompt =
+          payload?.output ??
+          payload?.prompt ??
+          (payload && typeof payload === "object" ? payload : null);
+        const workflowNodes = Array.isArray(payload?.workflow?.nodes) ? payload.workflow.nodes : null;
+        const signature = signatureFromPrompt(prompt);
+        if (!force && signature && signature === lastValidationSignature) {
+          return { ok: !validateBtn.disabled, errors: [], warnings: [] };
+        }
+        const validation = validateWorkflow(prompt, workflowNodes);
+        lastValidationSignature = signature || lastValidationSignature;
+        const pipelineSteps = extractPipelineSteps(prompt);
+        if (pipelineSteps.length) {
+          pipelineState.steps = pipelineSteps;
+          setPipelineLoaded(true);
+          await renderPipelineGraph(pipelineSteps);
+          const pipelineOk = await validatePipelineSteps(pipelineSteps);
+          pipelineStartBtn.disabled = !pipelineOk;
+          setCompatStatus(pipelineOk ? "Pipeline ready ✅" : "Pipeline incomplete or invalid.");
+        } else if (pipelineState.steps.length) {
+          setPipelineLoaded(true);
+          await renderPipelineGraph(pipelineState.steps);
+          const pipelineOk = await validatePipelineSteps(pipelineState.steps);
+          pipelineStartBtn.disabled = !pipelineOk;
+          setCompatStatus(pipelineOk ? "Pipeline ready ✅ (cached)" : "Pipeline incomplete or invalid.");
+        } else {
+          setPipelineLoaded(false);
+          updateValidationUI(validation);
+          pipelineGraphView?.root?.replaceChildren();
+          setPipelineGraphStatus("Pipeline graph will appear here once loaded.");
+          pipelineStartBtn.disabled = true;
+        }
+        if (!validation.ok && validation.errors?.some((e) => e.includes("Workflow not readable"))) {
+          scheduleValidationRetry();
+        } else {
+          validationRetries = 0;
+        }
+        return validation;
+      } finally {
         validationInFlight = false;
-        return { ok: !validateBtn.disabled, errors: [], warnings: [] };
       }
-      const validation = validateWorkflow(prompt, workflowNodes);
-      lastValidationSignature = signature || lastValidationSignature;
-      updateValidationUI(validation);
-      validationInFlight = false;
-      if (!validation.ok && validation.errors?.some((e) => e.includes("Workflow not readable"))) {
-        scheduleValidationRetry();
-      } else {
-        validationRetries = 0;
+    };
+
+    const runPipeline = async (prompt) => {
+      const steps = extractPipelineSteps(prompt);
+      if (!steps.length) {
+        setStatus("No pipeline steps found.");
+        return false;
       }
-      return validation;
+      const generateStep = steps.find((s) => s.role === "generate");
+      const executeStep = steps.find((s) => s.role === "execute");
+      if (!executeStep) {
+        setStatus("Pipeline missing execute step.");
+        return false;
+      }
+
+      pipelineState.steps = steps;
+      pipelinePayloadEntry = null;
+      pipelineState.lastRun = {
+        startedAt: Date.now(),
+        endedAt: null,
+        steps: Object.fromEntries(steps.map((s) => [s.id, { status: "pending" }])),
+      };
+      await renderPipelineGraph(steps);
+
+      const desiredCycles = Number(cyclesInput.value || 1);
+      const loopId = await createLoopInternal(desiredCycles);
+      if (!loopId) return false;
+      setCurrentLoopId(loopId);
+      await refreshLoopDetail();
+
+      setStatus("Syncing pipeline config...");
+      await setCurrentWorkflow({ force: true, silent: true });
+
+      let payloadCount = null;
+      if (generateStep && generateStep.workflow && generateStep.workflow !== "(none)") {
+        pipelineActiveStepId = generateStep.id;
+        pipelineSelectedStepId = generateStep.id;
+        updatePipelineStep(generateStep.id, "running", { startedAt: Date.now() });
+        await renderPipelineGraph(steps);
+        setStatus(`Loading payload workflow: ${generateStep.workflow}`);
+        const ok = await loadWorkflowByName(generateStep.workflow);
+        if (!ok) {
+          updatePipelineStep(generateStep.id, "error", { endedAt: Date.now() });
+          pipelineState.lastRun.endedAt = Date.now();
+          await renderPipelineGraph(steps);
+          setStatus("Failed to load payload workflow.");
+          return false;
+        }
+        await injectLoopId();
+        await setCurrentWorkflow({ force: true, silent: true });
+        setStatus("Generating payload...");
+        await stepCycle({ forceSync: false });
+        const payloadData = await waitForManifest((data) => {
+          const entry = data?.manifest?.find((m) => m.prompt_id === lastStepPromptId);
+          return entry && entry.status === "returned" && Array.isArray(entry.outputs?.json);
+        });
+        if (!payloadData) {
+          updatePipelineStep(generateStep.id, "error", { endedAt: Date.now() });
+          pipelineState.lastRun.endedAt = Date.now();
+          await renderPipelineGraph(steps);
+          setStatus("Payload generation timed out.");
+          return false;
+        }
+        const entry = payloadData.manifest?.find((m) => m.prompt_id === lastStepPromptId);
+        if (entry && Array.isArray(entry.outputs?.json)) {
+          payloadCount = entry.outputs.json.length;
+        }
+        if (entry) {
+          pipelinePayloadEntry = entry;
+        }
+        await apiPost("/lemouf/loop/reset", { loop_id: loopId, keep_workflow: true });
+        updatePipelineStep(generateStep.id, "done", { endedAt: Date.now() });
+        pipelineActiveStepId = null;
+        await renderPipelineGraph(steps);
+      }
+
+      pipelineActiveStepId = executeStep.id;
+      pipelineSelectedStepId = executeStep.id;
+      updatePipelineStep(executeStep.id, "running", { startedAt: Date.now() });
+      await renderPipelineGraph(steps);
+      if (payloadCount && Number.isFinite(payloadCount)) {
+        cyclesInput.value = String(payloadCount);
+        await apiPost("/lemouf/loop/config", { loop_id: loopId, total_cycles: payloadCount });
+      }
+      setStatus(`Loading execute workflow: ${executeStep.workflow}`);
+      const ok = await loadWorkflowByName(executeStep.workflow);
+      if (!ok) {
+        setStatus("Failed to load execute workflow.");
+        return false;
+      }
+      await injectLoopId();
+      await setCurrentWorkflow({ force: true, silent: true });
+      setStatus("Starting cycle...");
+      await stepCycle({ forceSync: false });
+      pipelineActiveStepId = null;
+      await renderPipelineGraph(steps);
+      return true;
     };
 
     const validateAndStart = async () => {
@@ -1553,6 +1460,32 @@ app.registerExtension({
       if (!validation?.ok) {
         setStatus("Workflow not compatible.");
         return;
+      }
+      const payload = await getCurrentPromptPayload();
+      const prompt =
+        payload?.output ??
+        payload?.prompt ??
+        (payload && typeof payload === "object" ? payload : null);
+      const pipelineSteps = extractPipelineSteps(prompt);
+      if (pipelineSteps.length) {
+        await runPipeline(prompt);
+        return;
+      }
+      if (pipelineState.steps.length && pipelineSelect.value) {
+        setStatus("Loading pipeline workflow...");
+        const ok = await loadWorkflowByName(pipelineSelect.value);
+        if (ok) {
+          const payload2 = await getCurrentPromptPayload();
+          const prompt2 =
+            payload2?.output ??
+            payload2?.prompt ??
+            (payload2 && typeof payload2 === "object" ? payload2 : null);
+          const steps2 = extractPipelineSteps(prompt2);
+          if (steps2.length) {
+            await runPipeline(prompt2);
+            return;
+          }
+        }
       }
       const desiredCycles = Number(cyclesInput.value || 1);
       const loopId = await createLoopInternal(desiredCycles);
@@ -1605,91 +1538,106 @@ app.registerExtension({
     };
 
     const resizer = el("div", { class: "lemouf-loop-resizer" });
-    const validateBtn = el("button", { class: "lemouf-loop-btn alt", onclick: validateAndStart, text: "Validate & Start" });
-    const preStartSection = el("div", { class: "lemouf-loop-prestart" });
-    const postStartSection = el("div", { class: "lemouf-loop-poststart", style: "display:none;" });
-    const postStartTop = el("div", { class: "lemouf-loop-poststart-top" });
-    const postStartBottom = el("div", { class: "lemouf-loop-poststart-bottom" });
     const exportBtn = el("button", { class: "lemouf-loop-btn alt", text: "Export approved", onclick: exportApproved });
     const exitBtn = el("button", { class: "lemouf-loop-btn alt", text: "Exit loop", onclick: resetToStart });
-    const headerExitBtn = el("button", { class: "lemouf-loop-header-btn", title: "Exit loop", text: "⏏" });
-    headerExitBtn.addEventListener("click", resetToStart);
+    headerBackBtn = el("button", { class: "lemouf-loop-header-btn", title: "Back to home", text: "←" });
+    headerMenu = el("div", { class: "lemouf-loop-header-menu" });
+    const headerMenuHome = el("button", { class: "lemouf-loop-header-menu-btn", text: "Go to home" });
+    const headerMenuExit = el("button", { class: "lemouf-loop-header-menu-btn", text: "Exit loop" });
+    headerMenu.append(headerMenuHome, headerMenuExit);
+    const headerActions = el("div", { class: "lemouf-loop-header-actions" }, [headerBackBtn, headerMenu]);
+    closeHeaderMenu = () => headerMenu.classList.remove("is-open");
+    const toggleHeaderMenu = () => headerMenu.classList.toggle("is-open");
+    headerBackBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const hasLoop = Boolean(currentLoopId);
+      if (!hasLoop) {
+        setScreen("home");
+        return;
+      }
+      toggleHeaderMenu();
+    });
+    headerMenuHome.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeHeaderMenu();
+      setScreen("home");
+    });
+    headerMenuExit.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closeHeaderMenu();
+      resetToStart();
+    });
     exportBtn.style.display = "none";
     exitBtn.style.display = "none";
-    headerExitBtn.style.display = "none";
+    headerBackBtn.style.display = "none";
     const actionRow = el("div", { class: "lemouf-loop-row" }, [
       el("button", { class: "lemouf-loop-btn lemouf-loop-action approve", onclick: () => decision("approve"), text: "Approve" }),
       el("button", { class: "lemouf-loop-btn lemouf-loop-action reject", onclick: () => decision("reject"), text: "Reject" }),
       el("button", { class: "lemouf-loop-btn lemouf-loop-action replay", onclick: () => decision("replay"), text: "Replay" }),
     ]);
-    panel = el("div", { class: "lemouf-loop-panel", id: "lemouf-loop-panel" }, [
-      resizer,
-      el("div", { class: "lemouf-loop-header" }, [
-        el("div", { class: "lemouf-loop-title", text: "leMouf Loop" }),
-        headerExitBtn,
-      ]),
-      preStartSection,
-      postStartSection,
-    ]);
-
-    preStartSection.append(
-      el("div", { class: "lemouf-loop-inline" }, [
-        el("label", { text: "Total cycles" }),
-        cyclesInput,
-        validateBtn,
-      ]),
-      el("div", { class: "lemouf-loop-field" }, [compatStatus]),
-    );
-
-    postStartSection.append(postStartTop, postStartBottom);
-
-    postStartTop.append(
+    const runScreen = createRunScreen({
       progressWrap,
       previewWrap,
       actionRow,
-      el("div", { class: "lemouf-loop-row" }, [exportBtn]),
-      el("div", { class: "lemouf-loop-row" }, [exitBtn]),
-      el("div", { class: "lemouf-loop-field", style: "display:none;" }, [el("div", { text: "Overrides (JSON map)" })]),
-      el("div", { class: "lemouf-loop-field", style: "display:none;" }, [overridesBox]),
-      el("div", { class: "lemouf-loop-row", style: "display:none;" }, [
-        el("button", { class: "lemouf-loop-btn", onclick: applyOverrides, text: "Apply overrides" }),
+      exportBtn,
+      exitBtn,
+      overridesBox,
+      actionStatus,
+      manifestBox,
+      loopIdLabel,
+      statusBadge,
+      cycleBadge,
+      retryBadge,
+      autoSyncLabel,
+    });
+    const postStartSection = runScreen.root;
+    const postStartTop = runScreen.postStartTop;
+    const postStartBottom = runScreen.postStartBottom;
+    runScreen.overridesApplyBtn.addEventListener("click", applyOverrides);
+    runScreen.createBtn.addEventListener("click", createLoop);
+    runScreen.refreshBtn.addEventListener("click", refreshLoops);
+    runScreen.setCyclesBtn.addEventListener("click", setTotalCycles);
+    runScreen.syncBtn.addEventListener("click", () => setCurrentWorkflow({ force: true }));
+    runScreen.useCurrentBtn.addEventListener("click", setCurrentWorkflow);
+    runScreen.injectBtn.addEventListener("click", injectLoopId);
+    runScreen.stepBtn.addEventListener("click", stepCycle);
+    panel = el("div", { class: "lemouf-loop-panel", id: "lemouf-loop-panel" }, [
+      resizer,
+      el("div", { class: "lemouf-loop-header" }, [
+        el("div", { class: "lemouf-loop-title", text: "LEMOUF EXTENSION" }),
+        headerActions,
       ]),
-      el("div", { class: "lemouf-loop-field" }, [actionStatus]),
-      el("div", { class: "lemouf-loop-field" }, [manifestBox]),
-    );
+      preStartSection,
+      payloadSection,
+      postStartSection,
+      el("div", { class: "lemouf-loop-footer", text: `LEMOUF EXTENSION · ${PANEL_VERSION}` }),
+    ]);
 
-    postStartBottom.append(
-      el("details", { class: "lemouf-loop-accordion" }, [
-        el("summary", { text: "Advanced controls" }),
-        loopIdLabel,
-        el("div", { class: "lemouf-loop-row" }, [statusBadge, cycleBadge, retryBadge, seedBadge]),
-        el("div", { class: "lemouf-loop-row" }, [
-          el("button", { class: "lemouf-loop-btn", onclick: createLoop, text: "Create" }),
-          el("button", { class: "lemouf-loop-btn alt", onclick: refreshLoops, text: "Refresh" }),
-          el("button", { class: "lemouf-loop-btn ghost", onclick: setTotalCycles, text: "Set cycles" }),
-        ]),
-        el("div", { class: "lemouf-loop-row" }, [
-          autoSyncLabel,
-          el("button", { class: "lemouf-loop-btn alt", onclick: () => setCurrentWorkflow({ force: true }), text: "Sync now" }),
-        ]),
-        el("div", { class: "lemouf-loop-row" }, [
-          el("button", { class: "lemouf-loop-btn", onclick: setCurrentWorkflow, text: "Use current WF" }),
-          el("button", { class: "lemouf-loop-btn", onclick: injectLoopId, text: "Inject loop_id" }),
-          el("button", { class: "lemouf-loop-btn alt", onclick: stepCycle, text: "Step cycle" }),
-        ]),
-      ]),
-    );
+    validateBtn.addEventListener("click", validateAndStart);
+    setPipelineLoaded(false);
 
     document.body.appendChild(panel);
-    let currentGutter = applyGutterWidth(
-      Number(localStorage.getItem("lemoufLoopGutterWidth") || 420)
-    );
+    document.addEventListener("click", () => {
+      if (typeof closeHeaderMenu === "function") closeHeaderMenu();
+    });
+    setScreen(pendingScreen || "home");
+    let currentGutter = Number(localStorage.getItem("lemoufLoopGutterWidth") || 420);
+    applyGutterWidth(currentGutter);
+    const savedVisible = localStorage.getItem("lemoufLoopPanelVisible");
+    if (savedVisible === "0") {
+      setPanelVisible(false);
+    }
+    setupToggleControls();
+    refreshPipelineList({ silent: true });
+    const toggleObserver = new MutationObserver(() => setupToggleControls());
+    toggleObserver.observe(document.body, { childList: true, subtree: true });
     resizer.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
       const startX = ev.clientX;
       const startWidth = currentGutter;
       const onMove = (moveEv) => {
         const delta = startX - moveEv.clientX;
+        if (!panelVisible) return;
         currentGutter = applyGutterWidth(startWidth + delta);
       };
       const onUp = () => {
@@ -1699,6 +1647,12 @@ app.registerExtension({
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
+    });
+    window.addEventListener("keydown", (ev) => {
+      if (ev.altKey && !ev.shiftKey && !ev.ctrlKey && ev.code === "KeyL") {
+        ev.preventDefault();
+        togglePanel();
+      }
     });
     try {
       api.addEventListener?.("graphChanged", () => {
