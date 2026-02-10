@@ -1456,11 +1456,6 @@ app.registerExtension({
     };
 
     const validateAndStart = async () => {
-      const validation = await runValidation();
-      if (!validation?.ok) {
-        setStatus("Workflow not compatible.");
-        return;
-      }
       const payload = await getCurrentPromptPayload();
       const prompt =
         payload?.output ??
@@ -1468,6 +1463,11 @@ app.registerExtension({
         (payload && typeof payload === "object" ? payload : null);
       const pipelineSteps = extractPipelineSteps(prompt);
       if (pipelineSteps.length) {
+        const pipelineOk = await validatePipelineSteps(pipelineSteps);
+        if (!pipelineOk) {
+          setStatus("Pipeline incomplete or invalid.");
+          return;
+        }
         await runPipeline(prompt);
         return;
       }
@@ -1482,10 +1482,20 @@ app.registerExtension({
             (payload2 && typeof payload2 === "object" ? payload2 : null);
           const steps2 = extractPipelineSteps(prompt2);
           if (steps2.length) {
+            const pipelineOk2 = await validatePipelineSteps(steps2);
+            if (!pipelineOk2) {
+              setStatus("Pipeline incomplete or invalid.");
+              return;
+            }
             await runPipeline(prompt2);
             return;
           }
         }
+      }
+      const validation = await runValidation();
+      if (!validation?.ok) {
+        setStatus("Workflow not compatible.");
+        return;
       }
       const desiredCycles = Number(cyclesInput.value || 1);
       const loopId = await createLoopInternal(desiredCycles);
