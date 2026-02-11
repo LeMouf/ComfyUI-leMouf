@@ -763,7 +763,11 @@ app.registerExtension({
     };
 
     const updateToggleUI = () => {
-      if (menuToggleItem) menuToggleItem.textContent = panelVisible ? "Hide leMouf Loop panel" : "Show leMouf Loop panel";
+      if (!menuToggleItem) return;
+      const nextText = panelVisible ? "Hide leMouf Loop panel" : "Show leMouf Loop panel";
+      if (menuToggleItem.textContent !== nextText) {
+        menuToggleItem.textContent = nextText;
+      }
     };
 
     const setPanelVisible = (value) => {
@@ -1261,15 +1265,15 @@ app.registerExtension({
     };
 
     const setupToggleControls = () => {
+      const menu = findMenuContainer();
+      if (!menu) return false;
       if (!menuToggleItem) {
-        const menu = findMenuContainer();
-        if (menu) {
-          menuToggleItem = el("button", { class: "lemouf-loop-menu-item", text: "Toggle leMouf Loop panel" });
-          menuToggleItem.addEventListener("click", togglePanel);
-          menu.appendChild(menuToggleItem);
-        }
+        menuToggleItem = el("button", { class: "lemouf-loop-menu-item", text: "Toggle leMouf Loop panel" });
+        menuToggleItem.addEventListener("click", togglePanel);
+        menu.appendChild(menuToggleItem);
       }
       updateToggleUI();
+      return true;
     };
 
     const formatValidationMessage = (result) => {
@@ -1639,7 +1643,9 @@ app.registerExtension({
     }
     setupToggleControls();
     refreshPipelineList({ silent: true });
-    const toggleObserver = new MutationObserver(() => setupToggleControls());
+    const toggleObserver = new MutationObserver(() => {
+      if (setupToggleControls()) toggleObserver.disconnect();
+    });
     toggleObserver.observe(document.body, { childList: true, subtree: true });
     resizer.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
