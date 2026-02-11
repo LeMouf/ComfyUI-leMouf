@@ -106,9 +106,15 @@ function hashString(input) {
 }
 
 function signatureFromPrompt(prompt) {
+  if (!prompt || typeof prompt !== "object") return null;
   try {
-    const json = JSON.stringify(prompt);
-    return hashString(json);
+    const keys = Object.keys(prompt);
+    let signature = `${keys.length}`;
+    for (const key of keys) {
+      const node = prompt[key];
+      signature += `|${key}:${node?.class_type || node?.type || ""}`;
+    }
+    return hashString(signature);
   } catch {
     return null;
   }
@@ -407,6 +413,8 @@ app.registerExtension({
     let hasStarted = false;
     let panelVisible = true;
     let menuToggleItem = null;
+    let menuObserver = null;
+    let menuContainer = null;
     let lastStepPromptId = null;
     let autoRefreshTimer = null;
     let autoRefreshAttempts = 0;
@@ -1267,6 +1275,18 @@ app.registerExtension({
     const setupToggleControls = () => {
       const menu = findMenuContainer();
       if (!menu) return false;
+      if (menuContainer !== menu) {
+        menuObserver?.disconnect();
+        menuContainer = menu;
+        menuObserver = new MutationObserver(() => {
+          if (!menuContainer) return;
+          if (!menuToggleItem || !menuContainer.contains(menuToggleItem)) {
+            menuToggleItem = null;
+            setupToggleControls();
+          }
+        });
+        menuObserver.observe(menuContainer, { childList: true });
+      }
       if (!menuToggleItem) {
         menuToggleItem = el("button", { class: "lemouf-loop-menu-item", text: "Toggle leMouf Loop panel" });
         menuToggleItem.addEventListener("click", togglePanel);

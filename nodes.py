@@ -14,6 +14,21 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def _log(message: str) -> None:
+    print(f"[leMouf] {message}")
+
+
+MAX_LOOPS = _int_env("LEMOUF_MAX_LOOPS", 50)
+MAX_MANIFEST = _int_env("LEMOUF_MAX_MANIFEST", 2000)
+
+
 try:
     from server import PromptServer
     from aiohttp import web
@@ -22,11 +37,12 @@ try:
         from comfy_execution.utils import get_executing_context
     except Exception:
         get_executing_context = None  # type: ignore
-except Exception:  # pragma: no cover - ComfyUI runtime only
+except Exception as exc:  # pragma: no cover - ComfyUI runtime only
     PromptServer = None  # type: ignore
     web = None  # type: ignore
     execution = None  # type: ignore
     get_executing_context = None  # type: ignore
+    _log(f"Runtime imports unavailable: {exc}")
 
 
 # -------------------------
@@ -72,6 +88,30 @@ class LoopRegistry:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._loops: Dict[str, LoopState] = {}
+        self._last_warning: Optional[str] = None
+
+    def _prune_locked(self) -> None:
+        if MAX_LOOPS > 0 and len(self._loops) > MAX_LOOPS:
+            ordered = sorted(self._loops.values(), key=lambda s: s.updated_at)
+            overflow = len(self._loops) - MAX_LOOPS
+            for state in ordered[:overflow]:
+                self._loops.pop(state.loop_id, None)
+                _log(f"Pruned loop {state.loop_id} (max loops reached)")
+            self._last_warning = f"loop_limit_reached: max_loops={MAX_LOOPS}"
+        if MAX_MANIFEST > 0:
+            for state in self._loops.values():
+                if len(state.manifest) > MAX_MANIFEST:
+                    overflow = len(state.manifest) - MAX_MANIFEST
+                    state.manifest = state.manifest[overflow:]
+                    state.updated_at = time.time()
+                    _log(f"Trimmed manifest for {state.loop_id} (kept {MAX_MANIFEST})")
+                    self._last_warning = f"manifest_limit_reached: max_manifest={MAX_MANIFEST}"
+
+    def consume_warning(self) -> Optional[str]:
+        with self._lock:
+            warning = self._last_warning
+            self._last_warning = None
+            return warning
 
     def create_or_get(self, loop_id: Optional[str] = None) -> LoopState:
         with self._lock:
@@ -80,6 +120,7 @@ class LoopRegistry:
             new_id = loop_id or str(uuid.uuid4())
             state = LoopState(loop_id=new_id)
             self._loops[new_id] = state
+            self._prune_locked()
             return state
 
     def get(self, loop_id: str) -> Optional[LoopState]:
@@ -139,6 +180,7 @@ class LoopRegistry:
                 return None
             state.manifest.append(entry)
             state.updated_at = time.time()
+            self._prune_locked()
             return entry
 
     def update_manifest(
@@ -846,30 +888,36 @@ def _ensure_routes() -> None:
                     "updated_at": s.updated_at,
                 }
             )
-        return web.json_response({"loops": loops})
+        warning = REGISTRY.consume_warning()
+        payload = {"loops": loops}
+        if warning:
+            payload["warning"] = warning
+        return web.json_response(payload)
 
     async def loop_get(request):
         loop_id = request.match_info["loop_id"]
         s = REGISTRY.get(loop_id)
         if not s:
             return web.json_response({"error": "not_found"}, status=404)
-        return web.json_response(
-            {
-                "loop_id": s.loop_id,
-                "status": s.status,
-                "mode": s.mode,
-                "total_cycles": s.total_cycles,
-                "current_cycle": s.current_cycle,
-                "current_retry": s.current_retry,
-                "overrides": s.overrides,
-                "loop_map": s.loop_map,
-                "loop_map_error": s.loop_map_error,
-                "payload_error": s.payload_error,
-                "workflow_source": s.workflow_source,
-                "manifest": [entry.__dict__ for entry in s.manifest],
-                "last_error": s.last_error,
-            }
-        )
+        warning = REGISTRY.consume_warning()
+        payload = {
+            "loop_id": s.loop_id,
+            "status": s.status,
+            "mode": s.mode,
+            "total_cycles": s.total_cycles,
+            "current_cycle": s.current_cycle,
+            "current_retry": s.current_retry,
+            "overrides": s.overrides,
+            "loop_map": s.loop_map,
+            "loop_map_error": s.loop_map_error,
+            "payload_error": s.payload_error,
+            "workflow_source": s.workflow_source,
+            "manifest": [entry.__dict__ for entry in s.manifest],
+            "last_error": s.last_error,
+        }
+        if warning:
+            payload["warning"] = warning
+        return web.json_response(payload)
 
     async def loop_create(request):
         payload = await request.json()
@@ -1249,5 +1297,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 # Register routes on import so the UI can call the API without running a node first.
 try:  # pragma: no cover - runtime guard
     _ensure_routes()
-except Exception:
-    pass
+except Exception as exc:
+    _log(f"Failed to register routes: {exc}")
