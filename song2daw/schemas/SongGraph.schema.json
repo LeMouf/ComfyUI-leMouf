@@ -1,0 +1,151 @@
+{
+  "$id": "https://example.org/schemas/song2daw/SongGraph.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SongGraph",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pipeline_version",
+    "nodes",
+    "edges",
+    "timebase"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "pipeline_version": {
+      "type": "string"
+    },
+    "node_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "model_versions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "timebase": {
+      "type": "object",
+      "required": [
+        "audio",
+        "musical"
+      ],
+      "properties": {
+        "audio": {
+          "type": "object",
+          "required": [
+            "sr"
+          ],
+          "properties": {
+            "sr": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "musical": {
+          "type": "object",
+          "required": [
+            "ppq"
+          ],
+          "properties": {
+            "ppq": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "description": "Artifact index produced by pipeline steps",
+      "additionalProperties": {
+        "type": "object"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "data"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        },
+        "t": {
+          "type": "object",
+          "description": "Optional time span",
+          "properties": {
+            "t0_sec": {
+              "type": "number"
+            },
+            "t1_sec": {
+              "type": "number"
+            },
+            "bar0": {
+              "type": "number"
+            },
+            "bar1": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "edge": {
+      "type": "object",
+      "required": [
+        "from",
+        "to",
+        "type"
+      ],
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        },
+        "data": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

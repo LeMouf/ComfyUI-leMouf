@@ -1,0 +1,9 @@
+name: SourceSeparation
+version: 0.1.0
+description: Separate audio into abstract sources; align and index artifacts.
+inputs:
+  - artifacts.audio_canonical
+outputs:
+  - artifacts.sources
+  - artifacts.stems_generated
+updates_songgraph: true

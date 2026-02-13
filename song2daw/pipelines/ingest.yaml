@@ -1,0 +1,10 @@
+name: Ingest
+version: 0.1.0
+description: Load audio or stems, normalize, and emit canonical artifacts.
+inputs:
+  - audio_path
+  - stems_dir
+outputs:
+  - artifacts.audio_canonical
+  - artifacts.stems_canonical
+updates_songgraph: true

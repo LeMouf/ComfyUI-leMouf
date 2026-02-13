@@ -1,0 +1,9 @@
+name: EffectEstimation
+version: 0.1.0
+description: Estimate FX proxies (reverb/delay/compression/etc.) per source/segment.
+inputs:
+  - artifacts.sources
+  - artifacts.sections
+outputs:
+  - artifacts.fx_suggestions
+updates_songgraph: true

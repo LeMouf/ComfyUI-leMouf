@@ -1,0 +1,13 @@
+name: ProjectionReaper
+version: 0.1.0
+description: Project SongGraph to a Reaper .rpp project and export assets.
+inputs:
+  - songgraph
+  - artifacts.stems_generated
+  - artifacts.tempo
+  - artifacts.sections
+  - artifacts.fx_suggestions
+outputs:
+  - artifacts.reaper_rpp
+  - artifacts.export_manifest
+updates_songgraph: false

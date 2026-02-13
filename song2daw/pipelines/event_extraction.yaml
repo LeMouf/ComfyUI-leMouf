@@ -1,0 +1,10 @@
+name: EventExtraction
+version: 0.1.0
+description: Extract onsets/notes; optionally emit MIDI.
+inputs:
+  - artifacts.sources
+  - artifacts.beatgrid
+outputs:
+  - artifacts.events
+  - artifacts.midi_optional
+updates_songgraph: true

@@ -1,0 +1,9 @@
+name: TempoAnalysis
+version: 0.1.0
+description: Detect BPM, beat grid and downbeats.
+inputs:
+  - artifacts.audio_canonical
+outputs:
+  - artifacts.tempo
+  - artifacts.beatgrid
+updates_songgraph: true

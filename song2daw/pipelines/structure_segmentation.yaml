@@ -1,0 +1,9 @@
+name: StructureSegmentation
+version: 0.1.0
+description: Segment the song into sections with confidence scores.
+inputs:
+  - artifacts.audio_canonical
+  - artifacts.beatgrid
+outputs:
+  - artifacts.sections
+updates_songgraph: true
