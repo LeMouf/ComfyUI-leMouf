@@ -1,1 +1,230 @@
-{"id": "payload-demo", "revision": 0, "last_node_id": 2, "last_link_id": 1, "nodes": [{"id": 1, "type": "LoopPayload", "pos": [260, 140], "size": [360, 200], "flags": {}, "order": 0, "mode": 0, "inputs": [{"localized_name": "payload_json", "name": "payload_json", "type": "STRING", "widget": {"name": "payload_json"}, "link": null}], "outputs": [{"localized_name": "payload", "name": "payload", "type": "*", "links": [1]}], "properties": {"Node name for S&R": "LoopPayload"}, "widgets_values": ["[\n  {\n    \"prompt\": \"glass bottle with purple aurora\",\n    \"seed\": 12345,\n    \"cfg\": 7.5,\n    \"steps\": 20\n  },\n  {\n    \"prompt\": \"glass bottle on a misty lake\",\n    \"seed\": 54321,\n    \"cfg\": 8.0,\n    \"steps\": 24\n  },\n  {\n    \"prompt\": \"glass bottle in a sunset desert\",\n    \"seed\": 98765,\n    \"cfg\": 6.5,\n    \"steps\": 18\n  }\n]"]}, {"id": 2, "type": "LoopReturn", "pos": [720, 180], "size": [320, 160], "flags": {}, "order": 1, "mode": 0, "inputs": [{"localized_name": "payload", "name": "payload", "type": "*", "link": 1}, {"localized_name": "loop_id", "name": "loop_id", "type": "STRING", "widget": {"name": "loop_id"}, "link": null}], "outputs": [{"localized_name": "payload", "name": "payload", "type": "*", "links": null}], "properties": {"Node name for S&R": "LoopReturn"}, "widgets_values": [""]}], "links": [[1, 1, 0, 2, 0, "*"]], "groups": [], "config": {}, "extra": {"ds": {"scale": 1, "offset": [0, 0]}, "workflowRendererVersion": "LG", "ue_links": []}, "version": 0.4}
+{
+  "id": "payload-demo",
+  "revision": 0,
+  "last_node_id": 3,
+  "last_link_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoopPayload",
+      "pos": [
+        260,
+        140
+      ],
+      "size": [
+        360,
+        200
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "payload_json",
+          "name": "payload_json",
+          "type": "STRING",
+          "widget": {
+            "name": "payload_json"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "payload",
+          "name": "payload",
+          "type": "*",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoopPayload"
+      },
+      "widgets_values": [
+        "[\n  {\n    \"prompt\": \"glass bottle with purple aurora\",\n    \"seed\": 12345,\n    \"cfg\": 7.5,\n    \"steps\": 20\n  },\n  {\n    \"prompt\": \"glass bottle on a misty lake\",\n    \"seed\": 54321,\n    \"cfg\": 8.0,\n    \"steps\": 24\n  },\n  {\n    \"prompt\": \"glass bottle in a sunset desert\",\n    \"seed\": 98765,\n    \"cfg\": 6.5,\n    \"steps\": 18\n  }\n]"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoopReturn",
+      "pos": [
+        720,
+        180
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "payload",
+          "name": "payload",
+          "type": "*",
+          "link": 1
+        },
+        {
+          "localized_name": "loop_id",
+          "name": "loop_id",
+          "type": "STRING",
+          "widget": {
+            "name": "loop_id"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "payload",
+          "name": "payload",
+          "type": "*",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoopReturn"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "LeMoufWorkflowProfile",
+      "pos": [
+        -140,
+        40
+      ],
+      "size": [
+        320,
+        190
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "profile_id",
+          "name": "profile_id",
+          "type": "COMBO",
+          "widget": {
+            "name": "profile_id"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "profile_id_custom",
+          "name": "profile_id_custom",
+          "type": "STRING",
+          "widget": {
+            "name": "profile_id_custom"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "profile_version",
+          "name": "profile_version",
+          "type": "STRING",
+          "widget": {
+            "name": "profile_version"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ui_contract_version",
+          "name": "ui_contract_version",
+          "type": "STRING",
+          "widget": {
+            "name": "ui_contract_version"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "workflow_kind",
+          "name": "workflow_kind",
+          "type": "COMBO",
+          "widget": {
+            "name": "workflow_kind"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "links": []
+        },
+        {
+          "localized_name": "profile_id",
+          "name": "profile_id",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "profile_version",
+          "name": "profile_version",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "ui_contract_version",
+          "name": "ui_contract_version",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "workflow_kind",
+          "name": "workflow_kind",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LeMoufWorkflowProfile"
+      },
+      "widgets_values": [
+        "generic_loop",
+        "",
+        "0.1.0",
+        "1.0.0",
+        "branch"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "*"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1,
+      "offset": [
+        0,
+        0
+      ]
+    },
+    "workflowRendererVersion": "LG",
+    "ue_links": []
+  },
+  "version": 0.4
+}

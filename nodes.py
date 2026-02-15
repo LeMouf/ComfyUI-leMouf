@@ -5,14 +5,24 @@ ComfyUI-leMouf nodes.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
+import subprocess
+import sys
 import threading
 import time
 import uuid
+import wave
+from array import array
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from hashlib import sha256
+from typing import Any, Dict, List, Mapping, Optional, Tuple
+
+THIS_DIR = os.path.dirname(os.path.realpath(__file__))
+if THIS_DIR not in sys.path:
+    sys.path.insert(0, THIS_DIR)
 
 def _int_env(name: str, default: int) -> int:
     try:
@@ -27,6 +37,8 @@ def _log(message: str) -> None:
 
 MAX_LOOPS = _int_env("LEMOUF_MAX_LOOPS", 50)
 MAX_MANIFEST = _int_env("LEMOUF_MAX_MANIFEST", 2000)
+MAX_SONG2DAW_RUNS = _int_env("LEMOUF_MAX_SONG2DAW_RUNS", 100)
+_MIDI_EXTENSIONS = {".mid", ".midi"}
 
 
 try:
@@ -202,6 +214,61 @@ class LoopRegistry:
 
 
 REGISTRY = LoopRegistry()
+
+
+# -------------------------
+# song2daw run state + registry
+# -------------------------
+
+
+@dataclass
+class Song2DawRunState:
+    run_id: str
+    status: str
+    audio_path: str
+    stems_dir: str
+    step_configs: Dict[str, Any] = field(default_factory=dict)
+    model_versions: Dict[str, Any] = field(default_factory=dict)
+    run_dir: str = ""
+    summary: Dict[str, Any] = field(default_factory=dict)
+    result: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[str] = None
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+
+class Song2DawRunRegistry:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._runs: Dict[str, Song2DawRunState] = {}
+
+    def _prune_locked(self) -> None:
+        if MAX_SONG2DAW_RUNS > 0 and len(self._runs) > MAX_SONG2DAW_RUNS:
+            ordered = sorted(self._runs.values(), key=lambda s: s.updated_at)
+            overflow = len(self._runs) - MAX_SONG2DAW_RUNS
+            for state in ordered[:overflow]:
+                self._runs.pop(state.run_id, None)
+
+    def add(self, run: Song2DawRunState) -> Song2DawRunState:
+        with self._lock:
+            self._runs[run.run_id] = run
+            self._prune_locked()
+            return run
+
+    def get(self, run_id: str) -> Optional[Song2DawRunState]:
+        with self._lock:
+            return self._runs.get(run_id)
+
+    def list(self) -> List[Song2DawRunState]:
+        with self._lock:
+            return sorted(self._runs.values(), key=lambda s: s.updated_at, reverse=True)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._runs.clear()
+
+
+SONG2DAW_RUNS = Song2DawRunRegistry()
 
 
 # -------------------------
@@ -502,24 +569,554 @@ def _list_workflow_files() -> List[str]:
     if not os.path.isdir(folder):
         return []
     files = []
-    for name in os.listdir(folder):
-        if not name.lower().endswith(".json"):
-            continue
-        full = os.path.join(folder, name)
-        if os.path.isfile(full):
-            files.append(name)
+    for root, _dirs, names in os.walk(folder):
+        for name in names:
+            if not name.lower().endswith(".json"):
+                continue
+            full = os.path.join(root, name)
+            if os.path.isfile(full):
+                rel = os.path.relpath(full, folder).replace("\\", "/")
+                files.append(rel)
     return sorted(files)
 
 
 def _load_workflow_file(name: str) -> Dict[str, Any]:
-    safe = os.path.basename(name or "")
-    if not safe or safe != name:
+    raw = str(name or "").strip()
+    if not raw:
         raise RuntimeError("invalid_name")
-    full = os.path.join(_workflows_dir(), safe)
+    normalized = raw.replace("\\", "/")
+    if normalized.startswith("/") or normalized.startswith("./") or normalized.startswith("../"):
+        raise RuntimeError("invalid_name")
+    parts = [part for part in normalized.split("/") if part and part != "."]
+    if not parts or any(part == ".." for part in parts):
+        raise RuntimeError("invalid_name")
+
+    root = os.path.realpath(_workflows_dir())
+    full = os.path.realpath(os.path.join(root, *parts))
+    root_prefix = root if root.endswith(os.sep) else root + os.sep
+    if not (full == root or full.startswith(root_prefix)):
+        raise RuntimeError("invalid_name")
     if not os.path.isfile(full):
         raise RuntimeError("not_found")
     with open(full, "r", encoding="utf-8") as handle:
         return json.load(handle)
+
+
+_WORKFLOW_PROFILE_NODE_TYPE = "LeMoufWorkflowProfile"
+_WORKFLOW_PROFILE_DEFAULT = {
+    "profile_id": "generic_loop",
+    "profile_version": "0.1.0",
+    "ui_contract_version": "1.0.0",
+    "workflow_kind": "master",
+}
+
+
+def _normalize_profile_id(value: Any) -> str:
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    return text
+
+
+def _normalize_semver(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if re.match(r"^\d+\.\d+\.\d+$", text):
+        return text
+    return fallback
+
+
+def _normalize_workflow_kind(value: Any, fallback: str = "master") -> str:
+    text = str(value or "").strip().lower()
+    if text in {"master", "branch"}:
+        return text
+    return fallback
+
+
+def _coalesce_profile_id(profile_id_raw: Any, profile_id_custom_raw: Any) -> str:
+    profile_id = _normalize_profile_id(profile_id_raw)
+    custom = _normalize_profile_id(profile_id_custom_raw)
+    if profile_id in {"custom", "other"}:
+        return custom or ""
+    return profile_id or custom or ""
+
+
+def _finalize_workflow_profile(raw: Optional[Mapping[str, Any]], source: str) -> Dict[str, Any]:
+    value = raw or {}
+    profile_id = _coalesce_profile_id(
+        value.get("profile_id"),
+        value.get("profile_id_custom"),
+    )
+    if not profile_id:
+        profile_id = _WORKFLOW_PROFILE_DEFAULT["profile_id"]
+    return {
+        "profile_id": profile_id,
+        "profile_version": _normalize_semver(
+            value.get("profile_version"),
+            _WORKFLOW_PROFILE_DEFAULT["profile_version"],
+        ),
+        "ui_contract_version": _normalize_semver(
+            value.get("ui_contract_version"),
+            _WORKFLOW_PROFILE_DEFAULT["ui_contract_version"],
+        ),
+        "workflow_kind": _normalize_workflow_kind(
+            value.get("workflow_kind"),
+            _WORKFLOW_PROFILE_DEFAULT["workflow_kind"],
+        ),
+        "source": str(value.get("source") or source or "fallback"),
+    }
+
+
+def _extract_workflow_profile_from_prompt(prompt: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(prompt, Mapping):
+        return None
+    for node in prompt.values():
+        if not isinstance(node, Mapping):
+            continue
+        class_type = str(node.get("class_type") or node.get("type") or "").strip()
+        if class_type != _WORKFLOW_PROFILE_NODE_TYPE:
+            continue
+        inputs = node.get("inputs")
+        if not isinstance(inputs, Mapping):
+            inputs = {}
+        return _finalize_workflow_profile(
+            {
+                "profile_id": inputs.get("profile_id"),
+                "profile_id_custom": inputs.get("profile_id_custom"),
+                "profile_version": inputs.get("profile_version"),
+                "ui_contract_version": inputs.get("ui_contract_version"),
+                "workflow_kind": inputs.get("workflow_kind"),
+                "source": "prompt_node",
+            },
+            "prompt_node",
+        )
+    return None
+
+
+def _extract_workflow_profile_from_workflow(workflow: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(workflow, Mapping):
+        return None
+    nodes = workflow.get("nodes")
+    if not isinstance(nodes, list):
+        return None
+    for node in nodes:
+        if not isinstance(node, Mapping):
+            continue
+        class_type = str(node.get("type") or node.get("class_type") or "").strip()
+        if class_type != _WORKFLOW_PROFILE_NODE_TYPE:
+            continue
+        direct_inputs = node.get("inputs")
+        if not isinstance(direct_inputs, Mapping):
+            direct_inputs = {}
+        widget_values = node.get("widgets_values")
+        if not isinstance(widget_values, list):
+            widget_values = []
+        has_custom_field = len(widget_values) >= 4
+        has_kind_field = len(widget_values) >= 5
+        profile_id = direct_inputs.get("profile_id")
+        if profile_id is None and len(widget_values) >= 1:
+            profile_id = widget_values[0]
+        profile_id_custom = direct_inputs.get("profile_id_custom")
+        if profile_id_custom is None and has_custom_field:
+            profile_id_custom = widget_values[1]
+        profile_version = direct_inputs.get("profile_version")
+        if profile_version is None:
+            if has_custom_field and len(widget_values) >= 3:
+                profile_version = widget_values[2]
+            elif len(widget_values) >= 2:
+                profile_version = widget_values[1]
+        ui_contract_version = direct_inputs.get("ui_contract_version")
+        if ui_contract_version is None:
+            if has_custom_field and len(widget_values) >= 4:
+                ui_contract_version = widget_values[3]
+            elif len(widget_values) >= 3:
+                ui_contract_version = widget_values[2]
+        workflow_kind = direct_inputs.get("workflow_kind")
+        if workflow_kind is None and has_kind_field:
+            workflow_kind = widget_values[4]
+        return _finalize_workflow_profile(
+            {
+                "profile_id": profile_id,
+                "profile_id_custom": profile_id_custom,
+                "profile_version": profile_version,
+                "ui_contract_version": ui_contract_version,
+                "workflow_kind": workflow_kind,
+                "source": "workflow_node",
+            },
+            "workflow_node",
+        )
+    return None
+
+
+def _resolve_workflow_profile(
+    workflow: Optional[Mapping[str, Any]] = None,
+    prompt: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
+    if isinstance(prompt, Mapping):
+        from_prompt = _extract_workflow_profile_from_prompt(prompt)
+        if from_prompt:
+            return from_prompt
+    if isinstance(workflow, Mapping):
+        from_workflow = _extract_workflow_profile_from_workflow(workflow)
+        if from_workflow:
+            return from_workflow
+
+    types: List[str] = []
+    if isinstance(prompt, Mapping):
+        for node in prompt.values():
+            if not isinstance(node, Mapping):
+                continue
+            types.append(str(node.get("class_type") or node.get("type") or "").strip())
+    if not types and isinstance(workflow, Mapping):
+        nodes = workflow.get("nodes")
+        if isinstance(nodes, list):
+            for node in nodes:
+                if not isinstance(node, Mapping):
+                    continue
+                types.append(str(node.get("type") or node.get("class_type") or "").strip())
+    lowered = [item.lower() for item in types if item]
+    if "song2dawrun" in lowered or any("song2daw" in item for item in lowered):
+        return _finalize_workflow_profile(
+            {
+                "profile_id": "song2daw",
+                "source": "heuristic_song2daw",
+            },
+            "heuristic_song2daw",
+        )
+    return _finalize_workflow_profile(
+        {
+            "profile_id": "generic_loop",
+            "source": "fallback_generic",
+        },
+        "fallback_generic",
+    )
+
+
+def _list_workflow_entries() -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
+    for name in _list_workflow_files():
+        profile = _finalize_workflow_profile(
+            {
+                "profile_id": "generic_loop",
+                "source": "list_fallback",
+            },
+            "list_fallback",
+        )
+        try:
+            workflow = _load_workflow_file(name)
+            profile = _resolve_workflow_profile(workflow=workflow, prompt=None)
+        except Exception:
+            pass
+        entries.append({"name": name, "workflow_profile": profile})
+    return entries
+
+
+def _song2daw_run_summary(result: Dict[str, Any]) -> Dict[str, Any]:
+    steps = result.get("steps")
+    if not isinstance(steps, list):
+        steps = []
+    step_summaries = []
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        outputs = step.get("outputs")
+        output_keys = sorted(outputs.keys()) if isinstance(outputs, dict) else []
+        step_summaries.append(
+            {
+                "name": step.get("name"),
+                "version": step.get("version"),
+                "cache_key": step.get("cache_key"),
+                "outputs": output_keys,
+            }
+        )
+    artifacts = result.get("artifacts")
+    artifact_keys = sorted(artifacts.keys()) if isinstance(artifacts, dict) else []
+    return {
+        "step_count": len(step_summaries),
+        "steps": step_summaries,
+        "artifact_keys": artifact_keys,
+    }
+
+
+def _song2daw_build_ui_view_payload(run: Song2DawRunState) -> Dict[str, Any]:
+    from song2daw.core.ui_view import build_ui_view, validate_ui_view
+
+    ui_view = build_ui_view(
+        run.result,
+        run_id=run.run_id,
+        audio_path=run.audio_path,
+        stems_dir=run.stems_dir,
+    )
+    return {
+        "run_id": run.run_id,
+        "status": run.status,
+        "ui_view": ui_view,
+        "valid": validate_ui_view(ui_view),
+    }
+
+
+def _is_midi_path(path: str) -> bool:
+    _, ext = os.path.splitext(str(path or "").strip().lower())
+    return ext in _MIDI_EXTENSIONS
+
+
+def _song2daw_collect_preview_events(result: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    artifacts = result.get("artifacts")
+    if not isinstance(artifacts, Mapping):
+        return []
+
+    events_ref = artifacts.get("events")
+    items = events_ref.get("items") if isinstance(events_ref, Mapping) else None
+    if not isinstance(items, list):
+        return []
+
+    normalized: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        t0 = float(item.get("t0_sec") or 0.0)
+        t1 = float(item.get("t1_sec") or t0)
+        if not math.isfinite(t0) or not math.isfinite(t1):
+            continue
+        if t1 <= t0:
+            t1 = t0 + 0.08
+        velocity = int(item.get("velocity") or 80)
+        note = int(item.get("midi_note") or 60)
+        normalized.append(
+            {
+                "source_id": str(item.get("source_id") or "src:preview"),
+                "t0_sec": max(0.0, t0),
+                "t1_sec": max(0.0, t1),
+                "velocity": max(1, min(127, velocity)),
+                "midi_note": max(12, min(120, note)),
+            }
+        )
+    return normalized
+
+
+def _song2daw_infer_preview_duration_sec(result: Mapping[str, Any], events: List[Dict[str, Any]]) -> float:
+    duration_sec = 0.0
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, Mapping):
+        beatgrid = artifacts.get("beatgrid")
+        beats = beatgrid.get("beats_sec") if isinstance(beatgrid, Mapping) else None
+        if isinstance(beats, list):
+            for beat in beats:
+                if isinstance(beat, (int, float)) and math.isfinite(float(beat)):
+                    duration_sec = max(duration_sec, float(beat))
+    for event in events:
+        duration_sec = max(duration_sec, float(event.get("t1_sec") or 0.0))
+    return min(600.0, max(0.5, duration_sec))
+
+
+def _midi_note_to_hz(note: int) -> float:
+    return 440.0 * (2.0 ** ((float(note) - 69.0) / 12.0))
+
+
+def _song2daw_write_preview_mix_wav(path: str, events: List[Dict[str, Any]], duration_sec: float) -> bool:
+    if not events:
+        return False
+
+    sample_rate = 22050
+    total_frames = max(1, int(round(duration_sec * sample_rate)))
+    samples = [0.0] * total_frames
+    attack_frames = max(1, int(0.004 * sample_rate))
+    release_frames = max(1, int(0.022 * sample_rate))
+
+    for event in events:
+        start = int(round(float(event["t0_sec"]) * sample_rate))
+        end = int(round(float(event["t1_sec"]) * sample_rate))
+        if end <= start:
+            end = start + max(1, int(0.05 * sample_rate))
+        if start >= total_frames:
+            continue
+        end = min(total_frames, end)
+        length = max(1, end - start)
+        source_id = str(event["source_id"])
+        seed = int(sha256(source_id.encode("utf-8")).hexdigest()[:8], 16)
+        phase0 = (seed % 6283) / 1000.0
+        freq = _midi_note_to_hz(int(event["midi_note"]))
+        step = (2.0 * math.pi * freq) / sample_rate
+        amp = 0.04 + (float(event["velocity"]) / 127.0) * 0.12
+
+        for frame in range(length):
+            env = 1.0
+            if frame < attack_frames:
+                env = frame / attack_frames
+            elif frame > length - release_frames:
+                env = max(0.0, (length - frame) / release_frames)
+            idx = start + frame
+            if idx >= total_frames:
+                break
+            samples[idx] += math.sin(phase0 + step * frame) * amp * env
+
+    peak = 0.0
+    for value in samples:
+        abs_value = abs(value)
+        if abs_value > peak:
+            peak = abs_value
+    gain = 0.0 if peak <= 1e-9 else 0.92 / peak
+
+    pcm = array("h")
+    for value in samples:
+        scaled = max(-1.0, min(1.0, value * gain))
+        pcm.append(int(round(scaled * 32767.0)))
+
+    try:
+        with wave.open(path, "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(sample_rate)
+            handle.writeframes(pcm.tobytes())
+    except Exception:
+        return False
+    return True
+
+
+def _song2daw_ensure_preview_mix_audio(run: Song2DawRunState) -> Optional[str]:
+    run_dir = str(run.run_dir or "").strip()
+    if not run_dir:
+        return None
+    run_dir_real = os.path.realpath(run_dir)
+    if not os.path.isdir(run_dir_real):
+        return None
+
+    preview_path = os.path.join(run_dir_real, "preview_mix.wav")
+    if os.path.isfile(preview_path):
+        return preview_path
+
+    events = _song2daw_collect_preview_events(run.result if isinstance(run.result, Mapping) else {})
+    if not events:
+        return None
+    duration_sec = _song2daw_infer_preview_duration_sec(
+        run.result if isinstance(run.result, Mapping) else {},
+        events,
+    )
+    ok = _song2daw_write_preview_mix_wav(preview_path, events, duration_sec)
+    return preview_path if ok and os.path.isfile(preview_path) else None
+
+
+def _song2daw_collect_audio_assets(run: Song2DawRunState) -> Dict[str, str]:
+    assets: Dict[str, str] = {}
+    preview_mix_path = _song2daw_ensure_preview_mix_audio(run)
+    if preview_mix_path:
+        assets["preview_mix"] = preview_mix_path
+
+    mix_path = _resolve_run_audio_path(run, run.audio_path)
+    if mix_path and not _is_midi_path(mix_path):
+        assets["mix"] = mix_path
+    elif preview_mix_path:
+        assets["mix"] = preview_mix_path
+    elif mix_path:
+        assets["mix"] = mix_path
+
+    artifacts = run.result.get("artifacts") if isinstance(run.result, dict) else None
+    stems_generated = artifacts.get("stems_generated") if isinstance(artifacts, dict) else None
+    stem_items = stems_generated.get("items") if isinstance(stems_generated, dict) else None
+    if isinstance(stem_items, list):
+        for item in stem_items:
+            if not isinstance(item, dict):
+                continue
+            source_id = str(item.get("source_id") or "").strip()
+            if not source_id:
+                continue
+            stem_raw = str(item.get("path_hint") or item.get("path") or "").strip()
+            stem_path = _resolve_run_audio_path(run, stem_raw)
+            if stem_path:
+                assets[f"source:{source_id}"] = stem_path
+
+    return dict(sorted(assets.items(), key=lambda entry: entry[0]))
+
+
+def _song2daw_resolve_audio_asset_path(run: Song2DawRunState, asset: str) -> Optional[str]:
+    assets = _song2daw_collect_audio_assets(run)
+    requested = str(asset or "").strip()
+    if not requested:
+        requested = "mix"
+    if requested in assets:
+        return assets[requested]
+    if requested in ("__source_audio", "source_audio", "workflow_source", "mix"):
+        source_path = _resolve_run_audio_path(run, run.audio_path)
+        if source_path:
+            return source_path
+    return None
+
+
+def _resolve_run_audio_path(run: Song2DawRunState, raw_path: str) -> Optional[str]:
+    value = str(raw_path or "").strip()
+    if not value:
+        return None
+
+    candidates: List[str] = []
+    normalized = value.replace("\\", os.sep).replace("/", os.sep)
+    if os.path.isabs(normalized):
+        candidates.append(normalized)
+    else:
+        if run.run_dir:
+            candidates.append(os.path.join(run.run_dir, normalized))
+        candidates.append(os.path.join(os.getcwd(), normalized))
+        candidates.append(os.path.join(os.path.dirname(__file__), normalized))
+        stems_dir = str(run.stems_dir or "").strip()
+        if stems_dir:
+            stems_norm = stems_dir.replace("\\", os.sep).replace("/", os.sep)
+            if os.path.isabs(stems_norm):
+                candidates.append(os.path.join(stems_norm, normalized))
+            else:
+                candidates.append(os.path.join(os.getcwd(), stems_norm, normalized))
+                candidates.append(os.path.join(os.path.dirname(__file__), stems_norm, normalized))
+        try:
+            import folder_paths  # type: ignore
+
+            for getter_name in ("get_input_directory", "get_output_directory", "get_temp_directory"):
+                getter = getattr(folder_paths, getter_name, None)
+                if callable(getter):
+                    try:
+                        base = getter()
+                    except Exception:
+                        base = ""
+                    base_text = str(base or "").strip()
+                    if base_text:
+                        candidates.append(os.path.join(base_text, normalized))
+
+            annotated = getattr(folder_paths, "get_annotated_filepath", None)
+            if callable(annotated):
+                try:
+                    annotated_path = annotated(value)
+                except Exception:
+                    annotated_path = ""
+                annotated_text = str(annotated_path or "").strip()
+                if annotated_text:
+                    candidates.append(annotated_text)
+        except Exception:
+            pass
+
+    deduped = []
+    seen = set()
+    for candidate in candidates:
+        real_candidate = os.path.realpath(candidate)
+        if real_candidate in seen:
+            continue
+        seen.add(real_candidate)
+        deduped.append(real_candidate)
+    for candidate in deduped:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _open_directory(path: str) -> Tuple[bool, str]:
+    folder = str(path or "").strip()
+    if not folder:
+        return False, "missing_path"
+    if not os.path.isdir(folder):
+        return False, "not_found"
+    try:
+        if hasattr(os, "startfile"):
+            os.startfile(folder)  # type: ignore[attr-defined]
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", folder])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
 
 
 def _resolve_loop_id(loop_id: str) -> Optional[str]:
@@ -1078,10 +1675,24 @@ def _ensure_routes() -> None:
 
     async def workflows_list(_request):
         folder = _workflows_dir()
-        files = _list_workflow_files()
+        entries = _list_workflow_entries()
+        files = [str(entry.get("name") or "") for entry in entries if str(entry.get("name") or "")]
+        profiles = {
+            name: entry.get("workflow_profile")
+            for entry in entries
+            for name in [str(entry.get("name") or "")]
+            if name
+        }
+        master_files = [
+            name
+            for name in files
+            if str((profiles.get(name) or {}).get("workflow_kind") or "master").lower() == "master"
+        ]
         return web.json_response(
             {
                 "workflows": files,
+                "master_workflows": master_files,
+                "workflow_profiles": profiles,
                 "folder": folder,
                 "exists": os.path.isdir(folder),
                 "count": len(files),
@@ -1097,7 +1708,94 @@ def _ensure_routes() -> None:
             workflow = _load_workflow_file(str(name))
         except RuntimeError as exc:
             return web.json_response({"error": str(exc)}, status=404)
-        return web.json_response({"ok": True, "workflow": workflow, "name": name})
+        workflow_profile = _resolve_workflow_profile(workflow=workflow, prompt=None)
+        return web.json_response(
+            {
+                "ok": True,
+                "workflow": workflow,
+                "workflow_profile": workflow_profile,
+                "name": name,
+            }
+        )
+
+    async def song2daw_runs_list(_request):
+        runs = []
+        for run in SONG2DAW_RUNS.list():
+            runs.append(
+                {
+                    "run_id": run.run_id,
+                    "status": run.status,
+                    "audio_path": run.audio_path,
+                    "stems_dir": run.stems_dir,
+                    "run_dir": run.run_dir,
+                    "error": run.error,
+                    "created_at": run.created_at,
+                    "updated_at": run.updated_at,
+                    "summary": run.summary,
+                }
+            )
+        return web.json_response({"runs": runs})
+
+    async def song2daw_run_get(request):
+        run_id = request.match_info["run_id"]
+        run = SONG2DAW_RUNS.get(run_id)
+        if not run:
+            return web.json_response({"error": "not_found"}, status=404)
+        audio_assets = _song2daw_collect_audio_assets(run)
+        return web.json_response(
+            {
+                "run_id": run.run_id,
+                "status": run.status,
+                "audio_path": run.audio_path,
+                "stems_dir": run.stems_dir,
+                "audio_assets": audio_assets,
+                "step_configs": run.step_configs,
+                "model_versions": run.model_versions,
+                "run_dir": run.run_dir,
+                "summary": run.summary,
+                "result": run.result,
+                "error": run.error,
+                "created_at": run.created_at,
+                "updated_at": run.updated_at,
+            }
+        )
+
+    async def song2daw_run_ui_view_get(request):
+        run_id = request.match_info["run_id"]
+        run = SONG2DAW_RUNS.get(run_id)
+        if not run:
+            return web.json_response({"error": "not_found"}, status=404)
+        payload = _song2daw_build_ui_view_payload(run)
+        return web.json_response(payload)
+
+    async def song2daw_runs_clear(_request):
+        SONG2DAW_RUNS.clear()
+        return web.json_response({"ok": True})
+
+    async def song2daw_run_open(request):
+        payload = await request.json()
+        run_id = str(payload.get("run_id") or "").strip()
+        if not run_id:
+            return web.json_response({"error": "missing_run_id"}, status=400)
+        run = SONG2DAW_RUNS.get(run_id)
+        if not run:
+            return web.json_response({"error": "not_found"}, status=404)
+        ok, err = _open_directory(run.run_dir)
+        if not ok:
+            return web.json_response({"error": err or "open_failed"}, status=400)
+        return web.json_response({"ok": True, "run_dir": run.run_dir})
+
+    async def song2daw_run_audio_get(request):
+        run_id = request.match_info["run_id"]
+        run = SONG2DAW_RUNS.get(run_id)
+        if not run:
+            return web.json_response({"error": "not_found"}, status=404)
+
+        asset = str(request.query.get("asset") or "mix").strip()
+        audio_path = _song2daw_resolve_audio_asset_path(run, asset)
+        if not audio_path:
+            return web.json_response({"error": "asset_not_found", "asset": asset}, status=404)
+        return web.FileResponse(path=audio_path)
 
     add_route("GET", "/lemouf/loop/list", loop_list)
     add_route("GET", "/lemouf/loop/{loop_id}", loop_get)
@@ -1111,6 +1809,12 @@ def _ensure_routes() -> None:
     add_route("POST", "/lemouf/loop/reset", loop_reset)
     add_route("GET", "/lemouf/workflows/list", workflows_list)
     add_route("POST", "/lemouf/workflows/load", workflows_load)
+    add_route("GET", "/lemouf/song2daw/runs", song2daw_runs_list)
+    add_route("GET", "/lemouf/song2daw/runs/{run_id}", song2daw_run_get)
+    add_route("GET", "/lemouf/song2daw/runs/{run_id}/ui_view", song2daw_run_ui_view_get)
+    add_route("GET", "/lemouf/song2daw/runs/{run_id}/audio", song2daw_run_audio_get)
+    add_route("POST", "/lemouf/song2daw/runs/clear", song2daw_runs_clear)
+    add_route("POST", "/lemouf/song2daw/runs/open", song2daw_run_open)
 
     PromptServer.instance._lemouf_loop_routes = True
 
@@ -1186,6 +1890,52 @@ class LoopPipelineStep:
 
     def noop(self, role: str, workflow: str, flow: str = ""):
         return (flow or "",)
+
+
+class LeMoufWorkflowProfile:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "profile_id": (["song2daw", "generic_loop", "custom"],),
+                "profile_id_custom": ("STRING", {"default": "", "multiline": False}),
+                "profile_version": ("STRING", {"default": "0.1.0", "multiline": False}),
+                "ui_contract_version": ("STRING", {"default": "1.0.0", "multiline": False}),
+                "workflow_kind": (["master", "branch"],),
+            },
+            "optional": {
+                "flow": ("PIPELINE",),
+            },
+        }
+
+    RETURN_TYPES = ("PIPELINE", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("flow", "profile_id", "profile_version", "ui_contract_version", "workflow_kind")
+    FUNCTION = "declare"
+    CATEGORY = "leMouf/Pipeline"
+
+    def declare(
+        self,
+        profile_id: str,
+        profile_id_custom: str,
+        profile_version: str,
+        ui_contract_version: str,
+        workflow_kind: str,
+        flow: str = "",
+    ):
+        resolved_profile_id = _coalesce_profile_id(profile_id, profile_id_custom) or _WORKFLOW_PROFILE_DEFAULT["profile_id"]
+        resolved_profile_version = _normalize_semver(
+            profile_version,
+            _WORKFLOW_PROFILE_DEFAULT["profile_version"],
+        )
+        resolved_ui_contract = _normalize_semver(
+            ui_contract_version,
+            _WORKFLOW_PROFILE_DEFAULT["ui_contract_version"],
+        )
+        resolved_workflow_kind = _normalize_workflow_kind(
+            workflow_kind,
+            _WORKFLOW_PROFILE_DEFAULT["workflow_kind"],
+        )
+        return (flow or "", resolved_profile_id, resolved_profile_version, resolved_ui_contract, resolved_workflow_kind)
 
 
 class LoopReturn:
@@ -1280,18 +2030,132 @@ class LoopReturn:
         return (payload,)
 
 
+class Song2DawRun:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "audio_path": ("STRING", {"default": "", "multiline": False}),
+                "stems_dir": ("STRING", {"default": "", "multiline": False}),
+            },
+            "optional": {
+                "step_configs_json": ("STRING", {"default": "{}", "multiline": True}),
+                "model_versions_json": ("STRING", {"default": "{}", "multiline": True}),
+                "output_dir": ("STRING", {"default": "", "multiline": False}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("songgraph_json", "artifacts_json", "run_json", "run_dir")
+    FUNCTION = "run"
+    CATEGORY = "leMouf/song2daw"
+
+    def run(
+        self,
+        audio_path: str,
+        stems_dir: str,
+        step_configs_json: str = "{}",
+        model_versions_json: str = "{}",
+        output_dir: str = "",
+    ):
+        from song2daw.core.runner import run_default_song2daw_pipeline, save_run_outputs
+
+        step_configs, step_configs_error = _parse_json_field(step_configs_json, "step_configs")
+        if step_configs_error:
+            raise ValueError(step_configs_error)
+        model_versions, model_versions_error = _parse_json_field(model_versions_json, "model_versions")
+        if model_versions_error:
+            raise ValueError(model_versions_error)
+
+        if step_configs is None:
+            step_configs = {}
+        if model_versions is None:
+            model_versions = {}
+
+        if not isinstance(step_configs, dict):
+            raise ValueError("step_configs must be a JSON object")
+        if not isinstance(model_versions, dict):
+            raise ValueError("model_versions must be a JSON object")
+
+        run_id = str(uuid.uuid4())
+        run_dir = ""
+        try:
+            result = run_default_song2daw_pipeline(
+                audio_path=audio_path,
+                stems_dir=stems_dir,
+                step_configs=step_configs,
+                model_versions=model_versions,
+            )
+            target_output_dir = ""
+            if isinstance(output_dir, str) and output_dir.strip():
+                target_output_dir = output_dir.strip()
+            elif PromptServer is not None:
+                try:
+                    import folder_paths
+
+                    target_output_dir = os.path.join(
+                        folder_paths.get_output_directory(),
+                        "lemouf",
+                        "song2daw",
+                    )
+                except Exception:
+                    target_output_dir = ""
+
+            if target_output_dir:
+                run_dir = str(save_run_outputs(result, target_output_dir))
+
+            SONG2DAW_RUNS.add(
+                Song2DawRunState(
+                    run_id=run_id,
+                    status="ok",
+                    audio_path=audio_path,
+                    stems_dir=stems_dir,
+                    step_configs=step_configs,
+                    model_versions=model_versions,
+                    run_dir=run_dir,
+                    summary=_song2daw_run_summary(result),
+                    result=result,
+                )
+            )
+        except Exception as exc:
+            SONG2DAW_RUNS.add(
+                Song2DawRunState(
+                    run_id=run_id,
+                    status="error",
+                    audio_path=audio_path,
+                    stems_dir=stems_dir,
+                    step_configs=step_configs,
+                    model_versions=model_versions,
+                    run_dir=run_dir,
+                    summary={},
+                    result={},
+                    error=str(exc),
+                )
+            )
+            raise
+
+        songgraph_json = json.dumps(result.get("songgraph", {}), indent=2, sort_keys=True)
+        artifacts_json = json.dumps(result.get("artifacts", {}), indent=2, sort_keys=True)
+        run_json = json.dumps(result, indent=2, sort_keys=True)
+        return (songgraph_json, artifacts_json, run_json, run_dir)
+
+
 NODE_CLASS_MAPPINGS = {
     "LoopMap": LoopMap,
     "LoopPayload": LoopPayload,
     "LoopPipelineStep": LoopPipelineStep,
+    "LeMoufWorkflowProfile": LeMoufWorkflowProfile,
     "LoopReturn": LoopReturn,
+    "Song2DawRun": Song2DawRun,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "LoopMap": "Loop Map (leMouf)",
     "LoopPayload": "Loop Payload (leMouf)",
     "LoopPipelineStep": "Loop Pipeline Step (leMouf)",
+    "LeMoufWorkflowProfile": "Workflow Profile (leMouf)",
     "LoopReturn": "Loop Return (leMouf)",
+    "Song2DawRun": "song2daw Run (leMouf)",
 }
 
 # Register routes on import so the UI can call the API without running a node first.

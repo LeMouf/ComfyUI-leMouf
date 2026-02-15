@@ -8,3 +8,5 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.log
+.pytest_cache/
+song2daw/tests/.tmp_preview_mix_audio/

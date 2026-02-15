@@ -1,165 +1,157 @@
 {
-  "id": "pipeline-demo",
+  "id": "song2daw-fixture-10s-4inst-0-1-0",
   "revision": 0,
-  "last_node_id": 4,
+  "last_node_id": 3,
   "last_link_id": 1,
   "nodes": [
     {
       "id": 1,
-      "type": "LoopPipelineStep",
+      "type": "Song2DawRun",
       "pos": [
-        180,
+        160,
         140
       ],
       "size": [
-        260,
-        120
+        460,
+        300
       ],
       "flags": {},
       "order": 0,
       "mode": 0,
       "inputs": [
         {
-          "localized_name": "role",
-          "name": "role",
-          "type": "COMBO",
+          "localized_name": "audio_path",
+          "name": "audio_path",
+          "type": "STRING",
           "widget": {
-            "name": "role"
+            "name": "audio_path"
           },
           "link": null
         },
         {
-          "localized_name": "workflow",
-          "name": "workflow",
-          "type": "COMBO",
+          "localized_name": "stems_dir",
+          "name": "stems_dir",
+          "type": "STRING",
           "widget": {
-            "name": "workflow"
+            "name": "stems_dir"
           },
           "link": null
         },
         {
-          "localized_name": "flow",
-          "name": "flow",
-          "type": "PIPELINE",
+          "localized_name": "step_configs_json",
+          "name": "step_configs_json",
+          "type": "STRING",
+          "widget": {
+            "name": "step_configs_json"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "model_versions_json",
+          "name": "model_versions_json",
+          "type": "STRING",
+          "widget": {
+            "name": "model_versions_json"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "output_dir",
+          "name": "output_dir",
+          "type": "STRING",
+          "widget": {
+            "name": "output_dir"
+          },
           "link": null
         }
       ],
       "outputs": [
         {
-          "localized_name": "flow",
-          "name": "flow",
-          "type": "PIPELINE",
+          "localized_name": "songgraph_json",
+          "name": "songgraph_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "artifacts_json",
+          "name": "artifacts_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "run_json",
+          "name": "run_json",
+          "type": "STRING",
           "links": [
             1
           ]
+        },
+        {
+          "localized_name": "run_dir",
+          "name": "run_dir",
+          "type": "STRING",
+          "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoopPipelineStep"
+        "Node name for S&R": "Song2DawRun"
       },
       "widgets_values": [
-        "generate",
-        "leMouf_Loop-payload_0-1-0.json"
+        "examples/song2daw/fixtures/midi/song2daw_10s_4inst.mid",
+        "examples/song2daw/fixtures/midi",
+        "{\"SourceSeparation\":{\"source_roles\":[\"drums\",\"bass\",\"chords\",\"lead\"]}}",
+        "{}",
+        ""
       ]
     },
     {
       "id": 2,
-      "type": "LoopPipelineStep",
+      "type": "LoopReturn",
       "pos": [
-        180,
-        320
+        700,
+        220
       ],
       "size": [
-        260,
-        120
+        320,
+        160
       ],
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [
         {
-          "localized_name": "role",
-          "name": "role",
-          "type": "COMBO",
-          "widget": {
-            "name": "role"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "workflow",
-          "name": "workflow",
-          "type": "COMBO",
-          "widget": {
-            "name": "workflow"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "flow",
-          "name": "flow",
-          "type": "PIPELINE",
+          "localized_name": "payload",
+          "name": "payload",
+          "type": "*",
           "link": 1
-        }
-      ],
-      "outputs": [
+        },
         {
-          "localized_name": "flow",
-          "name": "flow",
-          "type": "PIPELINE",
-          "links": []
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoopPipelineStep"
-      },
-      "widgets_values": [
-        "execute",
-        "leMouf_Loop-test_0-1-0.json"
-      ]
-    },
-    {
-      "id": 3,
-      "type": "LoopMap",
-      "pos": [
-        520,
-        200
-      ],
-      "size": [
-        360,
-        200
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [
-        {
-          "localized_name": "map_json",
-          "name": "map_json",
+          "localized_name": "loop_id",
+          "name": "loop_id",
           "type": "STRING",
           "widget": {
-            "name": "map_json"
+            "name": "loop_id"
           },
           "link": null
         }
       ],
       "outputs": [
         {
-          "localized_name": "map_json",
-          "name": "map_json",
-          "type": "STRING",
+          "localized_name": "payload",
+          "name": "payload",
+          "type": "*",
           "links": null
         }
       ],
       "properties": {
-        "Node name for S&R": "LoopMap"
+        "Node name for S&R": "LoopReturn"
       },
       "widgets_values": [
-        "{\n  \"schema\": \"lemouf.loopmap.v1\",\n  \"mappings\": [\n    {\n      \"from\": \"prompt\",\n      \"to\": {\n        \"node\": \"@loop.prompt\",\n        \"input\": \"text\"\n      }\n    },\n    {\n      \"from\": \"seed\",\n      \"to\": {\n        \"node\": \"@loop.sampler\",\n        \"input\": \"seed\"\n      },\n      \"fallback\": \"$auto_seed\",\n      \"on_retry\": \"$auto_seed\"\n    },\n    {\n      \"from\": \"cfg\",\n      \"to\": {\n        \"node\": \"@loop.sampler\",\n        \"input\": \"cfg\"\n      }\n    },\n    {\n      \"from\": \"steps\",\n      \"to\": {\n        \"node\": \"@loop.sampler\",\n        \"input\": \"steps\"\n      }\n    }\n  ]\n}"
+        ""
       ]
     },
     {
-      "id": 4,
+      "id": 3,
       "type": "LeMoufWorkflowProfile",
       "pos": [
         -140,
@@ -170,7 +162,7 @@
         190
       ],
       "flags": {},
-      "order": 3,
+      "order": 2,
       "mode": 0,
       "inputs": [
         {
@@ -261,7 +253,7 @@
         "Node name for S&R": "LeMoufWorkflowProfile"
       },
       "widgets_values": [
-        "generic_loop",
+        "song2daw",
         "",
         "0.1.0",
         "1.0.0",
@@ -273,10 +265,10 @@
     [
       1,
       1,
+      2,
+      2,
       0,
-      2,
-      2,
-      "PIPELINE"
+      "STRING"
     ]
   ],
   "groups": [],

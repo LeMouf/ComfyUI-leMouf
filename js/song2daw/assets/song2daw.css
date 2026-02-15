@@ -1,0 +1,16 @@
+/* song2daw arrangement tab styles (minimal) */
+.song2daw-root{display:flex; height:100%; color:#e6e6e6; font-family:system-ui, sans-serif;}
+.song2daw-left{width:220px; border-right:1px solid #2a2f3a; overflow:auto;}
+.song2daw-center{flex:1; display:flex; flex-direction:column; overflow:hidden;}
+.song2daw-right{width:280px; border-left:1px solid #2a2f3a; overflow:auto; padding:10px;}
+.song2daw-toolbar{display:flex; gap:8px; align-items:center; padding:8px 10px; border-bottom:1px solid #2a2f3a;}
+.song2daw-toolbar button{background:#2a2f3a; color:#e6e6e6; border:1px solid #3a4252; border-radius:6px; padding:4px 8px; cursor:pointer;}
+.song2daw-toolbar button:hover{filter:brightness(1.1);}
+.song2daw-track{display:flex; align-items:center; gap:8px; padding:8px 10px; border-bottom:1px solid #222833; cursor:pointer;}
+.song2daw-track .swatch{width:10px; height:10px; border-radius:3px; background:#888;}
+.song2daw-track.active{background:#1f2430;}
+.song2daw-canvas-wrap{flex:1; position:relative; background:#0f1218;}
+.song2daw-canvas{position:absolute; inset:0;}
+.song2daw-muted{opacity:0.55;}
+.song2daw-kv{display:grid; grid-template-columns:80px 1fr; gap:6px 10px; font-size:12px;}
+.song2daw-kv .k{opacity:0.75;}

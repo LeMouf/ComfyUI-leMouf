@@ -1,0 +1,267 @@
+{
+  "song": {
+    "id": "demo_song2daw",
+    "duration_sec": 48.0
+  },
+  "timebase": {
+    "sr": 44100,
+    "ppq": 960
+  },
+  "tempo": [
+    {
+      "t_sec": 0.0,
+      "bar": 1,
+      "bpm": 120.0,
+      "numerator": 4,
+      "denominator": 4
+    }
+  ],
+  "beats": {
+    "downbeats_sec": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20,
+      22,
+      24,
+      26,
+      28,
+      30,
+      32,
+      34,
+      36,
+      38,
+      40,
+      42,
+      44,
+      46
+    ],
+    "beats_sec": [
+      0.0,
+      0.5,
+      1.0,
+      1.5,
+      2.0,
+      2.5,
+      3.0,
+      3.5,
+      4.0,
+      4.5,
+      5.0,
+      5.5,
+      6.0,
+      6.5,
+      7.0,
+      7.5,
+      8.0,
+      8.5,
+      9.0,
+      9.5,
+      10.0,
+      10.5,
+      11.0,
+      11.5,
+      12.0,
+      12.5,
+      13.0,
+      13.5,
+      14.0,
+      14.5,
+      15.0,
+      15.5,
+      16.0,
+      16.5,
+      17.0,
+      17.5,
+      18.0,
+      18.5,
+      19.0,
+      19.5,
+      20.0,
+      20.5,
+      21.0,
+      21.5,
+      22.0,
+      22.5,
+      23.0,
+      23.5,
+      24.0,
+      24.5,
+      25.0,
+      25.5,
+      26.0,
+      26.5,
+      27.0,
+      27.5,
+      28.0,
+      28.5,
+      29.0,
+      29.5,
+      30.0,
+      30.5,
+      31.0,
+      31.5,
+      32.0,
+      32.5,
+      33.0,
+      33.5,
+      34.0,
+      34.5,
+      35.0,
+      35.5,
+      36.0,
+      36.5,
+      37.0,
+      37.5,
+      38.0,
+      38.5,
+      39.0,
+      39.5,
+      40.0,
+      40.5,
+      41.0,
+      41.5,
+      42.0,
+      42.5,
+      43.0,
+      43.5,
+      44.0,
+      44.5,
+      45.0,
+      45.5,
+      46.0,
+      46.5,
+      47.0,
+      47.5,
+      48.0
+    ]
+  },
+  "sections": [
+    {
+      "label": "intro",
+      "t0_sec": 0.0,
+      "t1_sec": 8.0,
+      "confidence": 0.86
+    },
+    {
+      "label": "verse",
+      "t0_sec": 8.0,
+      "t1_sec": 24.0,
+      "confidence": 0.78
+    },
+    {
+      "label": "chorus",
+      "t0_sec": 24.0,
+      "t1_sec": 40.0,
+      "confidence": 0.82
+    },
+    {
+      "label": "outro",
+      "t0_sec": 40.0,
+      "t1_sec": 48.0,
+      "confidence": 0.74
+    }
+  ],
+  "tracks": [
+    {
+      "id": "trk_vocals",
+      "name": "Vocals",
+      "kind": "audio",
+      "color": "#4aa3ff",
+      "clips": [
+        {
+          "id": "clip_voc_1",
+          "kind": "audio",
+          "t0_sec": 0.0,
+          "t1_sec": 48.0,
+          "asset": "artifacts/stems/vocals.wav"
+        }
+      ]
+    },
+    {
+      "id": "trk_drums_midi",
+      "name": "Drums (MIDI)",
+      "kind": "midi",
+      "color": "#57d18b",
+      "clips": [
+        {
+          "id": "clip_mid_1",
+          "kind": "midi",
+          "t0_sec": 0.0,
+          "t1_sec": 48.0,
+          "notes": [
+            {
+              "t0_sec": 1.0,
+              "dur_sec": 0.12,
+              "pitch": 36,
+              "vel": 100,
+              "chan": 10,
+              "label": "kick"
+            },
+            {
+              "t0_sec": 1.5,
+              "dur_sec": 0.08,
+              "pitch": 42,
+              "vel": 80,
+              "chan": 10,
+              "label": "hihat"
+            },
+            {
+              "t0_sec": 2.0,
+              "dur_sec": 0.12,
+              "pitch": 38,
+              "vel": 110,
+              "chan": 10,
+              "label": "snare"
+            },
+            {
+              "t0_sec": 2.5,
+              "dur_sec": 0.08,
+              "pitch": 42,
+              "vel": 78,
+              "chan": 10,
+              "label": "hihat"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "trk_bass",
+      "name": "Bass",
+      "kind": "audio",
+      "color": "#f2a44a",
+      "clips": [
+        {
+          "id": "clip_bass_1",
+          "kind": "audio",
+          "t0_sec": 8.0,
+          "t1_sec": 40.0,
+          "asset": "artifacts/stems/bass.wav"
+        }
+      ]
+    },
+    {
+      "id": "trk_pads",
+      "name": "Pads",
+      "kind": "audio",
+      "color": "#b07cff",
+      "clips": [
+        {
+          "id": "clip_pad_1",
+          "kind": "audio",
+          "t0_sec": 24.0,
+          "t1_sec": 48.0,
+          "asset": "artifacts/stems/pads.wav"
+        }
+      ]
+    }
+  ]
+}

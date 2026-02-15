@@ -1,0 +1,61 @@
+{
+  "fixture_id": "song2daw_10s_4inst",
+  "midi_relative_path": "examples/song2daw/fixtures/midi/song2daw_10s_4inst.mid",
+  "duration_sec": 10.0,
+  "tempo_bpm": 120,
+  "ppq": 480,
+  "ticks_total": 9600,
+  "tracks_total": 5,
+  "instrument_tracks": 4,
+  "note_on_total": 169,
+  "tracks": [
+    {
+      "name": "Drums MIDI",
+      "kind": "midi",
+      "channel": 10,
+      "pattern": "kick/snare/hihat",
+      "notes_expected": 79,
+      "pitch_min": 36,
+      "pitch_max": 42
+    },
+    {
+      "name": "Bass MIDI",
+      "kind": "midi",
+      "channel": 1,
+      "pattern": "quarter groove",
+      "notes_expected": 20,
+      "pitch_min": 36,
+      "pitch_max": 43
+    },
+    {
+      "name": "Chords MIDI",
+      "kind": "midi",
+      "channel": 2,
+      "pattern": "half-note triads",
+      "notes_expected": 30,
+      "pitch_min": 41,
+      "pitch_max": 55
+    },
+    {
+      "name": "Lead MIDI",
+      "kind": "midi",
+      "channel": 3,
+      "pattern": "eighth-note arpeggio",
+      "notes_expected": 40,
+      "pitch_min": 60,
+      "pitch_max": 72
+    }
+  ],
+  "expected_sections": [
+    {
+      "name": "section_1",
+      "t0_sec": 0.0,
+      "t1_sec": 5.0
+    },
+    {
+      "name": "section_2",
+      "t0_sec": 5.0,
+      "t1_sec": 10.0
+    }
+  ]
+}

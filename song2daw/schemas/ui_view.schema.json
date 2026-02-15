@@ -1,0 +1,215 @@
+{
+  "$id": "https://example.org/schemas/song2daw/ui_view.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Song2dawUIView",
+  "type": "object",
+  "required": [
+    "song",
+    "timebase",
+    "tracks"
+  ],
+  "properties": {
+    "song": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "duration_sec": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "timebase": {
+      "type": "object",
+      "required": [
+        "sr",
+        "ppq"
+      ],
+      "properties": {
+        "sr": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ppq": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "tempo": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "t_sec": {
+            "type": "number"
+          },
+          "bar": {
+            "type": "number"
+          },
+          "bpm": {
+            "type": "number"
+          },
+          "numerator": {
+            "type": "integer"
+          },
+          "denominator": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "beats": {
+      "type": "object",
+      "properties": {
+        "downbeats_sec": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "beats_sec": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "label",
+          "t0_sec",
+          "t1_sec"
+        ],
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "t0_sec": {
+            "type": "number"
+          },
+          "t1_sec": {
+            "type": "number"
+          },
+          "confidence": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "tracks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/track"
+      }
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "track": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "clips"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "clips": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clip"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "clip": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "t0_sec",
+        "t1_sec"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "t0_sec": {
+          "type": "number"
+        },
+        "t1_sec": {
+          "type": "number"
+        },
+        "asset": {
+          "type": "string"
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "note": {
+      "type": "object",
+      "required": [
+        "t0_sec",
+        "dur_sec",
+        "pitch"
+      ],
+      "properties": {
+        "t0_sec": {
+          "type": "number"
+        },
+        "dur_sec": {
+          "type": "number"
+        },
+        "pitch": {
+          "type": "integer"
+        },
+        "vel": {
+          "type": "integer"
+        },
+        "chan": {
+          "type": "integer"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

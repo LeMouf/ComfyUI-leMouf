@@ -149,6 +149,90 @@ export function injectStyles() {
       background: rgba(90, 70, 55, 0.08);
       border-right: 1px solid rgba(90, 70, 55, 0.2);
     }
+    .lemouf-song2daw-dock {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 230px;
+      background: linear-gradient(180deg, #f4ebdf, #eadbc8);
+      border-top: 1px solid #c7b7a6;
+      box-shadow: 0 -8px 22px rgba(40, 30, 20, 0.16);
+      z-index: 980;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+    .lemouf-song2daw-dock-resizer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 8px;
+      cursor: ns-resize;
+      background: rgba(90, 70, 55, 0.08);
+      border-bottom: 1px solid rgba(90, 70, 55, 0.2);
+      z-index: 1;
+    }
+    .lemouf-song2daw-dock-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 10px 10px 8px 10px;
+      margin-top: 8px;
+      border-bottom: 1px solid rgba(90, 70, 55, 0.2);
+      background: rgba(255, 250, 243, 0.55);
+    }
+    .lemouf-song2daw-dock-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .lemouf-song2daw-dock-title {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-weight: 700;
+      color: #4a3b2f;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-step-panel {
+      margin: 8px;
+      margin-top: 6px;
+      flex: 1;
+      min-height: 0;
+      min-width: 0;
+      overflow: hidden;
+      border-color: #bfae9d;
+      background: #f9f1e6;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-studio-body {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-studio-layout {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-arrange-canvas-wrap {
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-studio-inspector {
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-song2daw-dock .lemouf-song2daw-step-title {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f9f1e6;
+      padding-bottom: 2px;
+    }
+    .lemouf-song2daw-dock .lemouf-loop-row.tight {
+      margin-bottom: 0;
+    }
     .lemouf-loop-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
     .lemouf-loop-row > * { flex: 1 1 120px; }
     .lemouf-loop-row.tight { gap: 8px; margin-bottom: 6px; }
@@ -175,6 +259,15 @@ export function injectStyles() {
     }
     .lemouf-loop-btn.alt { background: #8a6b4f; }
     .lemouf-loop-btn.ghost { background: transparent; border: 1px solid #5b4637; color: #5b4637; }
+    .lemouf-loop-btn.icon {
+      flex: 0 0 34px;
+      min-width: 34px;
+      max-width: 34px;
+      padding: 4px 0;
+      font-size: 15px;
+      line-height: 1;
+      text-align: center;
+    }
     .lemouf-loop-inline {
       display: flex;
       align-items: stretch;
@@ -224,6 +317,69 @@ export function injectStyles() {
       background: #fffaf3;
       color: #3b2f24;
       font-size: 12px;
+    }
+    .lemouf-workflow-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      max-height: 180px;
+      overflow-y: auto;
+      padding: 6px;
+      border: 1px solid #c9b9a8;
+      border-radius: 10px;
+      background: #fffaf3;
+    }
+    .lemouf-workflow-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      border: 1px solid #ccb7a3;
+      background: #fcf6ee;
+      color: #3b2f24;
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 11px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .lemouf-workflow-item:hover {
+      background: #f3e5d5;
+      border-color: #b79572;
+    }
+    .lemouf-workflow-item.is-selected {
+      background: #efe0cf;
+      border-color: #8a6b4f;
+      box-shadow: inset 0 0 0 1px rgba(91, 70, 55, 0.35);
+    }
+    .lemouf-workflow-item-icon {
+      flex: 0 0 auto;
+      min-width: 42px;
+      text-align: center;
+      border: 1px solid #b59c86;
+      border-radius: 999px;
+      padding: 1px 6px;
+      background: #f7ecdf;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      color: #5b4637;
+    }
+    .lemouf-workflow-item-name {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 11px;
+    }
+    .lemouf-workflow-empty {
+      font-size: 11px;
+      color: #7b6857;
+      padding: 8px 6px;
+      border: 1px dashed #ccb7a3;
+      border-radius: 8px;
+      background: #fff8f0;
     }
     .lemouf-loop-pipeline-graph {
       border: 1px dashed #c9b9a8;
@@ -430,6 +586,31 @@ export function injectStyles() {
       white-space: pre-wrap;
       margin-top: 6px;
       margin-bottom: 6px;
+    }
+    .lemouf-workflow-profile-status {
+      margin-top: 2px;
+      margin-bottom: 2px;
+      padding: 4px 6px;
+      border-radius: 7px;
+      border: 1px solid #c9b9a8;
+      background: #fffaf3;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      font-size: 10px;
+    }
+    .lemouf-workflow-profile-status.is-ok {
+      color: #4f6f50;
+      border-color: #a7bca5;
+      background: #f5fbf4;
+    }
+    .lemouf-workflow-profile-status.is-warning {
+      color: #75553e;
+      border-color: #ceb08f;
+      background: #fff6e8;
+    }
+    .lemouf-workflow-diagnostics-panel {
+      margin-top: 2px;
+      margin-bottom: 2px;
     }
     .lemouf-loop-manifest-row {
       margin-bottom: 6px;
@@ -729,6 +910,568 @@ export function injectStyles() {
       color: #3b2f24;
       white-space: pre-wrap;
       word-break: break-word;
+    }
+    .lemouf-song2daw-overview {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .lemouf-song2daw-step-empty {
+      grid-column: 1 / -1;
+      font-size: 11px;
+      color: #7a6756;
+      border: 1px dashed #c9b9a8;
+      border-radius: 8px;
+      padding: 8px;
+      background: #fffaf3;
+    }
+    .lemouf-song2daw-step-card {
+      border: 1px solid #b59c86;
+      border-radius: 8px;
+      background: #fffaf3;
+      color: #3b2f24;
+      text-align: left;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      cursor: pointer;
+    }
+    .lemouf-song2daw-step-card:hover {
+      filter: brightness(0.98);
+      box-shadow: 0 4px 10px rgba(40, 30, 20, 0.12);
+    }
+    .lemouf-song2daw-step-card.is-selected {
+      border-color: #7a5a3c;
+      background: #f2e5d4;
+      box-shadow: inset 0 0 0 1px rgba(90, 70, 55, 0.2);
+    }
+    .lemouf-song2daw-step-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .lemouf-song2daw-step-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 1px 6px;
+      font-size: 9px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      background: #9a846f;
+      color: #f7f2ea;
+    }
+    .lemouf-song2daw-step-badge.ok { background: #4b7b4f; }
+    .lemouf-song2daw-step-badge.error { background: #a4473d; }
+    .lemouf-song2daw-step-idx {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #7a6756;
+    }
+    .lemouf-song2daw-step-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #3b2f24;
+      word-break: break-word;
+    }
+    .lemouf-song2daw-step-sub {
+      font-size: 10px;
+      color: #7a6756;
+      word-break: break-word;
+    }
+    .lemouf-song2daw-step-panel {
+      border: 1px solid #c9b9a8;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lemouf-song2daw-audio-preview {
+      border: 1px solid #c9b9a8;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #fffaf3, #f3e7d8);
+      padding: 7px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+    }
+    .lemouf-song2daw-audio-preview .lemouf-loop-select {
+      border-color: #bda995;
+      background: #f7efe4;
+      color: #493a2e;
+    }
+    .lemouf-song2daw-audio-preview-player {
+      width: 100%;
+      min-height: 34px;
+      height: 38px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #6f665d, #5d544b);
+      border: 1px solid #8d7b68;
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.2);
+      accent-color: #a88a67;
+      color-scheme: dark;
+    }
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-enclosure {
+      border-radius: 999px;
+      background: transparent;
+      border: none;
+    }
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-panel {
+      background: transparent;
+      color: #f8efe2;
+    }
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-current-time-display,
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-time-remaining-display {
+      color: #f8efe2;
+      font-size: 10px;
+      text-shadow: none;
+    }
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-timeline {
+      filter: sepia(0.42) saturate(0.72) brightness(1.06);
+    }
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-play-button,
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-mute-button,
+    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-overflow-button {
+      filter: sepia(0.55) saturate(0.85) brightness(1.12);
+    }
+    .lemouf-song2daw-step-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6b5a4a;
+      font-weight: 700;
+    }
+    .lemouf-loop-btn.is-active {
+      background: #5b4637;
+      color: #f7f2ea;
+      box-shadow: inset 0 0 0 1px rgba(20, 16, 12, 0.18);
+    }
+    .lemouf-song2daw-studio-body {
+      border: 1px solid #d6c4b2;
+      border-radius: 8px;
+      background: #f8efe2;
+      padding: 8px;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 10px;
+      color: #4a3b2f;
+      overflow: auto;
+    }
+    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact {
+      overflow: hidden;
+      gap: 6px;
+    }
+    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-studio-layout {
+      min-height: 120px;
+    }
+    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-arrange-canvas-wrap {
+      min-height: 120px;
+    }
+    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-arrange-canvas {
+      min-height: 120px;
+    }
+    .lemouf-song2daw-studio-meta {
+      font-size: 10px;
+      color: #6a5948;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      border-bottom: 1px dashed #c9b9a8;
+      padding-bottom: 6px;
+    }
+    .lemouf-song2daw-studio-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .lemouf-song2daw-studio-toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .lemouf-song2daw-viz-select {
+      width: auto;
+      min-width: 118px;
+      max-width: 150px;
+      padding: 5px 7px;
+      font-size: 11px;
+      flex: 0 0 auto;
+    }
+    .lemouf-song2daw-studio-toolbar-overview {
+      font-size: 10px;
+      color: #5f4e40;
+      text-transform: uppercase;
+      letter-spacing: 0.22px;
+      min-width: 0;
+      flex: 1 1 300px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border: 1px solid #cfbeac;
+      border-radius: 7px;
+      background: #fffaf3;
+      padding: 5px 7px;
+    }
+    .lemouf-song2daw-studio-toolbar-status {
+      font-size: 10px;
+      color: #5f4e40;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+      min-width: 0;
+      flex: 1 1 180px;
+      text-align: right;
+    }
+    .lemouf-song2daw-studio-footer {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #fffaf3;
+      min-width: 0;
+      padding: 5px 7px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .lemouf-song2daw-studio-footer-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 14px;
+      min-width: 0;
+    }
+    .lemouf-song2daw-studio-footer-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .lemouf-song2daw-studio-footer-zoom {
+      font-size: 10px;
+      color: #5f4e40;
+      text-transform: uppercase;
+      letter-spacing: 0.22px;
+      white-space: nowrap;
+    }
+    .lemouf-song2daw-studio-layout {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 220px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .lemouf-song2daw-arrange-canvas-wrap {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #f8efe2;
+      min-height: 220px;
+      overflow: hidden;
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .lemouf-song2daw-arrange-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: default;
+      min-height: 220px;
+    }
+    .lemouf-song2daw-spectrum-canvas-wrap {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #f7ecdc;
+      min-height: 220px;
+      overflow: hidden;
+      position: relative;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .lemouf-song2daw-spectrum-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      min-height: 220px;
+      background: #f8efe2;
+    }
+    .lemouf-song2daw-studio-inspector {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 220px;
+      overflow: auto;
+      min-width: 0;
+    }
+    .lemouf-song2daw-inspector-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #5f4e40;
+      font-weight: 700;
+    }
+    .lemouf-song2daw-inspector-grid {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 3px 5px;
+      font-size: 10px;
+    }
+    .lemouf-song2daw-inspector-key {
+      color: #7a6756;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      font-size: 9px;
+    }
+    .lemouf-song2daw-inspector-value {
+      color: #3b2f24;
+      word-break: break-word;
+      font-size: 10px;
+    }
+    .lemouf-song2daw-inspector-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 2px;
+    }
+    .lemouf-song2daw-arrange {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .lemouf-song2daw-arrange-row {
+      display: grid;
+      grid-template-columns: 116px 1fr;
+      gap: 6px;
+      align-items: stretch;
+      min-height: 34px;
+    }
+    .lemouf-song2daw-arrange-row.is-ruler {
+      min-height: 22px;
+      margin-bottom: 2px;
+    }
+    .lemouf-song2daw-arrange-row.is-sections {
+      min-height: 30px;
+      margin-bottom: 3px;
+    }
+    .lemouf-song2daw-arrange-head {
+      border: 1px solid #cfbeac;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #efe0cf, #e6d2be);
+      padding: 4px 6px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 0;
+    }
+    .lemouf-song2daw-arrange-head-name {
+      font-size: 10px;
+      font-weight: 700;
+      color: #3b2f24;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-song2daw-arrange-head-sub {
+      font-size: 9px;
+      color: #705f4e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-song2daw-arrange-ruler {
+      position: relative;
+      border: 1px solid #cfbeac;
+      border-radius: 7px;
+      background: linear-gradient(180deg, #f1e3d2, #e8d7c3);
+      min-height: 22px;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-arrange-ruler-mark {
+      position: absolute;
+      top: 3px;
+      transform: translateX(-50%);
+      font-size: 9px;
+      color: #5e4d3e;
+      user-select: none;
+      pointer-events: none;
+    }
+    .lemouf-song2daw-arrange-lane {
+      position: relative;
+      border: 1px solid #cfbeac;
+      border-radius: 7px;
+      background: #fffaf3;
+      min-height: 34px;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-arrange-lane.sections {
+      min-height: 30px;
+      background: linear-gradient(180deg, #f8ecdc, #f1dfca);
+    }
+    .lemouf-song2daw-arrange-grid {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .lemouf-song2daw-arrange-line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 1px;
+      transform: translateX(-0.5px);
+      background: rgba(125, 101, 79, 0.24);
+    }
+    .lemouf-song2daw-arrange-line.minor {
+      background: rgba(125, 101, 79, 0.12);
+    }
+    .lemouf-song2daw-arrange-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      transform: translateX(-1px);
+      background: rgba(28, 28, 28, 0.55);
+      z-index: 4;
+      pointer-events: none;
+    }
+    .lemouf-song2daw-arrange-playhead.ruler {
+      background: rgba(28, 28, 28, 0.65);
+    }
+    .lemouf-song2daw-arrange-section,
+    .lemouf-song2daw-arrange-clip {
+      position: absolute;
+      left: 0;
+      top: 4px;
+      height: calc(100% - 8px);
+      border-radius: 5px;
+      border: 1px solid hsl(var(--clip-h, 35) 42% 32%);
+      background: linear-gradient(
+        180deg,
+        hsl(var(--clip-h, 35) 62% 67%),
+        hsl(var(--clip-h, 35) 58% 56%)
+      );
+      color: #1f1712;
+      font-size: 9px;
+      line-height: 20px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 0 5px;
+      z-index: 3;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+      user-select: none;
+    }
+    .lemouf-song2daw-arrange-section {
+      --clip-h: 35;
+      height: calc(100% - 7px);
+      top: 3px;
+      line-height: 19px;
+      color: #f8f2e8;
+      border-color: #6a513a;
+      background: linear-gradient(180deg, #89694f, #71563f);
+      font-weight: 700;
+    }
+    .lemouf-song2daw-arrange-empty {
+      position: absolute;
+      left: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 9px;
+      color: #867260;
+      z-index: 2;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .lemouf-song2daw-studio-note {
+      font-size: 10px;
+      color: #7a6756;
+      padding-left: 2px;
+    }
+    .lemouf-song2daw-tracks-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .lemouf-song2daw-track-card {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+    .lemouf-song2daw-track-name {
+      font-size: 11px;
+      font-weight: 700;
+      color: #3b2f24;
+      word-break: break-word;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .lemouf-song2daw-track-color-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+      border: 1px solid rgba(40, 30, 20, 0.26);
+    }
+    .lemouf-song2daw-track-meta {
+      font-size: 10px;
+      color: #6a5948;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .lemouf-song2daw-track-source {
+      font-size: 10px;
+      color: #6a5948;
+      word-break: break-word;
+    }
+    @media (max-width: 900px) {
+      .lemouf-song2daw-studio-toolbar-overview {
+        flex: 1 1 100%;
+      }
+      .lemouf-song2daw-studio-toolbar-status {
+        width: 100%;
+        text-align: left;
+      }
+    }
+    @media (max-width: 520px) {
+      .lemouf-song2daw-overview {
+        grid-template-columns: 1fr;
+      }
+      .lemouf-song2daw-tracks-grid {
+        grid-template-columns: 1fr;
+      }
+      .lemouf-song2daw-arrange-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+      .lemouf-song2daw-arrange-head {
+        min-height: 26px;
+      }
     }
     `,
   ]);

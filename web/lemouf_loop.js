@@ -6,6 +6,7 @@ import { createPayloadView } from "./ui/payload_view.js";
 import { createPipelineGraphView } from "./ui/pipeline_graph.js";
 import { createHomeScreen } from "./ui/home_screen.js";
 import { createRunScreen } from "./ui/run_screen.js";
+import { clearSong2DawStudioView, renderSong2DawStudioView } from "./ui/song2daw/studio_view.js";
 
 let lastApiError = "";
 
@@ -27,6 +28,41 @@ async function safeJson(res) {
   }
 }
 
+function formatErrorDetail(detail, fallback = "Unknown error") {
+  if (detail === null || detail === undefined) return fallback;
+  if (typeof detail === "string") {
+    const text = detail.trim();
+    return text || fallback;
+  }
+  if (typeof detail === "number" || typeof detail === "boolean") {
+    return String(detail);
+  }
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map((item) => formatErrorDetail(item, ""))
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return parts.length ? parts.join(" | ") : fallback;
+  }
+  if (typeof detail === "object") {
+    const preferredKeys = ["detail", "message", "error", "reason", "type", "status"];
+    for (const key of preferredKeys) {
+      if (Object.prototype.hasOwnProperty.call(detail, key)) {
+        const value = formatErrorDetail(detail[key], "");
+        if (value) return value;
+      }
+    }
+    try {
+      const text = JSON.stringify(detail);
+      if (!text) return fallback;
+      return text.length > 280 ? `${text.slice(0, 280)}...` : text;
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 async function apiGet(path) {
   const res = await api.fetchApi(path);
   if (!res.ok) {
@@ -36,7 +72,7 @@ async function apiGet(path) {
       if (text) {
         try {
           const parsed = JSON.parse(text);
-          detail = parsed?.error || parsed?.message || text;
+          detail = formatErrorDetail(parsed?.error ?? parsed?.message ?? parsed, text);
         } catch {
           detail = text;
         }
@@ -62,7 +98,7 @@ async function apiPost(path, data) {
       if (text) {
         try {
           const parsed = JSON.parse(text);
-          detail = parsed?.error || parsed?.message || text;
+          detail = formatErrorDetail(parsed?.error ?? parsed?.message ?? parsed, text);
         } catch {
           detail = text;
         }
@@ -349,6 +385,183 @@ function buildImageSrc(image, preview = false) {
   return `/view?${params.toString()}`;
 }
 
+const WORKFLOW_PROFILE_NODE_TYPE = "LeMoufWorkflowProfile";
+const WORKFLOW_PROFILE_DEFAULT = Object.freeze({
+  profile_id: "generic_loop",
+  profile_version: "0.1.0",
+  ui_contract_version: "1.0.0",
+  workflow_kind: "master",
+});
+const WORKFLOW_PROFILE_ADAPTERS = Object.freeze({
+  generic_loop: Object.freeze({
+    id: "generic_loop",
+    label: "Generic loop",
+    ui_contract_major: 1,
+    default_profile_version: "0.1.0",
+  }),
+  song2daw: Object.freeze({
+    id: "song2daw",
+    label: "song2daw",
+    ui_contract_major: 1,
+    default_profile_version: "0.1.0",
+  }),
+});
+
+function normalizeProfileId(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("-", "_")
+    .replaceAll(" ", "_");
+  return text;
+}
+
+function normalizeSemver(value, fallback) {
+  const text = String(value || "").trim();
+  if (/^\d+\.\d+\.\d+$/.test(text)) return text;
+  return fallback;
+}
+
+function normalizeWorkflowKind(value, fallback = "master") {
+  const text = String(value || "").trim().toLowerCase();
+  if (text === "master" || text === "branch") return text;
+  return fallback;
+}
+
+function semverMajor(value) {
+  const match = /^(\d+)\./.exec(String(value || "").trim());
+  if (!match) return null;
+  const major = Number(match[1]);
+  return Number.isFinite(major) ? major : null;
+}
+
+function scalarProfileInput(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return "";
+  return String(value).trim();
+}
+
+function coalesceProfileId(profileIdRaw, profileCustomRaw) {
+  const profileId = normalizeProfileId(profileIdRaw);
+  const custom = normalizeProfileId(profileCustomRaw);
+  if (profileId === "custom" || profileId === "other") {
+    return custom || "";
+  }
+  return profileId || custom || "";
+}
+
+function finalizeWorkflowProfile(rawProfile, source = "fallback") {
+  const raw = rawProfile && typeof rawProfile === "object" ? rawProfile : {};
+  const profileId = coalesceProfileId(raw.profile_id, raw.profile_id_custom) || WORKFLOW_PROFILE_DEFAULT.profile_id;
+  const known = Object.prototype.hasOwnProperty.call(WORKFLOW_PROFILE_ADAPTERS, profileId);
+  const adapter = known ? WORKFLOW_PROFILE_ADAPTERS[profileId] : WORKFLOW_PROFILE_ADAPTERS.generic_loop;
+  const profileVersion = normalizeSemver(
+    raw.profile_version,
+    known ? adapter.default_profile_version : WORKFLOW_PROFILE_DEFAULT.profile_version
+  );
+  const uiContractVersion = normalizeSemver(raw.ui_contract_version, WORKFLOW_PROFILE_DEFAULT.ui_contract_version);
+  const workflowKind = normalizeWorkflowKind(raw.workflow_kind, WORKFLOW_PROFILE_DEFAULT.workflow_kind);
+  const uiMajor = semverMajor(uiContractVersion);
+  const compatible = Boolean(known && uiMajor !== null && uiMajor === adapter.ui_contract_major);
+  return {
+    profile_id: profileId,
+    profile_version: profileVersion,
+    ui_contract_version: uiContractVersion,
+    adapter_id: adapter.id,
+    adapter_label: adapter.label,
+    workflow_kind: workflowKind,
+    known_profile: known,
+    compatible,
+    source: String(raw.source || source || "fallback"),
+  };
+}
+
+function extractWorkflowProfileFromPrompt(prompt) {
+  if (!prompt || typeof prompt !== "object") return null;
+  for (const node of Object.values(prompt)) {
+    if (!node || typeof node !== "object") continue;
+    const classType = String(node.class_type || node.type || "").trim();
+    if (classType !== WORKFLOW_PROFILE_NODE_TYPE) continue;
+    const inputs = node.inputs && typeof node.inputs === "object" ? node.inputs : {};
+    return finalizeWorkflowProfile(
+      {
+        profile_id: scalarProfileInput(inputs.profile_id),
+        profile_id_custom: scalarProfileInput(inputs.profile_id_custom),
+        profile_version: scalarProfileInput(inputs.profile_version),
+        ui_contract_version: scalarProfileInput(inputs.ui_contract_version),
+        workflow_kind: scalarProfileInput(inputs.workflow_kind),
+        source: "prompt_node",
+      },
+      "prompt_node"
+    );
+  }
+  return null;
+}
+
+function extractWorkflowProfileFromWorkflow(workflow) {
+  const nodes = Array.isArray(workflow?.nodes) ? workflow.nodes : [];
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const classType = String(node.type || node.class_type || "").trim();
+    if (classType !== WORKFLOW_PROFILE_NODE_TYPE) continue;
+    const directInputs = node.inputs && typeof node.inputs === "object" ? node.inputs : {};
+    const widgetValues = Array.isArray(node.widgets_values) ? node.widgets_values : [];
+    const hasCustomField = widgetValues.length >= 4;
+    const hasKindField = widgetValues.length >= 5;
+    const profileId = scalarProfileInput(directInputs.profile_id || widgetValues[0]);
+    const profileIdCustom = scalarProfileInput(
+      directInputs.profile_id_custom || (hasCustomField ? widgetValues[1] : "")
+    );
+    const profileVersion = scalarProfileInput(
+      directInputs.profile_version || (hasCustomField ? widgetValues[2] : widgetValues[1])
+    );
+    const uiContractVersion = scalarProfileInput(
+      directInputs.ui_contract_version || (hasCustomField ? widgetValues[3] : widgetValues[2])
+    );
+    const workflowKind = scalarProfileInput(
+      directInputs.workflow_kind || (hasKindField ? widgetValues[4] : "")
+    );
+    return finalizeWorkflowProfile(
+      {
+        profile_id: profileId,
+        profile_id_custom: profileIdCustom,
+        profile_version: profileVersion,
+        ui_contract_version: uiContractVersion,
+        workflow_kind: workflowKind,
+        source: "workflow_node",
+      },
+      "workflow_node"
+    );
+  }
+  return null;
+}
+
+function resolveWorkflowProfile({ workflow, prompt, workflowProfile } = {}) {
+  if (workflowProfile && typeof workflowProfile === "object") {
+    return finalizeWorkflowProfile({ ...workflowProfile, source: workflowProfile.source || "api" }, "api");
+  }
+  const fromPrompt = extractWorkflowProfileFromPrompt(prompt);
+  if (fromPrompt) return fromPrompt;
+  const fromWorkflow = extractWorkflowProfileFromWorkflow(workflow);
+  if (fromWorkflow) return fromWorkflow;
+
+  const promptTypes = extractTypesFromPrompt(prompt);
+  const workflowTypes = extractTypesFromWorkflowNodes(Array.isArray(workflow?.nodes) ? workflow.nodes : []);
+  const types = promptTypes.length ? promptTypes : workflowTypes;
+  if (hasType(types, "Song2DawRun") || hasType(types, "song2daw")) {
+    return finalizeWorkflowProfile({ profile_id: "song2daw", source: "heuristic_song2daw" }, "heuristic_song2daw");
+  }
+  return finalizeWorkflowProfile({ profile_id: "generic_loop", source: "fallback_generic" }, "fallback_generic");
+}
+
+function formatWorkflowProfileStatus(profile) {
+  const base = `Workflow profile: ${profile.profile_id} v${profile.profile_version} · UI ${profile.ui_contract_version} · ${profile.workflow_kind}`;
+  const source = profile.source ? ` (${profile.source})` : "";
+  if (!profile.known_profile) return `${base}${source} · unknown profile, fallback UI`;
+  if (!profile.compatible) return `${base}${source} · incompatible contract, fallback UI`;
+  return `${base}${source}`;
+}
+
 app.registerExtension({
   name: "lemouf.loop",
   async setup() {
@@ -370,16 +583,38 @@ app.registerExtension({
     const {
       root: preStartSection,
       pipelineSelect,
+      pipelineList,
       pipelineStatus,
       pipelineNav,
-      pipelineLoadBtn,
       pipelineRefreshBtn,
-      pipelineStartBtn,
-      pipelineStartRow,
+      pipelineRunBtn,
+      workflowUseCurrentBtn,
       cyclesRow,
       cyclesInput,
       validateBtn,
       compatStatus,
+      workflowDiagnosticsPanel,
+      song2dawSelect,
+      song2dawBlock,
+      workflowProfileStatus,
+      song2dawStatus,
+      song2dawRefreshBtn,
+      song2dawClearBtn,
+      song2dawLoadBtn,
+      song2dawOpenDirBtn,
+      song2dawDockToggleBtn,
+      song2dawDockExpandBtn,
+      song2dawAudioPreviewAsset,
+      song2dawAudioPreviewPlayer,
+      song2dawOverview,
+      song2dawStepTitle,
+      song2dawStepDetail,
+      song2dawStudioPanel,
+      song2dawStudioTimelineBtn,
+      song2dawStudioTracksBtn,
+      song2dawStudioSpectrumBtn,
+      song2dawStudioBody,
+      song2dawDetail,
     } = homeScreen;
     const openLightbox = (src) => {
       if (!src) return;
@@ -419,6 +654,9 @@ app.registerExtension({
     let autoRefreshTimer = null;
     let autoRefreshAttempts = 0;
     const AUTO_REFRESH_MAX = 180;
+    const SONG2DAW_DOCK_MIN_HEIGHT = 140;
+    const SONG2DAW_DOCK_MAX_HEIGHT = 560;
+    const SONG2DAW_DOCK_DEFAULT_HEIGHT = 230;
     let progressState = {
       promptId: null,
       value: 0,
@@ -427,7 +665,7 @@ app.registerExtension({
       status: "idle",
       loopPercent: null,
     };
-    const PANEL_VERSION = "0.2.0";
+    const PANEL_VERSION = "0.3.0";
     let panel = null;
     let headerBackBtn = null;
     let headerMenu = null;
@@ -438,6 +676,29 @@ app.registerExtension({
       steps: [],
       lastRun: null,
     };
+    let song2dawRuns = [];
+    let currentSong2DawRun = null;
+    let selectedSong2DawStepIndex = 0;
+    let song2dawStudioMode = "timeline";
+    let currentWorkflowProfile = finalizeWorkflowProfile({ profile_id: "generic_loop", source: "init" }, "init");
+    let song2dawDockVisible = true;
+    let song2dawDockUserVisible = true;
+    let song2dawDockExpanded = false;
+    let song2dawDock = null;
+    let song2dawDockHeaderToggleBtn = null;
+    let song2dawDockHeaderExpandBtn = null;
+    let currentGutter = Number(localStorage.getItem("lemoufLoopGutterWidth") || 420);
+    if (!Number.isFinite(currentGutter)) currentGutter = 420;
+    let currentSong2DawDockHeight = Number(
+      localStorage.getItem("lemoufSong2DawDockHeight") || SONG2DAW_DOCK_DEFAULT_HEIGHT
+    );
+    if (!Number.isFinite(currentSong2DawDockHeight)) {
+      currentSong2DawDockHeight = SONG2DAW_DOCK_DEFAULT_HEIGHT;
+    }
+    let song2dawDockRestoreHeight = currentSong2DawDockHeight;
+    song2dawDockVisible = localStorage.getItem("lemoufSong2DawDockVisible") !== "0";
+    song2dawDockUserVisible = song2dawDockVisible;
+    song2dawDockExpanded = localStorage.getItem("lemoufSong2DawDockExpanded") === "1";
     let pipelinePayloadEntry = null;
     let pipelineGraphView = null;
     let currentScreen = "home";
@@ -512,15 +773,50 @@ app.registerExtension({
       pipelineStatus.textContent = msg || "";
     };
 
+    const setSong2DawStatus = (msg) => {
+      song2dawStatus.textContent = msg || "";
+    };
+
+    const setWorkflowProfileStatus = (profile) => {
+      if (!workflowProfileStatus) return;
+      const effective = profile && typeof profile === "object"
+        ? profile
+        : finalizeWorkflowProfile({ profile_id: "generic_loop", source: "fallback_generic" }, "fallback_generic");
+      workflowProfileStatus.textContent = formatWorkflowProfileStatus(effective);
+      const warning = !effective.compatible || !effective.known_profile;
+      workflowProfileStatus.classList.toggle("is-warning", warning);
+      workflowProfileStatus.classList.toggle("is-ok", !warning);
+    };
+
+    const setWorkflowDiagnosticsVisible = (visible) => {
+      workflowDiagnosticsVisible = Boolean(visible);
+      if (workflowDiagnosticsPanel) {
+        workflowDiagnosticsPanel.style.display = "";
+      }
+    };
+
+    const workflowProfileIcon = (profile) => {
+      const p = profile && typeof profile === "object" ? profile : null;
+      const profileId = String(p?.profile_id || "").toLowerCase();
+      const kind = String(p?.workflow_kind || "master").toLowerCase();
+      if (profileId === "song2daw") return kind === "master" ? "[S2D*]" : "[S2D]";
+      if (profileId === "generic_loop") return kind === "master" ? "[LOOP*]" : "[LOOP]";
+      return kind === "master" ? "[WF*]" : "[WF]";
+    };
+
     const setPipelineGraphStatus = (msg) => {
       pipelineGraphView?.setStatus(msg || "");
     };
 
+    const syncPipelineNavVisibility = () => {
+      const isGenericLoopProfile = currentWorkflowProfile?.adapter_id === "generic_loop";
+      const showPipeline = pipelineLoadedState && isGenericLoopProfile;
+      pipelineNav.style.display = showPipeline ? "" : "none";
+    };
+
     const setPipelineLoaded = (loaded) => {
-      const show = Boolean(loaded);
-      pipelineNav.style.display = show ? "" : "none";
-      pipelineStartRow.style.display = show ? "" : "none";
-      compatStatus.style.display = show ? "" : "none";
+      pipelineLoadedState = Boolean(loaded);
+      syncPipelineNavVisibility();
     };
 
     const setCurrentLoopId = (loopId) => {
@@ -551,51 +847,638 @@ app.registerExtension({
 
     const PIPELINE_KEY = "lemoufLoopPipelineName";
     let pipelineWorkflowList = [];
+    let pipelineWorkflowProfiles = {};
+    let selectedPipelineWorkflowName = "";
+    let workflowDiagnosticsVisible = false;
+    let pipelineLoadedState = false;
     const pipelineWorkflowCache = new Map();
-    const refreshPipelineList = async ({ silent = false } = {}) => {
+    const profileForWorkflowName = (name, source = "catalog") => {
+      const key = String(name || "");
+      const rawProfile = key && pipelineWorkflowProfiles && typeof pipelineWorkflowProfiles === "object"
+        ? pipelineWorkflowProfiles[key]
+        : null;
+      return finalizeWorkflowProfile(rawProfile, source);
+    };
+    const resetSong2DawUiStateForWorkflowSwitch = () => {
+      song2dawRuns = [];
+      selectedSong2DawStepIndex = 0;
+      currentSong2DawRun = null;
+      renderSong2DawRunOptions();
+      clearSong2DawStepViews();
+      song2dawDetail.textContent = "";
+      updateSong2DawOpenButton();
+      setSong2DawStatus("Workflow switched. Run pipeline or refresh runs.");
+    };
+    const applyPipelineWorkflowSelection = (name, { userInitiated = false } = {}) => {
+      const nextName = String(name || "");
+      const prevName = String(selectedPipelineWorkflowName || "");
+      if (nextName) {
+        pipelineSelect.value = nextName;
+        localStorage.setItem(PIPELINE_KEY, nextName);
+      }
+      const changed = Boolean(prevName && nextName && prevName !== nextName);
+      selectedPipelineWorkflowName = nextName;
+      if (changed && userInitiated) {
+        const prevProfile = profileForWorkflowName(prevName, "catalog_prev");
+        const nextProfile = profileForWorkflowName(nextName, "catalog_next");
+        lastValidationSignature = null;
+        pipelinePayloadEntry = null;
+        pipelineState.steps = [];
+        pipelineState.lastRun = null;
+        pipelineActiveStepId = null;
+        pipelineSelectedStepId = null;
+        pipelineWorkflowCache.clear();
+        setPipelineLoaded(false);
+        pipelineGraphView?.root?.replaceChildren();
+        setPipelineGraphStatus("Pipeline graph will appear here once loaded.");
+        if (prevProfile.adapter_id === "song2daw" || nextProfile.adapter_id === "song2daw") {
+          resetSong2DawUiStateForWorkflowSwitch();
+        }
+      }
+      renderPipelineWorkflowList();
+      updateSelectedWorkflowProfilePreview();
+    };
+    const workflowProfileBadge = (profile) => String(workflowProfileIcon(profile) || "[WF]").replaceAll("[", "").replaceAll("]", "");
+    const renderPipelineWorkflowList = () => {
+      if (!pipelineList) return;
+      pipelineList.innerHTML = "";
+      if (!pipelineWorkflowList.length) {
+        pipelineList.appendChild(el("div", { class: "lemouf-workflow-empty", text: "No master workflows found." }));
+        return;
+      }
+      const selectedName = String(pipelineSelect.value || "");
+      for (const name of pipelineWorkflowList) {
+        const rawProfile = pipelineWorkflowProfiles && typeof pipelineWorkflowProfiles === "object"
+          ? pipelineWorkflowProfiles[name]
+          : null;
+        const profile = finalizeWorkflowProfile(rawProfile, "catalog");
+        const item = el("button", { class: "lemouf-workflow-item", type: "button" }, [
+          el("span", { class: "lemouf-workflow-item-icon", text: workflowProfileBadge(profile) }),
+          el("span", { class: "lemouf-workflow-item-name", text: name }),
+        ]);
+        item.classList.toggle("is-selected", name === selectedName);
+        item.addEventListener("click", () => {
+          if (pipelineSelect.value === name) return;
+          applyPipelineWorkflowSelection(name, { userInitiated: true });
+        });
+        pipelineList.appendChild(item);
+      }
+    };
+    const updateSelectedWorkflowProfilePreview = () => {
+      const name = String(pipelineSelect.value || "");
+      if (!name) {
+        applyWorkflowProfile(
+          finalizeWorkflowProfile({ profile_id: "generic_loop", source: "catalog_empty" }, "catalog_empty"),
+          { sourceHint: "catalog_empty" }
+        );
+        return;
+      }
+      const rawProfile = pipelineWorkflowProfiles && typeof pipelineWorkflowProfiles === "object"
+        ? pipelineWorkflowProfiles[name]
+        : null;
+      const profile = finalizeWorkflowProfile(
+        {
+          ...(rawProfile && typeof rawProfile === "object" ? rawProfile : {}),
+          source: (rawProfile && rawProfile.source) ? rawProfile.source : "catalog",
+        },
+        "catalog"
+      );
+      applyWorkflowProfile(profile, { sourceHint: profile.source || "catalog" });
+    };
+    const refreshPipelineList = async ({ silent = false, preserveSelection = true } = {}) => {
       const res = await apiGet("/lemouf/workflows/list");
-      const list = res?.workflows;
+      if (!res || typeof res !== "object") {
+        if (!silent) setPipelineStatus(lastApiError || "Failed to refresh workflows.");
+        return;
+      }
+      const all = Array.isArray(res?.workflows) ? res.workflows : [];
+      const masters = Array.isArray(res?.master_workflows) ? res.master_workflows : [];
+      const list = masters.length ? masters : all;
+      pipelineWorkflowProfiles = res?.workflow_profiles && typeof res.workflow_profiles === "object"
+        ? res.workflow_profiles
+        : {};
       pipelineWorkflowList = Array.isArray(list) ? list.slice() : [];
       pipelineSelect.innerHTML = "";
       if (!Array.isArray(list) || list.length === 0) {
         pipelineSelect.appendChild(el("option", { value: "", text: "No workflows found" }));
         pipelineSelect.disabled = true;
-        pipelineLoadBtn.disabled = true;
+        pipelineRunBtn.disabled = true;
+        renderPipelineWorkflowList();
+        updateSelectedWorkflowProfilePreview();
         const folder = res?.folder ? `Folder: ${res.folder}` : "Folder: workflows/";
-        if (!silent) setPipelineStatus(`No workflows found. ${folder}`);
+        if (!silent) setPipelineStatus(`No master workflows found. ${folder}`);
         return;
       }
       for (const name of list) {
-        pipelineSelect.appendChild(el("option", { value: name, text: name }));
+        const rawProfile = pipelineWorkflowProfiles[name];
+        const profile = finalizeWorkflowProfile(rawProfile, "catalog");
+        const label = `${profile.adapter_label} · ${name}`;
+        pipelineSelect.appendChild(el("option", { value: name, text: label }));
       }
       pipelineSelect.disabled = false;
-      pipelineLoadBtn.disabled = false;
+      pipelineRunBtn.disabled = false;
+      const previousSelected = String(pipelineSelect.value || selectedPipelineWorkflowName || "");
       const saved = localStorage.getItem(PIPELINE_KEY);
-      if (saved && list.includes(saved)) pipelineSelect.value = saved;
-      else pipelineSelect.value = list[0];
-      if (!silent) setPipelineStatus("");
+      let selected = "";
+      if (preserveSelection && previousSelected && list.includes(previousSelected)) {
+        selected = previousSelected;
+      } else if (saved && list.includes(saved)) {
+        selected = saved;
+      } else {
+        selected = list[0];
+      }
+      applyPipelineWorkflowSelection(selected, { userInitiated: false });
+      if (!silent) {
+        const allCount = all.length;
+        const masterCount = list.length;
+        const suffix = allCount > masterCount ? ` (${masterCount}/${allCount} master)` : "";
+        setPipelineStatus(`Master workflows loaded${suffix}.`);
+      }
     };
 
-    const loadPipelineWorkflow = async () => {
-      const name = pipelineSelect.value;
-      if (!name) {
+    const renderSong2DawRunOptions = () => {
+      song2dawSelect.innerHTML = "";
+      if (!song2dawRuns.length) {
+        song2dawSelect.appendChild(el("option", { value: "", text: "No song2daw runs" }));
+        song2dawSelect.disabled = true;
+        song2dawLoadBtn.disabled = true;
+        song2dawOpenDirBtn.disabled = true;
+        currentSong2DawRun = null;
+        clearSong2DawStepViews();
+        song2dawDetail.textContent = "";
+        return;
+      }
+      for (const run of song2dawRuns) {
+        const runId = String(run?.run_id || "");
+        const status = String(run?.status || "unknown");
+        const stepCount = Number(run?.summary?.step_count || 0);
+        const label = `${shortId(runId)} · ${status} · ${stepCount} steps`;
+        song2dawSelect.appendChild(el("option", { value: runId, text: label }));
+      }
+      song2dawSelect.disabled = false;
+      song2dawLoadBtn.disabled = false;
+      song2dawOpenDirBtn.disabled = true;
+    };
+
+    const clearSong2DawStepViews = () => {
+      song2dawOverview.innerHTML = "";
+      song2dawStepTitle.textContent = "Step detail";
+      song2dawStepDetail.textContent = "";
+      if (song2dawAudioPreviewPlayer) {
+        try {
+          song2dawAudioPreviewPlayer.pause();
+        } catch {}
+        song2dawAudioPreviewPlayer.removeAttribute("src");
+        try {
+          song2dawAudioPreviewPlayer.load();
+        } catch {}
+      }
+      if (song2dawAudioPreviewAsset) {
+        song2dawAudioPreviewAsset.innerHTML = "";
+        song2dawAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
+        song2dawAudioPreviewAsset.disabled = true;
+      }
+      clearSong2DawStudio();
+    };
+
+    const compactList = (items, maxItems = 4) => {
+      if (!Array.isArray(items) || !items.length) return "(none)";
+      const values = items.map((v) => String(v || "")).filter(Boolean);
+      if (!values.length) return "(none)";
+      if (values.length <= maxItems) return values.join(", ");
+      return `${values.slice(0, maxItems).join(", ")}, +${values.length - maxItems}`;
+    };
+
+    const compactJson = (value, maxChars = 1600) => {
+      try {
+        const text = JSON.stringify(value, null, 2);
+        if (text.length <= maxChars) return text;
+        return `${text.slice(0, maxChars)}\n... (truncated)`;
+      } catch {
+        return String(value ?? "");
+      }
+    };
+
+    const clearSong2DawStudio = () => {
+      clearSong2DawStudioView({
+        mode: song2dawStudioMode,
+        body: song2dawStudioBody,
+        timelineBtn: song2dawStudioTimelineBtn,
+        tracksBtn: song2dawStudioTracksBtn,
+        spectrumBtn: song2dawStudioSpectrumBtn,
+      });
+    };
+
+    const getSong2DawAudioResolver = (runData) => {
+      const SOURCE_FALLBACK_ASSET = "__source_audio";
+      const audioAssets = runData?.audio_assets && typeof runData.audio_assets === "object" ? runData.audio_assets : {};
+      const availableAudioAssetKeys = Object.keys(audioAssets).filter((key) => String(audioAssets[key] || "").trim());
+      const sourcePathHint = String(runData?.audio_path || "").trim();
+      const sourceFallbackEnabled = Boolean(sourcePathHint);
+      const sourcePathNormalized = sourcePathHint.replaceAll("\\", "/").replace(/^\/+/, "");
+      const sourceParts = sourcePathNormalized.split("/").filter(Boolean);
+      const sourceFilename = sourceParts.length ? sourceParts[sourceParts.length - 1] : "";
+      const sourceSubfolder = sourceParts.length > 1 ? sourceParts.slice(0, -1).join("/") : "";
+      const sourceViewUrl = (() => {
+        if (!sourceFilename) return "";
+        const params = new URLSearchParams();
+        params.set("filename", sourceFilename);
+        params.set("type", "input");
+        if (sourceSubfolder) params.set("subfolder", sourceSubfolder);
+        return `/view?${params.toString()}`;
+      })();
+      const exposedAudioAssetKeys = availableAudioAssetKeys.length
+        ? availableAudioAssetKeys
+        : (sourceFallbackEnabled ? [SOURCE_FALLBACK_ASSET] : []);
+      const preferredAudioAsset = exposedAudioAssetKeys.includes("mix")
+        ? "mix"
+        : (exposedAudioAssetKeys[0] || "");
+      const resolveAudioUrl = (asset = "mix") => {
+        const requested = String(asset || "mix");
+        const resolvedAsset = exposedAudioAssetKeys.includes(requested) ? requested : preferredAudioAsset;
+        if (!resolvedAsset) return "";
+        if (resolvedAsset === SOURCE_FALLBACK_ASSET && sourceViewUrl) return sourceViewUrl;
+        const runId = String(runData?.run_id || "");
+        if (!runId) return sourceViewUrl || "";
+        const params = new URLSearchParams();
+        params.set("asset", resolvedAsset);
+        return `/lemouf/song2daw/runs/${encodeURIComponent(runId)}/audio?${params.toString()}`;
+      };
+      return { audioAssets, availableAudioAssetKeys: exposedAudioAssetKeys, preferredAudioAsset, resolveAudioUrl };
+    };
+
+    const renderSong2DawAudioPreview = (runData) => {
+      if (!song2dawAudioPreviewAsset || !song2dawAudioPreviewPlayer) return;
+      const { availableAudioAssetKeys, preferredAudioAsset, resolveAudioUrl } = getSong2DawAudioResolver(runData);
+      const previousAsset = String(song2dawAudioPreviewAsset.value || "");
+      const selectedAsset = availableAudioAssetKeys.includes(previousAsset)
+        ? previousAsset
+        : (preferredAudioAsset || "");
+
+      song2dawAudioPreviewAsset.innerHTML = "";
+      if (!availableAudioAssetKeys.length) {
+        song2dawAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
+        song2dawAudioPreviewAsset.disabled = true;
+        try {
+          song2dawAudioPreviewPlayer.pause();
+        } catch {}
+        song2dawAudioPreviewPlayer.removeAttribute("src");
+        try {
+          song2dawAudioPreviewPlayer.load();
+        } catch {}
+        return;
+      }
+
+      for (const assetKey of availableAudioAssetKeys) {
+        const label = assetKey === "__source_audio" ? "Workflow source" : (assetKey === "mix" ? "Mix" : assetKey);
+        song2dawAudioPreviewAsset.appendChild(el("option", { value: assetKey, text: label }));
+      }
+      song2dawAudioPreviewAsset.disabled = false;
+      song2dawAudioPreviewAsset.value = selectedAsset;
+      song2dawAudioPreviewAsset.onchange = () => {
+        const nextAsset = String(song2dawAudioPreviewAsset.value || "");
+        const src = resolveAudioUrl(nextAsset);
+        if (src) {
+          song2dawAudioPreviewPlayer.src = src;
+          song2dawAudioPreviewPlayer.load();
+        } else {
+          song2dawAudioPreviewPlayer.removeAttribute("src");
+          song2dawAudioPreviewPlayer.load();
+        }
+      };
+
+      const src = resolveAudioUrl(selectedAsset);
+      if (src && song2dawAudioPreviewPlayer.src !== src) {
+        song2dawAudioPreviewPlayer.src = src;
+        song2dawAudioPreviewPlayer.load();
+      } else if (!src) {
+        song2dawAudioPreviewPlayer.removeAttribute("src");
+        song2dawAudioPreviewPlayer.load();
+      }
+    };
+
+    const renderSong2DawStudio = (runData) => {
+      const { resolveAudioUrl } = getSong2DawAudioResolver(runData);
+      const jumpToStep = (stepIndex) => {
+        const summarySteps = Array.isArray(runData?.summary?.steps) ? runData.summary.steps : [];
+        if (!summarySteps.length) return;
+        const bounded = Math.max(0, Math.min(summarySteps.length - 1, Math.round(Number(stepIndex) || 0)));
+        selectedSong2DawStepIndex = bounded;
+        renderSong2DawStepViews(runData);
+        song2dawStepDetail.scrollTop = 0;
+        setSong2DawStatus(`Inspector jump: step ${bounded + 1}/${summarySteps.length}`);
+      };
+      renderSong2DawStudioView({
+        runData,
+        mode: song2dawStudioMode,
+        dockExpanded: song2dawDockExpanded,
+        body: song2dawStudioBody,
+        timelineBtn: song2dawStudioTimelineBtn,
+        tracksBtn: song2dawStudioTracksBtn,
+        spectrumBtn: song2dawStudioSpectrumBtn,
+        onJumpToStep: jumpToStep,
+        onOpenRunDir: () => openSong2DawRunDir(),
+        onResolveAudioUrl: resolveAudioUrl,
+      });
+    };
+
+    const setSong2DawStudioMode = (mode) => {
+      const nextMode = mode === "tracks" ? "tracks" : (mode === "spectrum3d" ? "spectrum3d" : "timeline");
+      if (song2dawStudioMode === nextMode && currentSong2DawRun) {
+        renderSong2DawStudio(currentSong2DawRun);
+        return;
+      }
+      song2dawStudioMode = nextMode;
+      if (currentSong2DawRun) renderSong2DawStudio(currentSong2DawRun);
+      else clearSong2DawStudio();
+    };
+
+    const selectedSong2DawRunId = () => String(song2dawSelect.value || "");
+
+    const selectedSong2DawRunMeta = () => {
+      const runId = selectedSong2DawRunId();
+      return song2dawRuns.find((run) => String(run?.run_id || "") === runId) || null;
+    };
+
+    const updateSong2DawOpenButton = () => {
+      const runId = selectedSong2DawRunId();
+      const detailMatches = currentSong2DawRun && String(currentSong2DawRun.run_id || "") === runId;
+      const runDir = detailMatches ? currentSong2DawRun?.run_dir : selectedSong2DawRunMeta()?.run_dir;
+      song2dawOpenDirBtn.disabled = !String(runDir || "").trim();
+    };
+
+    const renderSong2DawStepViews = (runData) => {
+      const summarySteps = Array.isArray(runData?.summary?.steps) ? runData.summary.steps : [];
+      const rawSteps = Array.isArray(runData?.result?.steps) ? runData.result.steps : [];
+      song2dawOverview.innerHTML = "";
+
+      if (!summarySteps.length) {
+        song2dawOverview.appendChild(
+          el("div", { class: "lemouf-song2daw-step-empty", text: "No step summary in this run." })
+        );
+        song2dawStepTitle.textContent = "Step detail";
+        song2dawStepDetail.textContent = "";
+        return;
+      }
+
+      if (selectedSong2DawStepIndex < 0 || selectedSong2DawStepIndex >= summarySteps.length) {
+        selectedSong2DawStepIndex = 0;
+      }
+
+      for (let i = 0; i < summarySteps.length; i += 1) {
+        const step = summarySteps[i] || {};
+        const rawStep = rawSteps[i] || {};
+        const name = String(step?.name || `step_${i + 1}`);
+        const version = String(step?.version || "");
+        const outputs = Array.isArray(step?.outputs) ? step.outputs : [];
+        const rawOutputs =
+          rawStep && typeof rawStep.outputs === "object" && rawStep.outputs
+            ? Object.keys(rawStep.outputs).length
+            : outputs.length;
+        const cacheKey = step?.cache_key ? shortId(step.cache_key) : "n/a";
+        const selectedClass = i === selectedSong2DawStepIndex ? " is-selected" : "";
+        const runStatus = String(runData?.status || "ok").toLowerCase() === "ok" ? "ok" : "error";
+        const card = el("button", {
+          class: `lemouf-song2daw-step-card${selectedClass}`,
+          type: "button",
+        });
+        card.append(
+          el("div", { class: "lemouf-song2daw-step-head" }, [
+            el("span", { class: `lemouf-song2daw-step-badge ${runStatus}`, text: runStatus }),
+            el("span", { class: "lemouf-song2daw-step-idx", text: `step ${i + 1}` }),
+          ]),
+          el("div", { class: "lemouf-song2daw-step-name", text: name }),
+          el("div", { class: "lemouf-song2daw-step-sub", text: version ? `v${version}` : "v?" }),
+          el("div", { class: "lemouf-song2daw-step-sub", text: `${rawOutputs} output(s)` }),
+          el("div", { class: "lemouf-song2daw-step-sub", text: `cache ${cacheKey}` }),
+        );
+        card.addEventListener("click", () => {
+          selectedSong2DawStepIndex = i;
+          renderSong2DawStepViews(runData);
+        });
+        song2dawOverview.appendChild(card);
+      }
+
+      const step = summarySteps[selectedSong2DawStepIndex] || {};
+      const rawStep = rawSteps[selectedSong2DawStepIndex] || {};
+      const name = String(step?.name || `step_${selectedSong2DawStepIndex + 1}`);
+      const version = String(step?.version || "");
+      const outputs = Array.isArray(step?.outputs) ? step.outputs : [];
+      song2dawStepTitle.textContent = `Step ${selectedSong2DawStepIndex + 1}/${summarySteps.length}: ${name}${version ? ` v${version}` : ""}`;
+
+      const detailLines = [];
+      detailLines.push(`cache_key: ${String(step?.cache_key || "n/a")}`);
+      detailLines.push(`declared_outputs: ${compactList(outputs, 10)}`);
+      if (rawStep && typeof rawStep === "object") {
+        if (Number.isFinite(rawStep.index)) detailLines.push(`index: ${rawStep.index}`);
+        detailLines.push("");
+        detailLines.push("outputs_json:");
+        detailLines.push(compactJson(rawStep.outputs ?? {}, 1800));
+      }
+      song2dawStepDetail.textContent = detailLines.join("\n");
+    };
+
+    const refreshSong2DawRuns = async ({ silent = false, selectRunId = null, autoLoad = false } = {}) => {
+      const data = await apiGet("/lemouf/song2daw/runs");
+      const runs = Array.isArray(data?.runs) ? data.runs.slice() : [];
+      song2dawRuns = runs;
+      renderSong2DawRunOptions();
+      if (selectRunId && runs.some((run) => String(run?.run_id || "") === selectRunId)) {
+        song2dawSelect.value = selectRunId;
+      }
+      if (!silent) {
+        setSong2DawStatus(runs.length ? `Loaded ${runs.length} run(s).` : "No song2daw runs yet.");
+      }
+      if (runs.length && !selectRunId) {
+        song2dawSelect.value = String(runs[0]?.run_id || "");
+      }
+      updateSong2DawOpenButton();
+      if (autoLoad && runs.length) {
+        await loadSong2DawRunDetail(String(song2dawSelect.value || ""));
+      }
+      if (!runs.length) {
+        clearSong2DawStepViews();
+        song2dawDetail.textContent = "";
+        currentSong2DawRun = null;
+      }
+    };
+
+    const loadSong2DawRunDetail = async (runIdOverride = "") => {
+      const override =
+        typeof runIdOverride === "string" || typeof runIdOverride === "number"
+          ? String(runIdOverride)
+          : "";
+      const runId = String(override || song2dawSelect.value || "");
+      if (!runId) {
+        setSong2DawStatus("Select a run first.");
+        return;
+      }
+      song2dawSelect.value = runId;
+      setSong2DawStatus("Loading song2daw step view...");
+      const data = await apiGet(`/lemouf/song2daw/runs/${runId}`);
+      if (!data) {
+        setSong2DawStatus(lastApiError || "Failed to load run detail.");
+        return;
+      }
+      const uiViewPayload = await apiGet(`/lemouf/song2daw/runs/${runId}/ui_view`);
+      if (uiViewPayload?.ui_view && typeof uiViewPayload.ui_view === "object") {
+        data.ui_view = uiViewPayload.ui_view;
+        data.ui_view_valid = Boolean(uiViewPayload.valid);
+      }
+      const previousRunId = String(currentSong2DawRun?.run_id || "");
+      if (previousRunId !== runId) selectedSong2DawStepIndex = 0;
+      currentSong2DawRun = data;
+      updateSong2DawOpenButton();
+      renderSong2DawAudioPreview(data);
+      renderSong2DawStepViews(data);
+      renderSong2DawStudio(data);
+      const lines = [];
+      lines.push(`run ${shortId(data.run_id || "")}  ·  ${data.status || "unknown"}`);
+      lines.push(`audio: ${data.audio_path || ""}`);
+      lines.push(`stems: ${data.stems_dir || ""}`);
+      if (data.run_dir) lines.push(`dir: ${data.run_dir}`);
+      if (data.error) lines.push(`error: ${data.error}`);
+      lines.push("");
+      lines.push("steps:");
+      const steps = Array.isArray(data?.summary?.steps) ? data.summary.steps : [];
+      if (!steps.length) {
+        lines.push("  (none)");
+      } else {
+        for (let i = 0; i < steps.length; i += 1) {
+          const step = steps[i];
+          const name = step?.name || "unknown";
+          const version = step?.version || "";
+          const cacheKey = step?.cache_key ? shortId(step.cache_key) : "n/a";
+          const outputs = compactList(step?.outputs, 4);
+          lines.push(`  ${i + 1}. ${name} v${version} · ${cacheKey}`);
+          lines.push(`     -> ${outputs}`);
+        }
+      }
+      const artifactKeys = Array.isArray(data?.summary?.artifact_keys) ? data.summary.artifact_keys : [];
+      lines.push("");
+      lines.push(`artifacts (${artifactKeys.length}): ${compactList(artifactKeys, 6)}`);
+      const audioAssets = data?.audio_assets && typeof data.audio_assets === "object" ? data.audio_assets : {};
+      const audioAssetKeys = Object.keys(audioAssets).filter((key) => String(audioAssets[key] || "").trim());
+      lines.push(`audio_assets (${audioAssetKeys.length}): ${audioAssetKeys.length ? audioAssetKeys.join(", ") : "(none)"}`);
+      if (data.ui_view) {
+        lines.push(`ui_view: ${data.ui_view_valid ? "valid" : "invalid"}`);
+      }
+      song2dawDetail.textContent = lines.join("\n");
+      setSong2DawStatus(`Step view loaded: ${shortId(runId)}`);
+    };
+
+    const clearSong2DawRuns = async () => {
+      setSong2DawStatus("Clearing song2daw runs...");
+      const res = await apiPost("/lemouf/song2daw/runs/clear", {});
+      if (!res?.ok) {
+        setSong2DawStatus(lastApiError || "Failed to clear runs.");
+        return;
+      }
+      song2dawRuns = [];
+      renderSong2DawRunOptions();
+      clearSong2DawStepViews();
+      setSong2DawStatus("Runs cleared.");
+    };
+
+    const openSong2DawRunDir = async () => {
+      const runId = selectedSong2DawRunId();
+      if (!runId) {
+        setSong2DawStatus("Select a run first.");
+        return;
+      }
+      setSong2DawStatus("Opening run_dir...");
+      const res = await apiPost("/lemouf/song2daw/runs/open", { run_id: runId });
+      if (!res?.ok) {
+        setSong2DawStatus(lastApiError || "Failed to open run_dir.");
+        return;
+      }
+      setSong2DawStatus(`Opened: ${shortId(runId)}`);
+    };
+
+    const useCurrentWorkflow = async () => {
+      setWorkflowDiagnosticsVisible(true);
+      setPipelineStatus("Evaluating current workflow...");
+      const validation = await runValidation(true);
+      if (!validation) {
+        setPipelineStatus("Current workflow not readable.");
+        return;
+      }
+      setPipelineStatus(validation.ok ? "Current workflow ready." : "Current workflow has issues.");
+    };
+
+    const queueCurrentWorkflow = async () => {
+      const payload = await getCurrentPromptPayload();
+      const prompt =
+        payload?.output ??
+        payload?.prompt ??
+        (payload && typeof payload === "object" ? payload : null);
+      if (!prompt || typeof prompt !== "object" || !Object.keys(prompt).length) {
+        setPipelineStatus("No loaded workflow to run.");
+        return false;
+      }
+      const workflow = payload?.workflow && typeof payload.workflow === "object" ? payload.workflow : null;
+      const body = {
+        prompt,
+        client_id: api.clientId,
+      };
+      if (workflow) {
+        body.extra_data = { extra_pnginfo: { workflow } };
+      }
+      setPipelineStatus("Queueing loaded workflow...");
+      const res = await api.fetchApi("/prompt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const payloadErr = await safeJson(res);
+        const detail = formatErrorDetail(
+          payloadErr?.error ?? payloadErr?.message ?? payloadErr,
+          `HTTP ${res.status}`
+        );
+        setPipelineStatus(`Run failed: ${detail}`);
+        return false;
+      }
+      const queued = await safeJson(res);
+      const promptId = String(queued?.prompt_id || "");
+      progressState = {
+        promptId: promptId || null,
+        value: 0,
+        max: 0,
+        node: "",
+        status: "queued",
+        loopPercent: null,
+      };
+      updateProgressUI();
+      setPipelineStatus(promptId ? `Workflow queued: ${shortId(promptId)}` : "Workflow queued.");
+      return true;
+    };
+
+    const runLoadedWorkflow = async () => {
+      const selectedName = String(pipelineSelect.value || "");
+      if (!selectedName) {
         setPipelineStatus("Select a workflow first.");
         return;
       }
-      localStorage.setItem(PIPELINE_KEY, name);
-      setPipelineStatus("Loading pipeline...");
-      const ok = await loadWorkflowByName(name);
-      if (!ok) {
-        setPipelineStatus("Failed to inject workflow into UI.");
+      if (currentWorkflowName !== selectedName || workflowDirty) {
+        setPipelineStatus("Loading selected workflow...");
+        const loaded = await loadWorkflowByName(selectedName, { silent: true });
+        if (!loaded) {
+          setPipelineStatus(lastApiError || "Failed to load selected workflow.");
+          return;
+        }
+      }
+      const selectedRawProfile = pipelineWorkflowProfiles && typeof pipelineWorkflowProfiles === "object"
+        ? pipelineWorkflowProfiles[selectedName]
+        : null;
+      const selectedProfile = finalizeWorkflowProfile(selectedRawProfile, "catalog");
+      if (selectedProfile.adapter_id === "generic_loop") {
+        setPipelineStatus("Running pipeline orchestration...");
+        await validateAndStart();
         return;
       }
-      setPipelineStatus(`Pipeline loaded: ${name}`);
-      setPipelineLoaded(true);
-      workflowDirty = true;
-      setTimeout(() => {
-        runValidation(true);
-        setCurrentWorkflow({ force: true, silent: true });
-      }, 250);
+      setWorkflowDiagnosticsVisible(true);
+      await queueCurrentWorkflow();
     };
 
     const loadWorkflowByName = async (name, { force = false, silent = false } = {}) => {
@@ -613,6 +1496,11 @@ app.registerExtension({
       }
       const res = await apiPost("/lemouf/workflows/load", { name });
       if (!res?.workflow) return false;
+      const loadedProfile = resolveWorkflowProfile({
+        workflow: res.workflow,
+        workflowProfile: res.workflow_profile,
+      });
+      applyWorkflowProfile(loadedProfile, { sourceHint: loadedProfile.source || "workflow_load" });
       const ok = await loadWorkflowData(res.workflow);
       if (ok) {
         currentWorkflowName = name;
@@ -725,49 +1613,188 @@ app.registerExtension({
     }
 
     pipelineSelect.addEventListener("change", () => {
-      const name = pipelineSelect.value;
-      if (name) localStorage.setItem(PIPELINE_KEY, name);
+      applyPipelineWorkflowSelection(pipelineSelect.value, { userInitiated: true });
     });
-    pipelineLoadBtn.addEventListener("click", loadPipelineWorkflow);
+    workflowUseCurrentBtn.addEventListener("click", useCurrentWorkflow);
     pipelineRefreshBtn.addEventListener("click", () => refreshPipelineList());
-    pipelineStartBtn.addEventListener("click", () => validateAndStart());
+    pipelineRunBtn.addEventListener("click", runLoadedWorkflow);
+    song2dawRefreshBtn.addEventListener("click", () => refreshSong2DawRuns());
+    song2dawClearBtn.addEventListener("click", clearSong2DawRuns);
+    song2dawLoadBtn.addEventListener("click", () => loadSong2DawRunDetail());
+    song2dawOpenDirBtn.addEventListener("click", openSong2DawRunDir);
+    song2dawStudioTimelineBtn.addEventListener("click", () => setSong2DawStudioMode("timeline"));
+    song2dawStudioTracksBtn.addEventListener("click", () => setSong2DawStudioMode("tracks"));
+    song2dawStudioSpectrumBtn.addEventListener("click", () => setSong2DawStudioMode("spectrum3d"));
+    song2dawSelect.addEventListener("change", async () => {
+      currentSong2DawRun = null;
+      selectedSong2DawStepIndex = 0;
+      clearSong2DawStepViews();
+      updateSong2DawOpenButton();
+      await loadSong2DawRunDetail(selectedSong2DawRunId());
+    });
+    clearSong2DawStudio();
 
-    const applyGutterWidth = (width) => {
-      const clamped = Math.max(300, Math.min(720, Math.round(width)));
-      document.documentElement.style.setProperty("--lemouf-gutter", `${clamped}px`);
-      if (panel) panel.style.width = `var(--lemouf-gutter)`;
+    const song2DawDockViewportMaxHeight = () => {
+      const viewportHeight = Math.max(
+        320,
+        Number(window.innerHeight || document.documentElement?.clientHeight || 720)
+      );
+      return Math.max(SONG2DAW_DOCK_MIN_HEIGHT, viewportHeight - 28);
+    };
+
+    const clampSong2DawDockHeight = (height) =>
+      Math.max(
+        SONG2DAW_DOCK_MIN_HEIGHT,
+        Math.min(
+          Math.min(SONG2DAW_DOCK_MAX_HEIGHT, song2DawDockViewportMaxHeight()),
+          Math.round(height)
+        )
+      );
+
+    const effectiveSong2DawDockHeight = () => {
+      if (!song2dawDockVisible) return 0;
+      if (song2dawDockExpanded) return song2DawDockViewportMaxHeight();
+      return clampSong2DawDockHeight(currentSong2DawDockHeight);
+    };
+
+    const updateSong2DawDockToggle = () => {
+      if (song2dawDockHeaderToggleBtn) {
+        song2dawDockHeaderToggleBtn.textContent = song2dawDockVisible ? "Hide" : "Show";
+        song2dawDockHeaderToggleBtn.classList.toggle("is-active", song2dawDockVisible);
+      }
+      if (song2dawDockToggleBtn) {
+        song2dawDockToggleBtn.textContent = song2dawDockVisible ? "Hide studio" : "Show studio";
+        song2dawDockToggleBtn.classList.toggle("is-active", song2dawDockVisible);
+      }
+      const expandText = song2dawDockExpanded ? "Restore studio" : "Max studio";
+      if (song2dawDockExpandBtn) {
+        song2dawDockExpandBtn.textContent = expandText;
+        song2dawDockExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
+      }
+      if (song2dawDockHeaderExpandBtn) {
+        song2dawDockHeaderExpandBtn.textContent = song2dawDockExpanded ? "Restore" : "Max";
+        song2dawDockHeaderExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
+      }
+    };
+
+    const applyWorkspaceLayout = () => {
+      const dockHeight = effectiveSong2DawDockHeight();
+      const rightInset = panelVisible ? currentGutter : 0;
+      if (panelVisible) {
+        document.documentElement.style.setProperty("--lemouf-gutter", `${rightInset}px`);
+        if (panel) {
+          panel.style.width = "var(--lemouf-gutter)";
+          panel.style.top = "";
+        }
+      } else {
+        document.documentElement.style.removeProperty("--lemouf-gutter");
+        if (panel) {
+          panel.style.width = "";
+          panel.style.top = "";
+        }
+      }
+
+      if (song2dawDock) {
+        song2dawDock.style.right = `${rightInset}px`;
+        song2dawDock.style.height = `${dockHeight}px`;
+        song2dawDock.style.display = song2dawDockVisible ? "" : "none";
+      }
+
       const root = getGutterRoot();
       if (root) {
         root.style.boxSizing = "border-box";
-        root.style.width = `calc(100% - ${clamped}px)`;
-        root.style.maxWidth = `calc(100% - ${clamped}px)`;
-        root.style.paddingRight = "0px";
-        root.style.marginRight = "0px";
-        root.style.transition = "width 120ms ease";
+        root.style.width = panelVisible ? `calc(100% - ${rightInset}px)` : "";
+        root.style.maxWidth = panelVisible ? `calc(100% - ${rightInset}px)` : "";
+        root.style.paddingRight = panelVisible ? "0px" : "";
+        root.style.marginRight = panelVisible ? "0px" : "";
+        root.style.paddingBottom = song2dawDockVisible ? `${dockHeight}px` : "0px";
+        root.style.transition = "width 120ms ease, padding-bottom 120ms ease";
       }
       try {
         const comfyApp = getComfyApp();
         comfyApp?.canvas?.resize?.();
         comfyApp?.graph?.setDirtyCanvas?.(true, true);
       } catch {}
-      return clamped;
+    };
+
+    const applyGutterWidth = (width) => {
+      currentGutter = Math.max(300, Math.min(720, Math.round(width)));
+      applyWorkspaceLayout();
+      return currentGutter;
     };
 
     const clearGutter = () => {
-      document.documentElement.style.removeProperty("--lemouf-gutter");
-      const root = getGutterRoot();
-      if (root) {
-        root.style.width = "";
-        root.style.maxWidth = "";
-        root.style.paddingRight = "";
-        root.style.marginRight = "";
-        root.style.transition = "";
+      applyWorkspaceLayout();
+    };
+
+    const setSong2DawDockVisible = (value, { persist = true, userIntent = true } = {}) => {
+      song2dawDockVisible = Boolean(value);
+      if (userIntent) {
+        song2dawDockUserVisible = song2dawDockVisible;
       }
-      try {
-        const comfyApp = getComfyApp();
-        comfyApp?.canvas?.resize?.();
-        comfyApp?.graph?.setDirtyCanvas?.(true, true);
-      } catch {}
+      if (!song2dawDockVisible && song2dawDockExpanded) {
+        song2dawDockExpanded = false;
+        localStorage.setItem("lemoufSong2DawDockExpanded", "0");
+      }
+      if (persist) {
+        localStorage.setItem("lemoufSong2DawDockVisible", song2dawDockVisible ? "1" : "0");
+      }
+      updateSong2DawDockToggle();
+      applyWorkspaceLayout();
+    };
+
+    const setSong2DawDockExpanded = (value) => {
+      const next = Boolean(value);
+      if (song2dawDockExpanded === next) return;
+      if (next) {
+        song2dawDockRestoreHeight = clampSong2DawDockHeight(currentSong2DawDockHeight);
+      } else {
+        currentSong2DawDockHeight = clampSong2DawDockHeight(song2dawDockRestoreHeight);
+      }
+      song2dawDockExpanded = next;
+      localStorage.setItem("lemoufSong2DawDockExpanded", song2dawDockExpanded ? "1" : "0");
+      updateSong2DawDockToggle();
+      applyWorkspaceLayout();
+      if (currentSong2DawRun) renderSong2DawStudio(currentSong2DawRun);
+    };
+
+    const applyWorkflowProfile = (profile, { sourceHint = "" } = {}) => {
+      const fallbackSource = sourceHint || profile?.source || "fallback_generic";
+      const effective = finalizeWorkflowProfile(profile, fallbackSource);
+      currentWorkflowProfile = effective;
+      setWorkflowProfileStatus(effective);
+      syncPipelineNavVisibility();
+      const wantsSong2DawUI = effective.adapter_id === "song2daw" && effective.compatible;
+      if (song2dawBlock) {
+        song2dawBlock.style.display = wantsSong2DawUI ? "" : "none";
+      }
+      const nextDockVisible = wantsSong2DawUI ? song2dawDockUserVisible : false;
+      if (song2dawDockVisible !== nextDockVisible) {
+        setSong2DawDockVisible(nextDockVisible, { persist: false, userIntent: false });
+      }
+      if (wantsSong2DawUI && currentSong2DawRun) {
+        renderSong2DawStudio(currentSong2DawRun);
+      }
+      return effective;
+    };
+
+    const setSong2DawDockHeight = (height) => {
+      if (song2dawDockExpanded) {
+        song2dawDockExpanded = false;
+        localStorage.setItem("lemoufSong2DawDockExpanded", "0");
+      }
+      currentSong2DawDockHeight = clampSong2DawDockHeight(height);
+      song2dawDockRestoreHeight = currentSong2DawDockHeight;
+      updateSong2DawDockToggle();
+      applyWorkspaceLayout();
+      return currentSong2DawDockHeight;
+    };
+
+    const toggleSong2DawDockExpanded = () => {
+      if (!song2dawDockVisible) {
+        setSong2DawDockVisible(true);
+      }
+      setSong2DawDockExpanded(!song2dawDockExpanded);
     };
 
     const updateToggleUI = () => {
@@ -1344,6 +2371,11 @@ app.registerExtension({
           payload?.prompt ??
           (payload && typeof payload === "object" ? payload : null);
         const workflowNodes = Array.isArray(payload?.workflow?.nodes) ? payload.workflow.nodes : null;
+        const detectedProfile = resolveWorkflowProfile({
+          prompt,
+          workflow: payload?.workflow,
+        });
+        applyWorkflowProfile(detectedProfile, { sourceHint: detectedProfile.source || "validation" });
         const signature = signatureFromPrompt(prompt);
         if (!force && signature && signature === lastValidationSignature) {
           return { ok: !validateBtn.disabled, errors: [], warnings: [] };
@@ -1356,20 +2388,17 @@ app.registerExtension({
           setPipelineLoaded(true);
           await renderPipelineGraph(pipelineSteps);
           const pipelineOk = await validatePipelineSteps(pipelineSteps);
-          pipelineStartBtn.disabled = !pipelineOk;
           setCompatStatus(pipelineOk ? "Pipeline ready ✅" : "Pipeline incomplete or invalid.");
         } else if (pipelineState.steps.length) {
           setPipelineLoaded(true);
           await renderPipelineGraph(pipelineState.steps);
           const pipelineOk = await validatePipelineSteps(pipelineState.steps);
-          pipelineStartBtn.disabled = !pipelineOk;
           setCompatStatus(pipelineOk ? "Pipeline ready ✅ (cached)" : "Pipeline incomplete or invalid.");
         } else {
           setPipelineLoaded(false);
           updateValidationUI(validation);
           pipelineGraphView?.root?.replaceChildren();
           setPipelineGraphStatus("Pipeline graph will appear here once loaded.");
-          pipelineStartBtn.disabled = true;
         }
         if (!validation.ok && validation.errors?.some((e) => e.includes("Workflow not readable"))) {
           scheduleValidationRetry();
@@ -1572,6 +2601,17 @@ app.registerExtension({
     };
 
     const resizer = el("div", { class: "lemouf-loop-resizer" });
+    const song2dawDockResizer = el("div", { class: "lemouf-song2daw-dock-resizer" });
+    song2dawDockHeaderExpandBtn = el("button", { class: "lemouf-loop-btn alt", text: "Max", type: "button" });
+    song2dawDockHeaderToggleBtn = el("button", { class: "lemouf-loop-btn alt", text: "Hide", type: "button" });
+    const song2dawDockHeaderActions = el("div", { class: "lemouf-song2daw-dock-header-actions" }, [
+      song2dawDockHeaderExpandBtn,
+      song2dawDockHeaderToggleBtn,
+    ]);
+    const song2dawDockHeader = el("div", { class: "lemouf-song2daw-dock-header" }, [
+      el("div", { class: "lemouf-song2daw-dock-title", text: "Song2DAW Studio" }),
+      song2dawDockHeaderActions,
+    ]);
     const exportBtn = el("button", { class: "lemouf-loop-btn alt", text: "Export approved", onclick: exportApproved });
     const exitBtn = el("button", { class: "lemouf-loop-btn alt", text: "Exit loop", onclick: resetToStart });
     headerBackBtn = el("button", { class: "lemouf-loop-header-btn", title: "Back to home", text: "←" });
@@ -1646,23 +2686,33 @@ app.registerExtension({
       postStartSection,
       el("div", { class: "lemouf-loop-footer", text: `LEMOUF EXTENSION · ${PANEL_VERSION}` }),
     ]);
+    song2dawDock = el("div", { class: "lemouf-song2daw-dock", id: "lemouf-song2daw-dock" }, [
+      song2dawDockResizer,
+      song2dawDockHeader,
+      song2dawStudioPanel,
+    ]);
 
     validateBtn.addEventListener("click", validateAndStart);
     setPipelineLoaded(false);
+    setWorkflowDiagnosticsVisible(true);
 
     document.body.appendChild(panel);
+    document.body.appendChild(song2dawDock);
     document.addEventListener("click", () => {
       if (typeof closeHeaderMenu === "function") closeHeaderMenu();
     });
     setScreen(pendingScreen || "home");
-    let currentGutter = Number(localStorage.getItem("lemoufLoopGutterWidth") || 420);
+    currentSong2DawDockHeight = clampSong2DawDockHeight(currentSong2DawDockHeight);
+    updateSong2DawDockToggle();
+    applyWorkflowProfile(currentWorkflowProfile, { sourceHint: "init" });
     applyGutterWidth(currentGutter);
     const savedVisible = localStorage.getItem("lemoufLoopPanelVisible");
     if (savedVisible === "0") {
       setPanelVisible(false);
     }
     setupToggleControls();
-    refreshPipelineList({ silent: true });
+    refreshPipelineList({ silent: true, preserveSelection: false });
+    refreshSong2DawRuns({ silent: true });
     const toggleObserver = new MutationObserver(() => {
       if (setupToggleControls()) toggleObserver.disconnect();
     });
@@ -1683,6 +2733,39 @@ app.registerExtension({
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
+    });
+    song2dawDockToggleBtn.addEventListener("click", () => {
+      setSong2DawDockVisible(!song2dawDockVisible);
+    });
+    song2dawDockExpandBtn.addEventListener("click", () => {
+      toggleSong2DawDockExpanded();
+    });
+    song2dawDockHeaderToggleBtn.addEventListener("click", () => {
+      setSong2DawDockVisible(!song2dawDockVisible);
+    });
+    song2dawDockHeaderExpandBtn.addEventListener("click", () => {
+      toggleSong2DawDockExpanded();
+    });
+    song2dawDockResizer.addEventListener("mousedown", (ev) => {
+      ev.preventDefault();
+      if (!song2dawDockVisible) return;
+      if (song2dawDockExpanded) setSong2DawDockExpanded(false);
+      const startY = ev.clientY;
+      const startHeight = currentSong2DawDockHeight;
+      const onMove = (moveEv) => {
+        const delta = startY - moveEv.clientY;
+        setSong2DawDockHeight(startHeight + delta);
+      };
+      const onUp = () => {
+        localStorage.setItem("lemoufSong2DawDockHeight", String(currentSong2DawDockHeight));
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    });
+    window.addEventListener("resize", () => {
+      if (song2dawDockExpanded) applyWorkspaceLayout();
     });
     window.addEventListener("keydown", (ev) => {
       if (ev.altKey && !ev.shiftKey && !ev.ctrlKey && ev.code === "KeyL") {
@@ -1734,6 +2817,7 @@ app.registerExtension({
         progressState.value = progressState.max || progressState.value;
         updateProgressUI();
         refreshLoopDetail();
+        refreshSong2DawRuns({ silent: true, autoLoad: true });
       });
       api.addEventListener?.("execution_error", (ev) => {
         const detail = ev?.detail || {};
@@ -1741,6 +2825,7 @@ app.registerExtension({
         if (progressState.promptId && promptId && promptId !== progressState.promptId) return;
         progressState.status = "error";
         updateProgressUI();
+        refreshSong2DawRuns({ silent: true, autoLoad: true });
       });
     } catch {}
     await refreshLoops();
