@@ -2,55 +2,78 @@
 
 ## High-level overview
 
-`song2daw` is a **feature module** inside `ComfyUI-leMouf`.
+`song2daw` is a feature module in `ComfyUI-leMouf`.
 
-- **Source of truth**: `SongGraph` (JSON + graph semantics)
-- **Execution**: deterministic, step-based pipelines (leMouf Pipeline)
-- **Front-ends**:
-  - ComfyUI workflows (node-based pipeline control & artifact inspection)
-  - DAW-like UI (read-only v1, later editing)
+- Source of truth: `SongGraph` (schema `1.0.0`)
+- Execution model: deterministic step pipeline (`0.1.0` step family)
+- Runtime outputs: graph + artifacts + UI view + exported files
+- UI integration: workflow-profile-routed leMouf panel
 
 ```
-Input Audio/Stems
-      |
-      v
-  Pipeline Steps (deterministic + cached)
-      |
-      v
-   SongGraph (truth)
-      |
-      +--> Exports: stems (wav), MIDI, Reaper .rpp
-      |
-      +--> UI Views (timeline/tracks/sections)
+Input Audio / Stems
+        |
+        v
+Deterministic Pipeline Steps
+        |
+        v
+SongGraph + Artifacts
+        |
+        +--> Exports (WAV stems, MIDI, Reaper RPP)
+        +--> UI view payload
+        +--> Run state (summary, status, run_dir)
 ```
 
 ## Responsibilities
 
-### Python (core / ML / heavy compute)
-- audio ingest, resampling, normalization
-- feature extraction (tempo/beat grid/segmentation)
-- source separation + alignment
-- event extraction (onsets/notes)
-- FX proxy estimation
-- export projection (Reaper .rpp, stems, MIDI)
-- cache keys and artifact persistence
+### Python core
+- audio ingest and normalization
+- tempo and beat analysis
+- section/structure segmentation
+- source separation
+- event extraction
+- effect estimation
+- projection/export steps
+- deterministic cache and run persistence
 
-### JS/TS (UI)
-- visualize SongGraph as timeline / tracks / events
-- show confidence, diffs between pipeline runs
-- *v1: read-only*
+### Web UI
+- workflow selection and diagnostics
+- profile-driven UI routing (`generic_loop`, `song2daw`, ...)
+- run list + step inspection
+- Song2DAW Studio views:
+  - Arrange
+  - Tracks
+  - Spectrum 3D
 
-## Determinism & caching
+## Determinism and caching
 
-Every pipeline step produces:
-- primary outputs
-- intermediate artifacts (optional)
-- logs + metadata
-- an updated SongGraph fragment
-
-Cache key includes:
+Each step is deterministic and keyed from:
 - input hashes
-- config
-- pipeline step version
+- config payload
+- step version
 - model versions
-- (optional) environment fingerprints
+
+Each step contributes:
+- output artifacts
+- metadata and logs
+- SongGraph updates
+
+## Workflow profile routing (0.3.0)
+
+`LeMoufWorkflowProfile` defines UI behavior:
+- `profile_id`
+- `profile_version`
+- `ui_contract_version`
+- `workflow_kind` (`master` / `branch`)
+
+Master workflows are listed by default in the Home panel.
+Branch workflows are used as internal/support workflows.
+
+## Runtime API surfaces (UI)
+
+Main routes used by the panel:
+- `GET /lemouf/workflows/list`
+- `POST /lemouf/workflows/load`
+- `GET /lemouf/song2daw/runs`
+- `GET /lemouf/song2daw/runs/{run_id}`
+- `GET /lemouf/song2daw/runs/{run_id}/ui_view`
+- `GET /lemouf/song2daw/runs/{run_id}/audio`

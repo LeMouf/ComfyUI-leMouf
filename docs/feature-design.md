@@ -1,5 +1,7 @@
 # Feature Design: Workflow Loop Orchestrator
 
+Version target: `0.3.0`
+
 ## Goal
 
 Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, expose per-cycle results, and let users approve, reject, or replay each cycle while staying workflow-agnostic.
@@ -17,6 +19,24 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Export: approved images copied to output/lemouf/{loop_id}/.
 - Exit: early exit resets the loop state; complete exit appears at the end.
 
+## 0.3.0 Extensions (Implemented)
+
+- Workflow profile node: `LeMoufWorkflowProfile` (`profile_id`, `profile_version`, `ui_contract_version`, `workflow_kind`).
+- Master workflow discovery:
+  - `/lemouf/workflows/list` exposes `master_workflows`.
+  - Home panel lists master workflows by default.
+- Unified launch action:
+  - single `Run pipeline` button
+  - behavior adapts by workflow profile and context.
+- Home panel UX rationalization:
+  - clickable workflow list (type badges)
+  - `Use current WF` diagnostic path
+  - refresh updates catalog without resetting current context.
+- song2daw integration:
+  - profile-driven UI routing
+  - deterministic reset on workflow switch
+  - run list / step view / studio dock tooling.
+
 ## User Flow (Current)
 
 1. Build a workflow with Loop Return.
@@ -33,7 +53,7 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Payload screen: shows WF1 payload output (json/text/images/audio/video).
 - Run screen: shows progress + preview + actions + results.
 - Header back menu: go home or exit loop.
-- Pre-start: Start Pipeline button enabled only when pipeline + workflows validate.
+- Pre-start: Run pipeline button enabled only when pipeline + workflows validate.
 - Pipeline graph persists after exit and shows last run status + duration per step.
 - Home view hides graph/actions until a pipeline is loaded.
 - Pre-start: pipeline workflow loader from `workflows/`.
@@ -115,6 +135,7 @@ If no links exist, the panel falls back to node id ordering.
 - Prompt-per-cycle JSON injection (NodeID.Param overrides).
 - Multi-loop dashboard with history and metrics.
 - Export manifest as JSON alongside approved images.
+- Profile registry and adapter contract versioning for additional workflow families.
 
 ## Example Workflows
 

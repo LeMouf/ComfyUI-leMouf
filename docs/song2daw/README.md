@@ -1,185 +1,95 @@
-# 🎵 song2daw
-**Deconstruct music. Understand it. Rebuild it.**
+# song2daw
 
----
+Deterministic audio-to-DAW analysis pipeline inside ComfyUI-leMouf.
 
-## 🧒 Explain it like I'm 5
+## Release status
 
-Imagine your favorite song is a **cake** 🍰.
+- Current release line: `0.3.0`
+- SongGraph schema: `1.0.0`
+- Pipeline step family: `0.1.0`
 
-When you listen to it, you only see the finished cake.
-But you don’t know:
-- what ingredients are inside  
-- in what order they were added  
-- why it tastes good  
-- or how to make a new one that’s a bit different  
+## What song2daw does
 
-**song2daw** is a machine that:
-1. takes the cake apart  
-2. looks at every ingredient separately  
-3. understands **how it was made**  
-4. and gives you the **recipe** so you can rebuild it — or change it.
+song2daw ingests an audio source and generates a stable, inspectable project model:
 
----
+- SongGraph (JSON source of truth)
+- pipeline artifacts
+- DAW-oriented projections (WAV stems, MIDI, Reaper RPP)
+- UI view payload for panel visualization
 
-## 🧠 What is song2daw?
+The system is deterministic by design: same inputs + same configs + same versions => same outputs.
 
-`song2daw` is an open-source **music deconstruction and reconstruction system**.
+## 0.3.0 user-facing highlights
 
-Its purpose is **not** to perfectly clone songs, but to:
-- analyze an audio track
-- extract its **structural essence**
-- rebuild a **procedural construction graph**
-- project that graph into **DAW-compatible formats**
+- Workflow profile routing via `LeMoufWorkflowProfile`
+- Master workflow listing in Home panel
+- Unified `Run pipeline` action with context-aware behavior
+- Song2DAW run browser and step detail view
+- Song2DAW Studio bottom dock:
+  - Arrange timeline
+  - Tracks view
+  - Spectrum 3D view
+- Deterministic scrub and mute-aware playback behavior
 
-At its core, `song2daw` treats music as something that can be **understood, inspected, and transformed**, not just rendered.
+## Core concepts
 
----
+### SongGraph
 
-## 🧩 Core concept: the SongGraph
+Canonical representation of the analyzed song:
 
-The central artifact of `song2daw` is the **SongGraph**.
+- sections and structure
+- sources/layers
+- extracted events
+- timing and tempo
+- effect hints
 
-It is a **deterministic, versioned, procedural graph** describing:
-- musical **structure** (sections, repetitions, transitions)
-- **sources** (abstract sound layers, not fixed DAW tracks)
-- **events** (notes, hits, textures, envelopes)
-- **time** (audio time and musical time)
-- **effects** (detected or inferred processing)
-- **relationships** between all of the above
+### Pipeline steps
 
-Everything else is a **projection** of this graph.
+Typical step chain:
 
-```
-Audio → Analysis Pipelines → SongGraph
-SongGraph → DAW Project / Stems / MIDI / UI
-```
+1. Ingest
+2. TempoAnalysis
+3. StructureSegmentation
+4. SourceSeparation
+5. EventExtraction
+6. EffectEstimation
+7. ProjectionReaper
 
----
+Each step is deterministic, cacheable, and independently inspectable.
 
-## 🔁 Deterministic by design
+## Interfaces
 
-Given:
-- the same input audio
-- the same pipeline configuration
-- the same model versions
+### ComfyUI workflows
 
-`song2daw` will **always** produce the same SongGraph.
+Used to execute and orchestrate pipelines.
 
-No randomness.  
-No hidden state.  
-No “it worked yesterday”.
+### leMouf panel
 
-Creativity is introduced **later**, on top of a stable foundation.
+Used to:
 
----
+- select workflow
+- run pipeline
+- inspect diagnostics
+- inspect song2daw runs and step outputs
+- open studio visualizations
 
-## 🧪 Pipeline-driven architecture
+## Practical output
 
-`song2daw` is implemented as a **feature module** of **ComfyUI-leMouf**.
+A successful run can produce:
 
-It uses a **pipeline-based architecture**, where each task is an explicit step:
-- ingest
-- tempo & beat grid detection
-- structural segmentation
-- source separation
-- event extraction
-- effect estimation
-- projection / export
+- `SongGraph.json`
+- `artifacts.json`
+- `run.json`
+- optional `ui_view`
+- mix/stem audio assets
 
-Each pipeline step:
-- is deterministic
-- is cacheable
-- produces versioned artifacts
-- can be re-run or inspected independently
+## Scope and intent
 
-This makes the system auditable, debuggable, and extensible.
+song2daw is an analysis and reconstruction tool. It is not a DRM bypass or content distribution system.
 
----
+See also:
 
-## 🎛 User interfaces
-
-`song2daw` provides **two complementary interfaces**:
-
-### 1. ComfyUI workflows
-Used for:
-- running ML pipelines
-- experimenting with analysis strategies
-- inspecting intermediate artifacts
-
-### 2. DAW-like visual UI (read-only in v1)
-Used for:
-- timeline visualization
-- track and layer inspection
-- structure understanding
-- validation of the SongGraph
-
-Editing comes later.  
-Understanding comes first.
-
----
-
-## 🎚 DAW compatibility
-
-In its first stable iteration, `song2daw` targets:
-
-- **Reaper** (`.rpp` project files)
-- WAV stems
-- MIDI (progressively)
-- markers, tempo maps, and structure metadata
-
-Reaper is used as a **projection target**, not as a hard dependency.
-
----
-
-## ⚖ Legal & ethical position
-
-`song2daw` is:
-- a **neutral analysis and creative tool**
-- intended for **research, education, and personal creative workflows**
-
-It:
-- does not provide audio content
-- does not bypass DRM
-- does not claim ownership of analyzed material
-
-Users are fully responsible for how they use the tool.
-
----
-
-## 🧱 Technology stack
-
-- **Python**  
-  Core logic, ML, audio processing, pipelines
-
-- **ComfyUI**  
-  Workflow orchestration and node-based experimentation
-
-- **JavaScript / TypeScript**  
-  DAW-like visualization UI
-
-- **JSON**  
-  Stable interchange format and SongGraph definition
-
----
-
-## 🚧 Project status
-
-This project is **early-stage and experimental**.
-
-Expect:
-- breaking changes
-- evolving schemas
-- aggressive iteration
-
-Stability comes from:
-- determinism
-- strict versioning
-- explicit pipelines
-
----
-
-## 🧠 Philosophy
-
-> Don’t generate music.  
-> **Understand it first.**
+- `docs/song2daw/ARCHITECTURE.md`
+- `docs/song2daw/README.tech.md`
+- `docs/song2daw/API.md`
+- `docs/song2daw/UI_VIEW_SPEC.md`

@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.0 - 2026-02-15
+
+- Add `LeMoufWorkflowProfile` node to declare workflow UI profile metadata.
+- Add workflow catalog support for `workflow_kind` (`master` / `branch`) and master-only listing in Home.
+- Add unified Home action (`Run pipeline`) that adapts execution by workflow profile/context.
+- Add Song2DAW Studio bottom panel views:
+  - Arrange timeline
+  - Tracks summary
+  - Spectrum 3D preview
+- Add Song2DAW run browser and step inspection APIs in panel flow.
+- Add controlled fixture workflow for deterministic Song2DAW validation:
+  - `workflows/song2daw/song2daw_fixture_10s_4inst_0-1-0.json`
+- Improve Song2DAW studio interaction robustness:
+  - workflow switching reset behavior
+  - timeline zoom/pan consistency
+  - section/track visual alignment
+  - mute-aware playback/scrub logic
+- Documentation refresh for 0.3.0:
+  - root README
+  - feature design
+  - Song2DAW architecture/API/technical docs
+  - workflow and examples guides
+
 ## 0.2.0
 
 - Remove Loop Context and Workflow Loop Orchestrator nodes.

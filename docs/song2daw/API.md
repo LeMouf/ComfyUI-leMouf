@@ -1,69 +1,52 @@
-# song2daw — Core API (Draft)
+# song2daw - Core API
 
-This document describes the intended **stable surfaces** for `song2daw`.
+This document describes practical API surfaces used in release `0.3.0`.
 
-## Python: SongGraph
+## Python surfaces
 
-### Load / Save
-```python
-from song2daw.core.graph import SongGraph
+### Graph validation
 
-g = SongGraph.load(path)
-g.save(path)
-```
-
-### Validate
 ```python
 from song2daw.core.graph import validate_songgraph
 
-validate_songgraph(g.to_dict())  # raises or returns bool
+validate_songgraph(songgraph_dict)
 ```
 
-## Python: Pipeline Steps
+### Pipeline execution
 
-### Step interface (conceptual)
 ```python
-class Step:
-    name: str
-    version: str
+from song2daw.core.pipeline import load_pipeline_steps, run_pipeline
 
-    def run(self, inputs: dict, config: dict, ctx: "RunContext") -> dict:
-        ...
+steps = load_pipeline_steps(pipeline_yaml_path)
+result = run_pipeline(audio_path, stems_dir, steps=steps)
 ```
 
-### RunContext
-Contains:
-- artifact store access
-- cache key builder
-- logging helper
-- environment/model version info
+### Run persistence
 
-## Exporters
-
-### Reaper project
 ```python
-from song2daw.core.export.reaper import export_rpp
+from song2daw.core.runner import save_run_outputs
 
-export_rpp(songgraph=g, out_path="out/project.rpp", assets_dir="out/assets/")
+run_dir = save_run_outputs(result, output_dir)
 ```
 
-### Stems
-```python
-from song2daw.core.export.stems import export_stems
-export_stems(songgraph=g, out_dir="out/stems/")
-```
+## HTTP routes (leMouf panel)
 
-### MIDI (optional)
-```python
-from song2daw.core.export.midi import export_midi
-export_midi(songgraph=g, out_dir="out/midi/")
-```
+### Workflow catalog
 
-## JS/TS UI contract
+- `GET /lemouf/workflows/list`
+- `POST /lemouf/workflows/load`
 
-The UI consumes:
-- `SongGraph.json`
-- referenced artifacts (wav/midi/json)
-- pipeline manifests for provenance display
+### song2daw runs
 
-No direct Python imports from the UI.
+- `GET /lemouf/song2daw/runs`
+- `GET /lemouf/song2daw/runs/{run_id}`
+- `GET /lemouf/song2daw/runs/{run_id}/ui_view`
+- `GET /lemouf/song2daw/runs/{run_id}/audio`
+- `POST /lemouf/song2daw/runs/open`
+- `POST /lemouf/song2daw/runs/clear`
+
+## Stability notes
+
+- SongGraph schema is validated against `song2daw/schemas/SongGraph.schema.json`.
+- UI payload should be treated as read-only view data.
+- Workflow profile metadata controls UI adapter routing.

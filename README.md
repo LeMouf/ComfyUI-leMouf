@@ -10,24 +10,20 @@ tools, techniques, and practical building blocks for creators.
 
 ## Status
 
-Current version: `0.2.0` (MVP implemented)
+Current version: `0.3.0`
 
-Implemented MVP:
-- Loop Return (payload capture)
-- Loop Map (payload → input mapping)
-- Loop Payload (per-cycle payload array)
-- Loop Pipeline Step (pipeline orchestration node)
-- leMouf Loop UI panel (sidebar)
+### 0.3.0 highlights
 
-Key features:
-- UI workflow capture + compatibility checks before start
-- Loop cycles with retry handling (approve / reject / replay)
-- Auto-run on approve/reject/replay when a cycle has returned
-- Per-cycle manifest with thumbnails + lightbox preview
-- Pipeline payload preview screen (auto-detected types)
-- Export approved images to `output/lemouf/{loop_id}/`
-- Early exit + reset loop state
-- Resizable right gutter panel (no overlay on viewer)
+- Workflow profile system (`LeMoufWorkflowProfile`) with deterministic UI routing.
+- Master/branch workflow discovery and filtering in `workflows/`.
+- Unified Home action: `Run pipeline` adapts to workflow profile/context.
+- Song2DAW Studio UI in bottom dock:
+  - Arrange view (timeline, sections, per-track clips, mute/isolate)
+  - Tracks view
+  - Spectrum 3D view
+- Deterministic scrub/playback behavior with audio-first and MIDI fallback.
+- Song2DAW run browser + step views + source preview + `run_dir` open.
+- Improved workflow switching/reset behavior and safer list refresh behavior.
 
 ## Install (local)
 
@@ -39,12 +35,22 @@ Key features:
 
 2. Restart ComfyUI.
 
-## MVP: Loop Pipeline
+## Core Features
 
-This MVP provides an **interactive cycle stepper**:
-- validate + start a loop from the current UI workflow
-- run cycles one by one with approve / reject / replay
-- capture per-cycle payloads (images, text, json, audio, video)
+### Loop Orchestrator
+
+- Loop Return / Loop Map / Loop Payload nodes
+- Loop Pipeline Step orchestration
+- Cycle decisions (approve/reject/replay)
+- Manifest inspection + payload preview
+- Approved export pipeline
+
+### Song2DAW
+
+- Deterministic song analysis pipeline (Python core)
+- JSON SongGraph + artifacts + run metadata
+- Workflow-based execution from the leMouf panel
+- Studio visualization in ComfyUI bottom dock
 
 ### How to try it
 
@@ -90,7 +96,7 @@ The panel can also load pipeline workflows directly from `workflows/`.
 Pipeline steps can be linked in the graph (flow output → flow input). If no links exist, the panel falls back to node id ordering.
 
 When working in pipeline mode, cycle controls are hidden and the panel shows a pipeline graph with step validation.
-The Start Pipeline button is enabled only when the pipeline and referenced workflows are valid.
+The `Run pipeline` action uses the appropriate execution mode by profile.
 After exit, the pipeline graph keeps the last run status and durations for each step.
 The home view hides pipeline actions until a pipeline is loaded.
 Click the pipeline step cards to load their workflow into the UI. The panel switches to the payload preview screen for generate steps and the run screen for execute steps. Use the header back menu to return to the home screen or exit the loop.
@@ -100,6 +106,15 @@ Click the pipeline step cards to load their workflow into the UI. The panel swit
 You can show/hide the leMouf Loop panel using:
 - ComfyUI menu item: **Show/Hide leMouf Loop panel**
 - Keyboard shortcut: `Alt+L`
+
+## Documentation
+
+- `docs/feature-design.md`
+- `docs/song2daw/README.md`
+- `docs/song2daw/README.tech.md`
+- `docs/song2daw/ARCHITECTURE.md`
+- `docs/song2daw/UI_VIEW_SPEC.md`
+- `CHANGELOG.md`
 
 ## License
 
