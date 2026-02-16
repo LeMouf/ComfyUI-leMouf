@@ -38,6 +38,29 @@ def test_workflow_profile_node_declares_custom_profile():
     assert workflow_kind == "branch"
 
 
+def test_loop_pipeline_step_input_types_include_composition_and_none_workflow(monkeypatch):
+    monkeypatch.setattr(nodes, "_list_workflow_files", lambda: ["wf_a.json", "wf_b.json"])
+
+    input_types = nodes.LoopPipelineStep.INPUT_TYPES()
+    required = input_types["required"]
+    roles = list(required["role"][0])
+    workflows = list(required["workflow"][0])
+
+    assert "composition" in roles
+    assert workflows[0] == "(none)"
+    assert "wf_a.json" in workflows
+    assert "wf_b.json" in workflows
+
+
+def test_loop_pipeline_step_input_types_fallback_to_none_workflow(monkeypatch):
+    monkeypatch.setattr(nodes, "_list_workflow_files", lambda: [])
+
+    input_types = nodes.LoopPipelineStep.INPUT_TYPES()
+    workflows = list(input_types["required"]["workflow"][0])
+
+    assert workflows == ["(none)"]
+
+
 def test_song2daw_node_run_invokes_default_runner(monkeypatch):
     nodes.SONG2DAW_RUNS.clear()
     captured = {}

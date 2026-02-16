@@ -1,6 +1,6 @@
 # Feature Design: Workflow Loop Orchestrator
 
-Version target: `0.3.0`
+Version target: `0.3.1`
 
 ## Goal
 
@@ -18,6 +18,14 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Payload preview screen for WF1 (auto-detected output types).
 - Export: approved images copied to output/lemouf/{loop_id}/.
 - Exit: early exit resets the loop state; complete exit appears at the end.
+
+## 0.3.1 Extensions (Implemented)
+
+- Lightbox cycle selector to jump directly between cycles in preview detail.
+- Lightbox auto-close when a cycle receives a valid approval.
+- Replay/reject pending skeleton synchronization hardened (less flicker, target retry retained).
+- Pipeline runtime state persistence + restoration after reload (`Ctrl+F5`) using `loop_id`.
+- Home view now restores active pipeline step/run diagnostics when loop execution is still in progress.
 
 ## 0.3.0 Extensions (Implemented)
 

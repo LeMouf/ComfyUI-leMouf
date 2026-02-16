@@ -21,6 +21,43 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       gap: 8px;
+      --lemouf-scrollbar-size: 8px;
+      --lemouf-scrollbar-thumb: #9a846f;
+      --lemouf-scrollbar-track: transparent;
+    }
+    .lemouf-song2daw-dock {
+      --lemouf-scrollbar-size: 8px;
+      --lemouf-scrollbar-thumb: #9a846f;
+      --lemouf-scrollbar-track: transparent;
+    }
+    .lemouf-loop-panel *,
+    .lemouf-song2daw-dock * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--lemouf-scrollbar-thumb) var(--lemouf-scrollbar-track);
+    }
+    .lemouf-loop-panel *::-webkit-scrollbar,
+    .lemouf-song2daw-dock *::-webkit-scrollbar {
+      width: var(--lemouf-scrollbar-size);
+      height: var(--lemouf-scrollbar-size);
+    }
+    .lemouf-loop-panel *::-webkit-scrollbar-track,
+    .lemouf-song2daw-dock *::-webkit-scrollbar-track {
+      background: var(--lemouf-scrollbar-track);
+    }
+    .lemouf-loop-panel *::-webkit-scrollbar-thumb,
+    .lemouf-song2daw-dock *::-webkit-scrollbar-thumb {
+      background: var(--lemouf-scrollbar-thumb);
+      border-radius: 999px;
+      border: 2px solid transparent;
+      background-clip: padding-box;
+    }
+    .lemouf-workflow-list,
+    .lemouf-loop-manifest,
+    .lemouf-song2daw-overview,
+    .lemouf-loop-payload,
+    .lemouf-song2daw-detail-pre,
+    .lemouf-song2daw-studio-body {
+      scrollbar-gutter: stable both-edges;
     }
     .lemouf-loop-title {
       font-weight: 700;
@@ -120,11 +157,28 @@ export function injectStyles() {
       gap: 8px;
       min-height: 0;
     }
+    .lemouf-loop-prestart {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-detail-screen {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-detail-layout {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
     .lemouf-loop-poststart {
       display: flex;
       flex-direction: column;
+      flex: 1 1 auto;
       min-height: 0;
       gap: 8px;
+      overflow: hidden;
     }
     .lemouf-loop-poststart-top {
       display: flex;
@@ -132,6 +186,7 @@ export function injectStyles() {
       gap: 8px;
       flex: 1;
       min-height: 0;
+      overflow: hidden;
     }
     .lemouf-loop-poststart-bottom {
       margin-top: auto;
@@ -233,6 +288,176 @@ export function injectStyles() {
     .lemouf-song2daw-dock .lemouf-loop-row.tight {
       margin-bottom: 0;
     }
+    .lemouf-song2daw-dock-content {
+      flex: 1 1 auto;
+      min-height: 0;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .lemouf-loop-composition-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .lemouf-loop-composition-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      overflow: hidden;
+    }
+    .lemouf-loop-composition-resources {
+      border: 1px solid #cdbba9;
+      border-radius: 10px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lemouf-loop-composition-resources-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .lemouf-loop-composition-resources-actions {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+      gap: 6px;
+    }
+    .lemouf-loop-composition-resources-actions .lemouf-loop-btn {
+      min-height: 26px;
+      padding: 4px 7px;
+      font-size: 10px;
+      line-height: 1.1;
+    }
+    .lemouf-loop-composition-gate-btn {
+      background: linear-gradient(180deg, #2f7a4f, #246a43);
+      color: #f7f2ea;
+      border-color: rgba(0, 0, 0, 0.16);
+      font-weight: 700;
+      letter-spacing: 0.28px;
+      text-transform: uppercase;
+    }
+    .lemouf-loop-composition-resources-meta {
+      font-size: 11px;
+      color: #705a47;
+      opacity: 0.9;
+      white-space: nowrap;
+    }
+    .lemouf-loop-composition-resources-rail {
+      display: flex;
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      padding: 1px 1px 4px 1px;
+      min-height: 88px;
+      max-height: clamp(88px, 28vh, 160px);
+      align-items: flex-start;
+    }
+    .lemouf-loop-composition-resource {
+      position: relative;
+      flex: 0 0 84px;
+      width: 84px;
+      border: 1px solid #b9a492;
+      border-radius: 8px;
+      background: #f8eee0;
+      color: #3b2f24;
+      padding: 0;
+      overflow: hidden;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: flex-start;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset;
+    }
+    .lemouf-loop-composition-resource:hover {
+      filter: brightness(0.98);
+    }
+    .lemouf-loop-composition-resource-kind {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      z-index: 1;
+      border-radius: 999px;
+      border: 1px solid #bda996;
+      background: rgba(246, 235, 220, 0.94);
+      color: #f8f2e8;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.28px;
+      padding: 1px 5px;
+      text-transform: uppercase;
+      color: #6f5b49;
+    }
+    .lemouf-loop-composition-resource-kind.image {
+      border-color: #bda996;
+      background: rgba(246, 235, 220, 0.94);
+      color: #6f5b49;
+    }
+    .lemouf-loop-composition-resource-kind.audio {
+      border-color: #9fb7cc;
+      background: rgba(227, 237, 247, 0.94);
+      color: #34506b;
+    }
+    .lemouf-loop-composition-resource-kind.video {
+      border-color: #c1ad90;
+      background: rgba(241, 230, 212, 0.94);
+      color: #6a533c;
+    }
+    .lemouf-loop-composition-resource-kind.video.is-with_audio {
+      border-color: #95b79e;
+      background: rgba(228, 242, 231, 0.94);
+      color: #35543d;
+    }
+    .lemouf-loop-composition-resource-kind.video.is-no_audio {
+      border-color: #c1ad90;
+      background: rgba(241, 230, 212, 0.94);
+      color: #6a533c;
+    }
+    .lemouf-loop-composition-resource-kind.video.is-unknown {
+      border-color: #9fb7cc;
+      background: rgba(227, 237, 247, 0.94);
+      color: #34506b;
+    }
+    .lemouf-loop-composition-resource-thumb,
+    .lemouf-loop-composition-resource-fallback {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      object-fit: cover;
+      background: #efe2d1;
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #6e5a48;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .lemouf-loop-composition-resource-label {
+      font-size: 9px;
+      color: #6b5948;
+      border-top: 1px solid rgba(150, 125, 103, 0.28);
+      background: rgba(255, 249, 240, 0.92);
+      padding: 2px 5px 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-composition-editor-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      border: 1px solid #cdbba9;
+      border-radius: 10px;
+      background: #f8eee0;
+      overflow: hidden;
+    }
     .lemouf-loop-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
     .lemouf-loop-row > * { flex: 1 1 120px; }
     .lemouf-loop-row.tight { gap: 8px; margin-bottom: 6px; }
@@ -241,6 +466,38 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+    .lemouf-home-card {
+      border: 1px solid #c9b9a8;
+      border-radius: 10px;
+      background: #fffaf3;
+      padding: 8px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+    .lemouf-song2daw-home-card {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .lemouf-song2daw-run-detail {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-home-view {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-home-card-compact {
+      padding: 6px;
+    }
+    .lemouf-home-card > label {
+      margin-bottom: 0;
+    }
+    .lemouf-home-card .lemouf-loop-row.tight {
+      margin-bottom: 0;
     }
     .lemouf-loop-btn {
       background: #5b4637;
@@ -321,10 +578,10 @@ export function injectStyles() {
     .lemouf-workflow-list {
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 5px;
       max-height: 180px;
       overflow-y: auto;
-      padding: 6px;
+      padding: 4px;
       border: 1px solid #c9b9a8;
       border-radius: 10px;
       background: #fffaf3;
@@ -332,13 +589,13 @@ export function injectStyles() {
     .lemouf-workflow-item {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
       width: 100%;
       border: 1px solid #ccb7a3;
       background: #fcf6ee;
       color: #3b2f24;
       border-radius: 8px;
-      padding: 6px 8px;
+      padding: 4px 6px;
       font-size: 11px;
       text-align: left;
       cursor: pointer;
@@ -354,11 +611,11 @@ export function injectStyles() {
     }
     .lemouf-workflow-item-icon {
       flex: 0 0 auto;
-      min-width: 42px;
+      min-width: 36px;
       text-align: center;
       border: 1px solid #b59c86;
       border-radius: 999px;
-      padding: 1px 6px;
+      padding: 1px 5px;
       background: #f7ecdf;
       font-size: 9px;
       text-transform: uppercase;
@@ -391,6 +648,129 @@ export function injectStyles() {
       gap: 10px;
       margin-top: 6px;
       margin-bottom: 6px;
+    }
+    .lemouf-step-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      align-items: stretch;
+      min-width: 0;
+    }
+    .lemouf-step-flow-song2daw {
+      gap: 4px;
+    }
+    .lemouf-step-flow-card {
+      border: 1px solid #b59c86;
+      border-radius: 10px;
+      background: #fffaf3;
+      color: #3b2f24;
+      text-align: left;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+    }
+    .lemouf-step-flow-card.is-selected {
+      border-color: #7a5a3c;
+      background: #f2e5d4;
+      box-shadow: inset 0 0 0 1px rgba(90, 70, 55, 0.2);
+    }
+    .lemouf-step-flow-card.is-active {
+      border-color: #7a5a3c;
+      background: #f0e2cf;
+      box-shadow: 0 6px 16px rgba(70, 50, 30, 0.2);
+    }
+    .lemouf-step-flow-card.is-clickable {
+      cursor: pointer;
+      transition: transform 120ms ease, box-shadow 120ms ease;
+    }
+    .lemouf-step-flow-card.is-clickable:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(70, 50, 30, 0.2);
+    }
+    .lemouf-step-flow-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .lemouf-step-flow-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 1px 8px;
+      font-size: 10px;
+      text-transform: uppercase;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      background: #9a846f;
+      color: #f7f2ea;
+    }
+    .lemouf-step-flow-badge.ok { background: #4b7b4f; }
+    .lemouf-step-flow-badge.error { background: #a4473d; }
+    .lemouf-step-flow-badge.warn { background: #b07d3b; }
+    .lemouf-step-flow-badge.running { background: #5b6ea8; }
+    .lemouf-step-flow-badge.pending { background: #9a846f; }
+    .lemouf-step-flow-index {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      color: #7a6756;
+    }
+    .lemouf-step-flow-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #3b2f24;
+      word-break: break-word;
+    }
+    .lemouf-step-flow-sub {
+      font-size: 11px;
+      color: #665445;
+      word-break: break-word;
+    }
+    .lemouf-step-flow-meta {
+      font-size: 11px;
+      color: #7a6756;
+      word-break: break-word;
+    }
+    .lemouf-step-flow-arrow {
+      align-self: center;
+      font-size: 16px;
+      color: #9a846f;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-card {
+      padding: 6px 8px;
+      gap: 2px;
+      border-radius: 9px;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-head {
+      gap: 4px;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-badge {
+      padding: 1px 7px;
+      font-size: 9px;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-index {
+      font-size: 9px;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-title {
+      font-size: 12px;
+      line-height: 1.15;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-sub,
+    .lemouf-step-flow-song2daw .lemouf-step-flow-meta {
+      font-size: 10px;
+      line-height: 1.2;
+    }
+    .lemouf-step-flow-song2daw .lemouf-step-flow-arrow {
+      font-size: 13px;
+      margin: 0;
+      opacity: 0.8;
+      line-height: 1;
     }
     .lemouf-loop-pipeline-row {
       display: flex;
@@ -560,6 +940,19 @@ export function injectStyles() {
     .lemouf-loop-accordion[open] summary::before {
       transform: rotate(90deg);
     }
+    .lemouf-advanced-block {
+      border: 1px solid #d4c3b2;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .lemouf-advanced-block .lemouf-loop-row.tight {
+      margin-bottom: 0;
+    }
     .lemouf-loop-field { font-size: 12px; }
     .lemouf-loop-field input, .lemouf-loop-field select, .lemouf-loop-field textarea {
       width: 100%;
@@ -571,14 +964,288 @@ export function injectStyles() {
       color: #3b2f24;
     }
     .lemouf-loop-manifest {
-      flex: 1;
-      min-height: 140px;
-      overflow: auto;
-      background: #fffaf3;
-      border: 1px solid #b59c86;
-      border-radius: 8px;
-      padding: 6px;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+      margin-right: 0;
+      padding-top: 8px;
+      padding-bottom: 16px;
+      padding-left: 11px;
+      padding-right: 1px;
       font-size: 11px;
+      scrollbar-gutter: stable;
+    }
+    .lemouf-loop-manifest-wrap {
+      flex: 1 1 auto;
+      min-height: 120px;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      overflow: hidden;
+      position: relative;
+      border: 1px solid #b59c86;
+      border-radius: 10px;
+      background: #fffaf3;
+      --lemouf-cycle-head-bg: linear-gradient(180deg, #f5ebdf, #eee1d0);
+      padding: 0;
+      gap: 0;
+    }
+    .lemouf-loop-manifest-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 32px;
+      margin: 0;
+      border: 0;
+      border-radius: 0;
+      background: var(--lemouf-cycle-head-bg);
+      padding: 8px;
+    }
+    .lemouf-loop-manifest-head.is-collapsible {
+      cursor: pointer;
+      user-select: none;
+    }
+    .lemouf-loop-manifest-head.is-collapsible:hover {
+      filter: brightness(0.985);
+    }
+    .lemouf-loop-manifest-head-label-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-manifest-caret {
+      color: #756352;
+      font-size: 11px;
+      line-height: 1;
+      transition: transform 120ms ease, opacity 120ms ease;
+      width: 10px;
+      text-align: center;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-manifest-head-tools {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1 1 auto;
+      justify-content: flex-end;
+    }
+    .lemouf-loop-manifest-head-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6b5a4a;
+      font-weight: 700;
+      white-space: nowrap;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-manifest-head .lemouf-loop-manifest-status {
+      margin: 0;
+      min-height: 16px;
+      line-height: 16px;
+      flex: 1 1 auto;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 11px;
+      color: #5b4637;
+      min-width: 0;
+    }
+    .lemouf-loop-manifest-runbtn {
+      flex: 0 0 auto;
+      min-width: 92px;
+      padding: 4px 10px;
+      font-size: 11px;
+      line-height: 1.1;
+      border-radius: 999px;
+    }
+    .lemouf-loop-manifest-head .lemouf-loop-manifest-status:empty {
+      display: block;
+    }
+    .lemouf-loop-manifest-head .lemouf-loop-manifest-status:empty::before {
+      content: "\\00a0";
+    }
+    .lemouf-loop-manifest-viewport {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: hidden;
+      border-top: 1px solid #d8c9b8;
+      border-bottom: 1px solid #d8c9b8;
+      border-left: 0;
+      border-right: 0;
+      border-radius: 0;
+      background: #fffaf3;
+      --lemouf-manifest-fade-size: 14px;
+      --lemouf-manifest-radius: 0;
+    }
+    .lemouf-loop-manifest-wrap.is-collapsed .lemouf-loop-manifest-viewport,
+    .lemouf-loop-manifest-wrap.is-collapsed .lemouf-loop-manifest-footer {
+      display: none;
+    }
+    .lemouf-loop-manifest-wrap.is-collapsed {
+      flex: 0 0 auto;
+      min-height: 0;
+      height: auto;
+      overflow: visible;
+    }
+    .lemouf-loop-manifest-viewport::before,
+    .lemouf-loop-manifest-viewport::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: var(--lemouf-manifest-fade-size);
+      pointer-events: none;
+      z-index: 2;
+    }
+    .lemouf-loop-manifest-viewport::before {
+      top: 0;
+      border-radius: var(--lemouf-manifest-radius) var(--lemouf-manifest-radius) 0 0;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 250, 243, 0.99) 0%,
+        rgba(255, 250, 243, 0.94) 22%,
+        rgba(255, 250, 243, 0.70) 58%,
+        rgba(255, 250, 243, 0) 100%
+      );
+    }
+    .lemouf-loop-manifest-viewport::after {
+      bottom: 0;
+      border-radius: 0 0 var(--lemouf-manifest-radius) var(--lemouf-manifest-radius);
+      background: linear-gradient(
+        0deg,
+        rgba(255, 250, 243, 0.99) 0%,
+        rgba(255, 250, 243, 0.94) 22%,
+        rgba(255, 250, 243, 0.70) 58%,
+        rgba(255, 250, 243, 0) 100%
+      );
+    }
+    .lemouf-loop-manifest .lemouf-loop-cycle:last-child {
+      margin-bottom: 8px;
+    }
+    .lemouf-loop-manifest-footer {
+      display: flex;
+      flex-direction: column;
+      background: var(--lemouf-cycle-head-bg);
+      border-radius: 0 0 10px 10px;
+      border: 0;
+      overflow: hidden;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-manifest-footer .lemouf-loop-row {
+      margin-bottom: 0;
+    }
+    .lemouf-loop-accordion-footer {
+      margin: 0;
+      border-radius: 0;
+      border: 0;
+      background: transparent;
+      padding: 6px 8px;
+      overflow: visible;
+    }
+    .lemouf-loop-accordion-footer > summary {
+      padding-bottom: 0;
+      margin-bottom: 0;
+      border-bottom: 0;
+      min-height: 18px;
+    }
+    .lemouf-loop-accordion-footer[open] > summary {
+      padding-bottom: 8px;
+      margin-bottom: 8px;
+      border-bottom: 1px dashed rgba(90, 70, 55, 0.25);
+    }
+    .lemouf-loop-accordion-footer[open] {
+      border-top: 1px solid #d8c9b8;
+    }
+    .lemouf-adv-header {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .lemouf-adv-loopid {
+      margin: 0;
+      font-size: 11px;
+      color: #5b4637;
+      opacity: 0.95;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .lemouf-adv-badges {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .lemouf-adv-badge {
+      margin: 0;
+      text-align: center;
+      border: 1px solid #c8b8a7;
+      background: #dccab5;
+      color: #4a3a2f;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      padding: 3px 6px;
+      border-radius: 999px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .lemouf-adv-grid {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .lemouf-adv-grid-1 {
+      grid-template-columns: 1fr;
+    }
+    .lemouf-adv-grid-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .lemouf-adv-grid .lemouf-loop-btn {
+      min-height: 32px;
+      padding: 6px 8px;
+    }
+    .lemouf-adv-sync-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(108px, 42%);
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .lemouf-adv-sync-label {
+      border: 1px solid #cfbeac;
+      border-radius: 8px;
+      background: #efe2d1;
+      color: #5f4d3d;
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      text-align: center;
+      padding: 7px 8px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-post-manifest-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 8px;
     }
     .lemouf-loop-status {
       font-size: 11px;
@@ -586,6 +1253,11 @@ export function injectStyles() {
       white-space: pre-wrap;
       margin-top: 6px;
       margin-bottom: 6px;
+    }
+    .lemouf-loop-status:empty {
+      display: none;
+      margin-top: 0;
+      margin-bottom: 0;
     }
     .lemouf-workflow-profile-status {
       margin-top: 2px;
@@ -611,6 +1283,100 @@ export function injectStyles() {
     .lemouf-workflow-diagnostics-panel {
       margin-top: 2px;
       margin-bottom: 2px;
+      border-radius: 9px;
+      overflow: hidden;
+      padding: 0;
+      border: 1px solid #c9b9a8;
+      background: #fffaf3;
+    }
+    .lemouf-workflow-diagnostics-panel > summary {
+      list-style: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 34px;
+      padding: 7px 10px;
+      cursor: pointer;
+      user-select: none;
+      border-bottom: 1px solid transparent;
+      background: linear-gradient(180deg, #f7efe4, #f0e5d6);
+    }
+    .lemouf-workflow-diagnostics-panel > summary::-webkit-details-marker {
+      display: none;
+    }
+    .lemouf-workflow-diagnostics-panel > summary::before {
+      content: "▸";
+      font-size: 11px;
+      color: #756251;
+      transition: transform 120ms ease;
+      margin-right: 2px;
+    }
+    .lemouf-workflow-diagnostics-panel[open] > summary::before {
+      transform: rotate(90deg);
+    }
+    .lemouf-workflow-diagnostics-panel[open] > summary {
+      border-bottom-color: #d8c9b8;
+    }
+    .lemouf-workflow-diagnostics-summary-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+      color: #655343;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding-left: 2px;
+    }
+    .lemouf-workflow-diagnostics-summary-state {
+      flex: 0 0 auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 18px;
+      max-width: 72%;
+      border-radius: 999px;
+      border: 1px solid #c9b9a8;
+      padding: 2px 8px;
+      font-size: 9px;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #665546;
+      background: #efe5d7;
+    }
+    .lemouf-workflow-diagnostics-summary-state.is-neutral {
+      color: #665546;
+      background: #efe5d7;
+      border-color: #ccb8a6;
+    }
+    .lemouf-workflow-diagnostics-summary-state.is-ok {
+      color: #325b3d;
+      background: #e4f2e7;
+      border-color: #95b79e;
+    }
+    .lemouf-workflow-diagnostics-summary-state.is-warning {
+      color: #6e5629;
+      background: #fff1d9;
+      border-color: #d8ba82;
+    }
+    .lemouf-workflow-diagnostics-summary-state.is-error {
+      color: #7d2f2f;
+      background: #fde7e7;
+      border-color: #d4a0a0;
+    }
+    .lemouf-workflow-diagnostics-body {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 8px 10px 9px;
     }
     .lemouf-loop-manifest-row {
       margin-bottom: 6px;
@@ -630,36 +1396,233 @@ export function injectStyles() {
     }
     .lemouf-loop-cycle {
       margin-bottom: 10px;
-      padding-bottom: 10px;
-      border-bottom: 1px dashed rgba(90, 70, 55, 0.25);
+      padding: 8px;
+      border: 1px solid #ccb8a6;
+      border-radius: 10px;
+      background: #fffaf3;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
     }
     .lemouf-loop-cycle:last-child {
       margin-bottom: 0;
-      padding-bottom: 0;
-      border-bottom: none;
     }
     .lemouf-loop-cycle-header {
       display: flex;
       align-items: center;
-      gap: 8px;
-      font-weight: 700;
-      margin-bottom: 10px;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
+      justify-content: space-between;
+      gap: 10px;
+      border: 1px solid #bca690;
+      border-radius: 8px;
+      background: linear-gradient(180deg, #f5ebdf, #eee1d0);
+      padding: 7px 9px;
       color: #3b2f24;
     }
+    .lemouf-loop-cycle-header.is-clickable {
+      cursor: pointer;
+      transition: border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+    }
+    .lemouf-loop-cycle-header.is-clickable:hover {
+      border-color: #9f8367;
+      box-shadow: 0 1px 0 rgba(58, 42, 30, 0.12);
+      transform: translateY(-1px);
+    }
+    .lemouf-loop-cycle-head-main {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 7px;
+      min-width: 0;
+    }
+    .lemouf-loop-cycle-kicker {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+      color: #6f5d4d;
+      font-weight: 700;
+    }
+    .lemouf-loop-cycle-value {
+      font-size: 17px;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.2px;
+      color: #3b2f24;
+      white-space: nowrap;
+    }
+    .lemouf-loop-cycle-state {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .lemouf-loop-cycle-state.current {
+      color: #2f4f79;
+      background: #e2ecff;
+      border-color: #93abd4;
+    }
+    .lemouf-loop-cycle-state.done {
+      color: #35543d;
+      background: #e4f2e7;
+      border-color: #95b79e;
+    }
+    .lemouf-loop-cycle-state.upcoming {
+      color: #6d5a49;
+      background: #efe5d7;
+      border-color: #ccb8a6;
+    }
+    .lemouf-loop-cycle-state.in_progress {
+      color: #7a5a1f;
+      background: #fff1d9;
+      border-color: #d8ba82;
+    }
+    .lemouf-loop-cycle-state.waiting {
+      color: #6d5a49;
+      background: #efe5d7;
+      border-color: #ccb8a6;
+    }
+    .lemouf-loop-cycle-state.failed {
+      color: #7d2f2f;
+      background: #fde7e7;
+      border-color: #d4a0a0;
+    }
+    .lemouf-loop-cycle.is-phase-upcoming {
+      border-color: #ccb8a6;
+      background: #fffaf3;
+    }
+    .lemouf-loop-cycle-header.is-phase-upcoming {
+      border-color: #bca690;
+      background: linear-gradient(180deg, #f5ebdf, #eee1d0);
+    }
+    .lemouf-loop-cycle.is-phase-done {
+      border-color: #9db9a4;
+      background: #f3faf4;
+      box-shadow: inset 0 0 0 1px rgba(92, 136, 104, 0.14);
+    }
+    .lemouf-loop-cycle-header.is-phase-done {
+      border-color: #9db9a4;
+      background: linear-gradient(180deg, #edf8ef, #deefe1);
+    }
+    .lemouf-loop-cycle.is-phase-in_progress {
+      border-color: #d1b07a;
+      background: #fff8ea;
+      box-shadow: inset 0 0 0 1px rgba(172, 128, 57, 0.14);
+    }
+    .lemouf-loop-cycle-header.is-phase-in_progress {
+      border-color: #d1b07a;
+      background: linear-gradient(180deg, #fff3dc, #f7e6c5);
+    }
+    .lemouf-loop-cycle.is-phase-failed {
+      border-color: #cf9b9b;
+      background: #fff1f1;
+      box-shadow: inset 0 0 0 1px rgba(168, 77, 77, 0.18);
+    }
+    .lemouf-loop-cycle-header.is-phase-failed {
+      border-color: #cf9b9b;
+      background: linear-gradient(180deg, #fde8e8, #f6d9d9);
+    }
+    .lemouf-loop-cycle.is-current {
+      border-color: #93abd4;
+      box-shadow: inset 0 0 0 1px rgba(86, 116, 166, 0.22);
+    }
+    .lemouf-loop-cycle.is-selected {
+      outline: 1px solid rgba(117, 145, 186, 0.55);
+      outline-offset: -1px;
+    }
+    .lemouf-loop-cycle-header.is-current {
+      border-color: #93abd4;
+      background: linear-gradient(180deg, #ecf3ff, #dfeaff);
+    }
+    .lemouf-loop-cycle-header.is-selected {
+      box-shadow: inset 0 0 0 1px rgba(93, 121, 164, 0.28);
+    }
+    .lemouf-loop-cycle.is-waiting {
+      border-color: #ccb8a6;
+      background: #fffaf3;
+      box-shadow: inset 0 0 0 1px rgba(120, 98, 77, 0.12);
+    }
+    .lemouf-loop-cycle-header.is-waiting {
+      border-color: #ccb8a6;
+      background: linear-gradient(180deg, #f5ebdf, #eee1d0);
+    }
     .lemouf-loop-cycle-strip {
-      display: flex;
-      flex-wrap: wrap;
+      display: grid;
+      grid-template-columns: repeat(var(--lemouf-cycle-cols, 2), minmax(0, 1fr));
       gap: 8px;
+      align-items: start;
+      justify-content: stretch;
     }
     .lemouf-loop-result-card {
       position: relative;
-      display: inline-flex;
+      display: flex;
       flex-direction: column;
+      gap: 0;
+      width: 100%;
+      min-width: 0;
+      transition: opacity 300ms ease, filter 300ms ease, transform 160ms ease;
+    }
+    .lemouf-loop-result-card.is-off {
+      opacity: 0.4;
+      filter: saturate(0.82);
+    }
+    .lemouf-loop-result-card.is-off:hover {
+      opacity: 1;
+      filter: saturate(1);
+    }
+    .lemouf-loop-result-card.is-cycle-approved-focus {
+      opacity: 1;
+      filter: none;
+      transform: translateY(-1px);
+    }
+    .lemouf-loop-result-card-retry {
+      border: 1px dashed #b79e88;
+      border-radius: 8px;
+      background: #fff7ee;
+      padding: 6px;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .lemouf-loop-result-skeleton {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 6px;
+      border: 1px dashed #baa18b;
+      color: #7a6653;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      line-height: 1.25;
+      text-align: center;
+      padding: 12px;
+      box-sizing: border-box;
+      display: flex;
       align-items: center;
-      gap: 4px;
+      justify-content: center;
+      background:
+        linear-gradient(110deg, rgba(255, 250, 243, 0.4) 0%, rgba(255, 250, 243, 0.9) 20%, rgba(255, 250, 243, 0.4) 40%)
+        #efe4d6;
+      background-size: 220% 100%;
+      animation: lemouf-skeleton-shimmer 1.3s linear infinite;
+      cursor: pointer;
+    }
+    @keyframes lemouf-skeleton-shimmer {
+      0% { background-position: 180% 0; }
+      100% { background-position: -40% 0; }
+    }
+    .lemouf-loop-retry-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .lemouf-loop-retry-actions .lemouf-loop-btn {
+      min-height: 28px;
+      padding: 5px 8px;
+      font-size: 11px;
     }
     .lemouf-loop-thumb-actions {
       position: absolute;
@@ -674,9 +1637,11 @@ export function injectStyles() {
     }
     .lemouf-loop-result-card:hover .lemouf-loop-thumb-actions {
       opacity: 1;
-      pointer-events: auto;
     }
     .lemouf-loop-thumb-action {
+      position: relative;
+      z-index: 2;
+      pointer-events: auto;
       width: 26px;
       height: 26px;
       border-radius: 999px;
@@ -691,6 +1656,13 @@ export function injectStyles() {
       cursor: pointer;
       box-shadow: 0 4px 10px rgba(20, 16, 12, 0.2);
       transition: transform 120ms ease, opacity 120ms ease;
+    }
+    .lemouf-loop-thumb-action::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+      border-radius: 999px;
+      background: transparent;
     }
     .lemouf-loop-thumb-action.approve { color: #1f6a44; }
     .lemouf-loop-thumb-action.reject { color: #8a2e24; }
@@ -731,6 +1703,7 @@ export function injectStyles() {
       letter-spacing: 0.4px;
     }
     .lemouf-loop-result-badge.approve { background: #2f7a4f; }
+    .lemouf-loop-result-badge.discard { background: #7a6f63; }
     .lemouf-loop-result-badge.reject { background: #a03a2e; }
     .lemouf-loop-result-badge.replay { background: #8a6b4f; }
     .lemouf-loop-result-badge.queued { background: #6b6b6b; }
@@ -738,9 +1711,17 @@ export function injectStyles() {
     .lemouf-loop-result-badge.returned { background: #2f5f7a; }
     .lemouf-loop-result-badge.error { background: #7a2f2f; }
     .lemouf-loop-result-badge.pending { background: #5b4637; }
+    .lemouf-loop-result-badge.is-clickable {
+      cursor: pointer;
+      transition: transform 120ms ease, filter 120ms ease;
+    }
+    .lemouf-loop-result-badge.is-clickable:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.05);
+    }
     .lemouf-loop-result-placeholder {
-      width: 96px;
-      height: 96px;
+      width: 100%;
+      aspect-ratio: 1 / 1;
       border-radius: 6px;
       border: 1px dashed #b59c86;
       background: #fffaf3;
@@ -753,8 +1734,8 @@ export function injectStyles() {
       padding: 6px;
     }
     .lemouf-loop-thumb {
-      width: 96px;
-      height: 96px;
+      width: 100%;
+      aspect-ratio: 1 / 1;
       object-fit: cover;
       border-radius: 6px;
       border: 1px solid #b59c86;
@@ -767,11 +1748,21 @@ export function injectStyles() {
       background: #fffaf3;
       padding: 6px;
       position: relative;
+      aspect-ratio: 1 / 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-loop-preview > * {
+      min-width: 0;
     }
     .lemouf-loop-preview-img {
       width: 100%;
-      height: auto;
-      max-height: 220px;
+      height: 100%;
+      max-height: none;
+      flex: 1 1 auto;
+      min-height: 0;
       object-fit: contain;
       border-radius: 8px;
       border: 1px solid #d6c4b2;
@@ -784,6 +1775,164 @@ export function injectStyles() {
       color: #7a6756;
       text-align: center;
       padding: 18px 8px;
+      flex: 1 1 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lemouf-loop-preview-complete {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 2px;
+    }
+    .lemouf-loop-preview-complete-title {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: #6f5d4d;
+      font-weight: 700;
+    }
+    .lemouf-loop-preview-complete-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .lemouf-loop-preview-stat {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #c7b29d;
+      background: #f4e8da;
+      color: #5f4d3d;
+      font-size: 10px;
+      letter-spacing: 0.2px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+    .lemouf-loop-preview-complete-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 8px 6px 10px 8px;
+      border-radius: 8px;
+      border: 1px solid #d7c6b4;
+      background: #f7ede1;
+      scrollbar-gutter: stable;
+      box-sizing: border-box;
+    }
+    .lemouf-loop-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+      gap: 8px;
+      align-items: start;
+      width: 100%;
+      min-width: 0;
+    }
+    .lemouf-loop-summary-card {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      border: 1px solid #ccb8a6;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 6px;
+      min-width: 0;
+    }
+    .lemouf-loop-summary-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      min-width: 0;
+    }
+    .lemouf-loop-summary-cycle {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-weight: 700;
+      color: #695846;
+      white-space: nowrap;
+    }
+    .lemouf-loop-summary-retry {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      border: 1px solid #c3ad97;
+      background: #efe2d2;
+      color: #6a5846;
+      min-height: 16px;
+      padding: 0 6px;
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-summary-media {
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      border-radius: 7px;
+      overflow: hidden;
+      border: 1px solid #cbb6a1;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lemouf-loop-summary-thumb {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      cursor: pointer;
+      transition: filter 120ms ease, transform 120ms ease;
+    }
+    .lemouf-loop-summary-thumb:hover {
+      filter: saturate(1.05);
+      transform: scale(1.01);
+    }
+    .lemouf-loop-summary-no-media {
+      padding: 8px;
+      font-size: 10px;
+      color: #7b6857;
+      text-transform: uppercase;
+      letter-spacing: 0.25px;
+      text-align: center;
+    }
+    .lemouf-loop-summary-meta {
+      font-size: 10px;
+      color: #6b5948;
+      line-height: 1.2;
+    }
+    .lemouf-loop-summary-empty {
+      width: 100%;
+      min-height: 88px;
+      border: 1px dashed #bea58e;
+      border-radius: 8px;
+      background: #fbf2e8;
+      color: #7b6755;
+      font-size: 11px;
+      text-align: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 10px;
+    }
+    .lemouf-loop-preview-complete-actions {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 6px;
+      margin-top: 2px;
+    }
+    .lemouf-loop-preview-complete-actions .lemouf-loop-btn {
+      width: 100%;
     }
     .lemouf-loop-progress {
       border: 1px solid #b59c86;
@@ -847,18 +1996,25 @@ export function injectStyles() {
     .lemouf-loop-lightbox.is-open {
       display: flex;
     }
-    .lemouf-loop-lightbox img {
-      max-width: 92vw;
-      max-height: 92vh;
-      border-radius: 12px;
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-      border: 1px solid rgba(255, 255, 255, 0.15);
-      background: #fff;
+    .lemouf-loop-lightbox-panel {
+      position: relative;
+      width: min(94vw, 980px);
+      max-height: min(92vh, 860px);
+      border-radius: 14px;
+      border: 1px solid rgba(214, 196, 178, 0.7);
+      background: linear-gradient(180deg, #f8eee2, #efe1cf);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.48);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      overflow: hidden;
     }
-    .lemouf-loop-lightbox button {
+    .lemouf-loop-lightbox-close {
       position: absolute;
-      top: 16px;
-      right: 16px;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
       background: #f6f0e6;
       color: #3b2f24;
       border: 1px solid #c7b7a6;
@@ -867,6 +2023,165 @@ export function injectStyles() {
       cursor: pointer;
       font-size: 12px;
       font-weight: 600;
+    }
+    .lemouf-loop-lightbox-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding-right: 84px;
+      min-height: 28px;
+    }
+    .lemouf-loop-lightbox-head-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .lemouf-loop-lightbox-cycle {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      color: #4a3b2f;
+      min-width: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-lightbox-cycle-select {
+      flex: 0 0 auto;
+      min-width: 118px;
+      max-width: 180px;
+      height: 28px;
+      border: 1px solid #b9a591;
+      border-radius: 999px;
+      background: #fffaf3;
+      color: #4a3b2f;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.28px;
+      padding: 0 10px;
+    }
+    .lemouf-loop-lightbox-cycle-select:focus {
+      outline: 1px solid #8fa5d6;
+      outline-offset: 1px;
+    }
+    .lemouf-loop-lightbox-status {
+      position: static;
+      top: auto;
+      left: auto;
+      flex: 0 0 auto;
+      font-size: 10px;
+      padding: 2px 8px;
+      line-height: 1.2;
+    }
+    .lemouf-loop-lightbox-nav {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-lightbox-nav .lemouf-loop-btn {
+      min-width: 62px;
+      padding: 5px 8px;
+    }
+    .lemouf-loop-lightbox-stage {
+      position: relative;
+      border-radius: 10px;
+      border: 1px solid rgba(130, 105, 83, 0.28);
+      background: #fbf5ec;
+      min-height: min(56vh, 560px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .lemouf-loop-lightbox-stage img {
+      max-width: 100%;
+      max-height: min(56vh, 560px);
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(38, 30, 22, 0.2);
+      border: 1px solid rgba(130, 105, 83, 0.24);
+      background: #fff;
+    }
+    .lemouf-loop-lightbox-skeleton {
+      width: min(82vw, 540px);
+      max-width: 100%;
+      aspect-ratio: 1 / 1;
+      font-size: 13px;
+      letter-spacing: 0.4px;
+      text-align: center;
+      padding: 18px;
+    }
+    .lemouf-loop-lightbox-foot {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .lemouf-loop-lightbox-badges {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      min-height: 22px;
+    }
+    .lemouf-loop-lightbox-meta {
+      font-size: 11px;
+      color: #6f5d4d;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-lightbox-actions {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .lemouf-loop-lightbox-panel.is-cycle-mode .lemouf-loop-lightbox-actions {
+      display: grid;
+    }
+    .lemouf-loop-lightbox-panel:not(.is-cycle-mode) .lemouf-loop-lightbox-actions {
+      display: none;
+    }
+    .lemouf-loop-lightbox-panel:not(.is-cycle-mode) .lemouf-loop-lightbox-head {
+      padding-right: 84px;
+    }
+    .lemouf-loop-lightbox-panel:not(.is-cycle-mode) .lemouf-loop-lightbox-nav {
+      display: none;
+    }
+    @media (max-width: 640px) {
+      .lemouf-loop-lightbox {
+        padding: 10px;
+      }
+      .lemouf-loop-lightbox-panel {
+        width: 100%;
+        max-height: 100%;
+        padding: 10px;
+      }
+      .lemouf-loop-lightbox-stage {
+        min-height: min(52vh, 420px);
+      }
+      .lemouf-loop-lightbox-actions {
+        grid-template-columns: 1fr;
+      }
+      .lemouf-loop-lightbox-nav .lemouf-loop-btn {
+        min-width: 54px;
+      }
+      .lemouf-loop-lightbox-head {
+        padding-right: 78px;
+      }
+      .lemouf-loop-lightbox-cycle-select {
+        min-width: 96px;
+        max-width: 140px;
+      }
     }
     .lemouf-loop-badge {
       display: inline-block;
@@ -912,10 +2227,18 @@ export function injectStyles() {
       word-break: break-word;
     }
     .lemouf-song2daw-overview {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
+      display: block;
+      min-width: 0;
       margin-top: 2px;
+      max-height: min(48vh, 430px);
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding-right: 4px;
+    }
+    .lemouf-song2daw-home-card .lemouf-song2daw-overview {
+      flex: 1 1 auto;
+      min-height: 120px;
+      max-height: none;
     }
     .lemouf-song2daw-step-empty {
       grid-column: 1 / -1;
@@ -1002,6 +2325,7 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       gap: 6px;
+      margin-top: 6px;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
     }
     .lemouf-song2daw-audio-preview .lemouf-loop-select {
@@ -1051,6 +2375,56 @@ export function injectStyles() {
       letter-spacing: 0.4px;
       color: #6b5a4a;
       font-weight: 700;
+    }
+    .lemouf-song2daw-detail-head {
+      border: 1px solid #c9b9a8;
+      border-radius: 8px;
+      background: #fffaf3;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .lemouf-song2daw-detail-head-main {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+    }
+    .lemouf-song2daw-detail-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.35px;
+      font-weight: 700;
+      color: #3b2f24;
+      word-break: break-word;
+    }
+    .lemouf-song2daw-detail-meta {
+      font-size: 10px;
+      color: #6b5a4a;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .lemouf-song2daw-detail-head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .lemouf-song2daw-detail-content-panel {
+      flex: 1 1 50%;
+      min-height: 110px;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-detail-summary-panel {
+      flex: 1 1 50%;
+      min-height: 110px;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-detail-pre {
+      flex: 1 1 auto;
+      min-height: 0;
+      max-height: 100%;
+      overflow: auto;
     }
     .lemouf-loop-btn.is-active {
       background: #5b4637;
@@ -1459,9 +2833,6 @@ export function injectStyles() {
       }
     }
     @media (max-width: 520px) {
-      .lemouf-song2daw-overview {
-        grid-template-columns: 1fr;
-      }
       .lemouf-song2daw-tracks-grid {
         grid-template-columns: 1fr;
       }

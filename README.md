@@ -10,7 +10,14 @@ tools, techniques, and practical building blocks for creators.
 
 ## Status
 
-Current version: `0.3.0`
+Current version: `0.3.1`
+
+### 0.3.1 highlights
+
+- Loop lightbox cycle jump via inline cycle selector.
+- Loop lightbox closes automatically when current cycle gets an approved result.
+- Pipeline runtime state now persists by `loop_id` and is restored after reload (`Ctrl+F5`), including Home pipeline step details.
+- Generic loop composition access is available from pipeline composition step navigation.
 
 ### 0.3.0 highlights
 

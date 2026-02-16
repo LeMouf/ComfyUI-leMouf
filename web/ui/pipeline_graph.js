@@ -4,6 +4,7 @@ export function createPipelineGraphView({
   getWorkflowInfo,
   formatDuration,
   onNavigate,
+  onSelect,
   getActiveStepId,
   getSelectedStepId,
   getRunState,
@@ -22,7 +23,7 @@ export function createPipelineGraphView({
       return;
     }
     setStatus("");
-    const column = el("div", { class: "lemouf-loop-pipeline-col" });
+    const flow = el("div", { class: "lemouf-step-flow lemouf-step-flow-pipeline" });
     const runState = getRunState();
     const runEntries = runState?.steps || {};
     for (let i = 0; i < steps.length; i += 1) {
@@ -34,31 +35,59 @@ export function createPipelineGraphView({
           ? "ok"
           : statusText === "error"
           ? "error"
+          : statusText === "waiting"
+          ? "warn"
           : statusText === "running"
           ? "running"
           : "pending";
       const isActive = getActiveStepId() === step.id;
       const isSelected = getSelectedStepId() === step.id;
       const card = el("div", {
-        class: `lemouf-loop-pipeline-step${isActive ? " is-active" : ""}${isSelected ? " is-selected" : ""}`,
+        class: `lemouf-step-flow-card${isActive ? " is-active" : ""}${isSelected ? " is-selected" : ""}`,
       });
-      if (step.workflow && step.workflow !== "(none)") {
+      const isCompositionStep = String(step?.role || "").toLowerCase() === "composition";
+      const hasWorkflow = Boolean(step.workflow && step.workflow !== "(none)");
+      if (hasWorkflow || isCompositionStep) {
         card.classList.add("is-clickable");
         card.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          if (typeof onSelect === "function") onSelect(step);
+          else onNavigate?.(step);
+        });
+        card.addEventListener("dblclick", (ev) => {
           ev.preventDefault();
           onNavigate?.(step);
         });
       }
-      const statusBadge = el("div", { class: `lemouf-loop-step-status ${statusClass}`, text: statusText });
+      const statusBadge = el("div", { class: `lemouf-step-flow-badge ${statusClass}`, text: statusText });
       card.append(
-        statusBadge,
-        el("div", { class: "lemouf-loop-step-index", text: `Step ${i + 1}` }),
-        el("div", { class: "role", text: step.role || "step" }),
-        el("div", { class: "name", text: step.workflow || "(none)" }),
+        el("div", { class: "lemouf-step-flow-head" }, [
+          statusBadge,
+          el("span", { class: "lemouf-step-flow-index", text: `Step ${i + 1}` }),
+        ]),
+        el("div", { class: "lemouf-step-flow-title", text: step.role || "step" }),
+        el("div", { class: "lemouf-step-flow-sub", text: step.workflow || "(none)" }),
       );
-      column.appendChild(card);
+      flow.appendChild(card);
       if (i < steps.length - 1) {
-        column.appendChild(el("div", { class: "lemouf-loop-pipeline-arrow", text: "↓" }));
+        flow.appendChild(el("div", { class: "lemouf-step-flow-arrow", text: "↓" }));
+      }
+
+      if (isCompositionStep && !hasWorkflow) {
+        const details = [];
+        details.push("Manual gate: open composition studio.");
+        if (runEntry.startedAt && runEntry.endedAt) {
+          const duration = formatDuration(runEntry.endedAt - runEntry.startedAt);
+          if (duration) details.push(`Time: ${duration}`);
+        } else if (runEntry.startedAt && !runEntry.endedAt && statusText === "running") {
+          details.push("Editing...");
+        } else if (statusText === "waiting") {
+          details.push("Waiting for user validation.");
+        }
+        for (const line of details) {
+          card.appendChild(el("div", { class: "lemouf-step-flow-meta", text: line }));
+        }
+        continue;
       }
 
       const info = await getWorkflowInfo(step.workflow);
@@ -66,7 +95,7 @@ export function createPipelineGraphView({
         statusBadge.textContent = "missing";
         statusBadge.classList.remove("pending", "running", "ok");
         statusBadge.classList.add("error");
-        card.appendChild(el("div", { class: "detail", text: info.error || "Missing workflow." }));
+        card.appendChild(el("div", { class: "lemouf-step-flow-meta", text: info.error || "Missing workflow." }));
         continue;
       }
 
@@ -85,10 +114,10 @@ export function createPipelineGraphView({
         details.push("Running...");
       }
       for (const line of details) {
-        card.appendChild(el("div", { class: "detail", text: line }));
+        card.appendChild(el("div", { class: "lemouf-step-flow-meta", text: line }));
       }
     }
-    root.appendChild(column);
+    root.appendChild(flow);
 
     if (runState) {
       const end = runState.endedAt || null;

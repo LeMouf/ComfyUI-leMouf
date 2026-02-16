@@ -10,16 +10,27 @@ export function createHomeScreen() {
     text: "Workflow profile: generic_loop (auto)",
   });
   const workflowUseCurrentBtn = el("button", { class: "lemouf-loop-btn alt", text: "Use current WF" });
-  const pipelineNav = el("div", { class: "lemouf-loop-block" });
+  const pipelineNav = el("div", { class: "lemouf-loop-block lemouf-home-card lemouf-home-card-compact" });
   const pipelineRefreshBtn = el("button", { class: "lemouf-loop-btn ghost icon", text: "⟳", title: "Refresh list" });
+  const pipelineLoadBtn = el("button", { class: "lemouf-loop-btn alt", text: "Load pipeline" });
   const pipelineRunBtn = el("button", { class: "lemouf-loop-btn alt", text: "Run pipeline" });
   const validateBtn = el("button", { class: "lemouf-loop-btn alt", text: "Validate & Start" });
   const cyclesInput = el("input", { type: "number", min: 1, value: 1 });
   const compatStatus = el("div", { class: "lemouf-loop-status", text: "" });
-  const workflowDiagnosticsPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-workflow-diagnostics-panel" }, [
-    el("div", { class: "lemouf-song2daw-step-title", text: "Workflow diagnostics" }),
+  const workflowDiagnosticsSummaryState = el("span", {
+    class: "lemouf-workflow-diagnostics-summary-state is-neutral",
+    text: "Awaiting check",
+  });
+  const workflowDiagnosticsSummary = el("summary", { class: "lemouf-workflow-diagnostics-summary" }, [
+    el("span", { class: "lemouf-workflow-diagnostics-summary-title", text: "Workflow eval" }),
+    workflowDiagnosticsSummaryState,
+  ]);
+  const workflowDiagnosticsPanel = el("details", { class: "lemouf-song2daw-step-panel lemouf-workflow-diagnostics-panel" }, [
+    workflowDiagnosticsSummary,
+    el("div", { class: "lemouf-workflow-diagnostics-body" }, [
     workflowProfileStatus,
     compatStatus,
+    ]),
   ]);
   const song2dawSelect = el("select", { class: "lemouf-loop-select" });
   const song2dawStatus = el("div", { class: "lemouf-loop-status", text: "" });
@@ -29,6 +40,17 @@ export function createHomeScreen() {
   const song2dawOpenDirBtn = el("button", { class: "lemouf-loop-btn alt", text: "Open run_dir" });
   const song2dawDockToggleBtn = el("button", { class: "lemouf-loop-btn alt", text: "Hide studio" });
   const song2dawDockExpandBtn = el("button", { class: "lemouf-loop-btn alt", text: "Max studio" });
+  const song2dawPrimaryLoadRow = el("div", {
+    class: "lemouf-loop-row tight",
+    style: "display:none;",
+  }, [song2dawLoadBtn]);
+  const song2dawRunActionsRow = el("div", { class: "lemouf-loop-row tight" }, [
+    song2dawOpenDirBtn,
+  ]);
+  const song2dawStudioActionsRow = el("div", { class: "lemouf-loop-row tight" }, [
+    song2dawDockToggleBtn,
+    song2dawDockExpandBtn,
+  ]);
   const song2dawAudioPreviewAsset = el("select", { class: "lemouf-loop-select", disabled: true });
   song2dawAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
   const song2dawAudioPreviewPlayer = el("audio", {
@@ -43,9 +65,9 @@ export function createHomeScreen() {
   ]);
   song2dawOpenDirBtn.disabled = true;
   const song2dawOverview = el("div", { class: "lemouf-song2daw-overview" });
-  const song2dawStepTitle = el("div", { class: "lemouf-song2daw-step-title", text: "Step detail" });
-  const song2dawStepDetail = el("pre", { class: "lemouf-loop-payload-pre", text: "" });
-  const song2dawStepPanel = el("div", { class: "lemouf-song2daw-step-panel" }, [
+  const song2dawStepTitle = el("div", { class: "lemouf-song2daw-step-title", text: "Step outputs (JSON)" });
+  const song2dawStepDetail = el("pre", { class: "lemouf-loop-payload-pre lemouf-song2daw-detail-pre", text: "" });
+  const song2dawStepPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-song2daw-detail-content-panel" }, [
     song2dawStepTitle,
     song2dawStepDetail,
   ]);
@@ -65,16 +87,41 @@ export function createHomeScreen() {
     song2dawStudioTabs,
     song2dawStudioBody,
   ]);
-  const song2dawDetail = el("pre", { class: "lemouf-loop-payload-pre", text: "" });
+  const song2dawDetail = el("pre", { class: "lemouf-loop-payload-pre lemouf-song2daw-detail-pre", text: "" });
+  const song2dawAdvancedSummary = el("summary", { text: "Advanced controls" });
+  const song2dawAdvancedControls = el("details", { class: "lemouf-loop-accordion" }, [
+    song2dawAdvancedSummary,
+  ]);
+  const song2dawRunSelectionBlock = el("div", { class: "lemouf-advanced-block" }, [
+    el("div", { class: "lemouf-song2daw-step-title", text: "Run selection" }),
+    song2dawSelect,
+    el("div", { class: "lemouf-loop-row tight" }, [song2dawRefreshBtn, song2dawClearBtn]),
+  ]);
+  const song2dawRunActionsBlock = el("div", { class: "lemouf-advanced-block" }, [
+    el("div", { class: "lemouf-song2daw-step-title", text: "Run actions" }),
+    song2dawRunActionsRow,
+  ]);
+  const song2dawStudioActionsBlock = el("div", { class: "lemouf-advanced-block" }, [
+    el("div", { class: "lemouf-song2daw-step-title", text: "Studio actions" }),
+    song2dawStudioActionsRow,
+  ]);
+  const song2dawHomeViewBlock = el("div", { class: "lemouf-loop-block lemouf-song2daw-home-view" }, [
+    song2dawOverview,
+    song2dawStudioPanel,
+  ]);
+  const song2dawRunDetailBlock = el("div", { class: "lemouf-loop-block lemouf-song2daw-run-detail", style: "display:none;" }, [
+    song2dawHomeViewBlock,
+    song2dawStatus,
+  ]);
 
-  const pipelineBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block" });
+  const pipelineBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-home-card" });
   pipelineBlock.append(
     el("label", { text: "Pipeline workflow" }),
     workflowUseCurrentBtn,
     pipelineList,
     pipelineSelect,
     workflowDiagnosticsPanel,
-    el("div", { class: "lemouf-loop-row tight" }, [pipelineRefreshBtn, pipelineRunBtn]),
+    el("div", { class: "lemouf-loop-row tight" }, [pipelineRefreshBtn, pipelineLoadBtn]),
     pipelineStatus,
   );
 
@@ -84,23 +131,18 @@ export function createHomeScreen() {
     validateBtn,
   ]);
 
-  const song2dawBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block" });
+  const song2dawBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-home-card lemouf-song2daw-home-card" });
+  song2dawAdvancedControls.append(
+    song2dawRunSelectionBlock,
+    song2dawRunActionsBlock,
+    song2dawStudioActionsBlock,
+    song2dawAudioPreviewPanel,
+  );
   song2dawBlock.append(
     el("label", { text: "Song2DAW step views" }),
-    song2dawSelect,
-    el("div", { class: "lemouf-loop-row tight" }, [song2dawRefreshBtn, song2dawClearBtn]),
-    el("div", { class: "lemouf-loop-row tight" }, [
-      song2dawLoadBtn,
-      song2dawOpenDirBtn,
-      song2dawDockToggleBtn,
-      song2dawDockExpandBtn,
-    ]),
-    song2dawAudioPreviewPanel,
-    song2dawOverview,
-    song2dawStepPanel,
-    song2dawStudioPanel,
-    song2dawStatus,
-    song2dawDetail,
+    song2dawPrimaryLoadRow,
+    song2dawAdvancedControls,
+    song2dawRunDetailBlock,
   );
 
   root.append(
@@ -117,6 +159,7 @@ export function createHomeScreen() {
     pipelineStatus,
     pipelineNav,
     pipelineRefreshBtn,
+    pipelineLoadBtn,
     pipelineRunBtn,
     workflowUseCurrentBtn,
     cyclesRow,
@@ -124,6 +167,7 @@ export function createHomeScreen() {
     validateBtn,
     compatStatus,
     workflowDiagnosticsPanel,
+    workflowDiagnosticsSummaryState,
     song2dawSelect,
     song2dawBlock,
     workflowProfileStatus,
@@ -131,12 +175,16 @@ export function createHomeScreen() {
     song2dawRefreshBtn,
     song2dawClearBtn,
     song2dawLoadBtn,
+    song2dawPrimaryLoadRow,
     song2dawOpenDirBtn,
     song2dawDockToggleBtn,
     song2dawDockExpandBtn,
+    song2dawRunDetailBlock,
+    song2dawHomeViewBlock,
     song2dawAudioPreviewAsset,
     song2dawAudioPreviewPlayer,
     song2dawOverview,
+    song2dawStepPanel,
     song2dawStepTitle,
     song2dawStepDetail,
     song2dawStudioPanel,

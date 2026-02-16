@@ -6,6 +6,7 @@ export function createRunScreen({
   actionRow,
   exportBtn,
   exitBtn,
+  manifestRunBtn,
   overridesBox,
   actionStatus,
   manifestBox,
@@ -21,18 +22,37 @@ export function createRunScreen({
 
   const overridesLabel = el("div", { text: "Overrides (JSON map)" });
   const overridesApplyBtn = el("button", { class: "lemouf-loop-btn", text: "Apply overrides" });
+  actionStatus.classList.add("lemouf-loop-manifest-status");
+  const manifestHeadCaret = el("span", {
+    class: "lemouf-loop-manifest-caret",
+    text: "▾",
+  });
+  const manifestHeadTools = el("div", { class: "lemouf-loop-manifest-head-tools" }, [
+    actionStatus,
+    manifestRunBtn,
+  ]);
+  const manifestHeadLabel = el("div", { class: "lemouf-loop-manifest-head-label-wrap" }, [
+    manifestHeadCaret,
+    el("div", { class: "lemouf-loop-manifest-head-label", text: "Cycles" }),
+  ]);
+  const manifestHead = el("div", { class: "lemouf-loop-manifest-head" }, [
+    manifestHeadLabel,
+    manifestHeadTools,
+  ]);
+  const manifestViewport = el("div", { class: "lemouf-loop-manifest-viewport" }, [manifestBox]);
+  const manifestPanel = el("div", { class: "lemouf-loop-field lemouf-loop-manifest-wrap" }, [
+    manifestHead,
+    manifestViewport,
+  ]);
 
   postStartTop.append(
     progressWrap,
     previewWrap,
     actionRow,
-    el("div", { class: "lemouf-loop-row" }, [exportBtn]),
-    el("div", { class: "lemouf-loop-row" }, [exitBtn]),
     el("div", { class: "lemouf-loop-field", style: "display:none;" }, [overridesLabel]),
     el("div", { class: "lemouf-loop-field", style: "display:none;" }, [overridesBox]),
     el("div", { class: "lemouf-loop-row", style: "display:none;" }, [overridesApplyBtn]),
-    el("div", { class: "lemouf-loop-field" }, [actionStatus]),
-    el("div", { class: "lemouf-loop-field" }, [manifestBox]),
+    manifestPanel,
   );
 
   const summary = el("summary", { text: "Advanced controls" });
@@ -43,19 +63,74 @@ export function createRunScreen({
   const useCurrentBtn = el("button", { class: "lemouf-loop-btn", text: "Use current WF" });
   const injectBtn = el("button", { class: "lemouf-loop-btn", text: "Inject loop_id" });
   const stepBtn = el("button", { class: "lemouf-loop-btn alt", text: "Step cycle" });
-
-  postStartBottom.append(
-    el("details", { class: "lemouf-loop-accordion" }, [
+  autoSyncLabel.textContent = "Auto-sync WF";
+  loopIdLabel.classList.add("lemouf-adv-loopid");
+  statusBadge.classList.add("lemouf-adv-badge");
+  cycleBadge.classList.add("lemouf-adv-badge");
+  retryBadge.classList.add("lemouf-adv-badge");
+  const advHeader = el("div", { class: "lemouf-adv-header" }, [
+    loopIdLabel,
+    el("div", { class: "lemouf-adv-badges" }, [statusBadge, cycleBadge, retryBadge]),
+  ]);
+  const advPrimaryRow = el("div", { class: "lemouf-adv-grid lemouf-adv-grid-2" }, [createBtn, refreshBtn]);
+  const advCyclesRow = el("div", { class: "lemouf-adv-grid lemouf-adv-grid-1" }, [setCyclesBtn]);
+  const advSyncRow = el("div", { class: "lemouf-adv-sync-row" }, [
+    el("span", { class: "lemouf-adv-sync-label", text: autoSyncLabel.textContent || "Auto-sync WF" }),
+    syncBtn,
+  ]);
+  const advRoutingRow = el("div", { class: "lemouf-adv-grid lemouf-adv-grid-2" }, [useCurrentBtn, injectBtn]);
+  const advStepRow = el("div", { class: "lemouf-adv-grid lemouf-adv-grid-1" }, [stepBtn]);
+  const manifestFooter = el("div", { class: "lemouf-loop-manifest-footer" }, [
+    el("details", { class: "lemouf-loop-accordion lemouf-loop-accordion-footer" }, [
       summary,
-      loopIdLabel,
-      el("div", { class: "lemouf-loop-row" }, [statusBadge, cycleBadge, retryBadge]),
-      el("div", { class: "lemouf-loop-row" }, [createBtn, refreshBtn, setCyclesBtn]),
-      el("div", { class: "lemouf-loop-row" }, [autoSyncLabel, syncBtn]),
-      el("div", { class: "lemouf-loop-row" }, [useCurrentBtn, injectBtn, stepBtn]),
+      advHeader,
+      advPrimaryRow,
+      advCyclesRow,
+      advSyncRow,
+      advRoutingRow,
+      advStepRow,
     ]),
-  );
+  ]);
+  manifestPanel.appendChild(manifestFooter);
 
-  root.append(postStartTop, postStartBottom);
+  let manifestCollapsed = false;
+  let manifestCollapsible = false;
+  const applyManifestAccordionState = () => {
+    manifestPanel.classList.toggle("is-collapsed", manifestCollapsed);
+    manifestPanel.classList.toggle("is-collapsible", manifestCollapsible);
+    manifestHead.classList.toggle("is-collapsible", manifestCollapsible);
+    manifestHead.setAttribute("aria-expanded", String(!manifestCollapsed));
+    manifestHead.setAttribute("role", manifestCollapsible ? "button" : "presentation");
+    manifestHead.tabIndex = manifestCollapsible ? 0 : -1;
+    manifestHeadCaret.textContent = manifestCollapsed ? "▸" : "▾";
+    manifestHeadCaret.style.opacity = manifestCollapsible ? "1" : "0.45";
+    manifestHead.title = manifestCollapsible ? "Toggle cycles" : "";
+  };
+  const setManifestCollapsed = (collapsed) => {
+    manifestCollapsed = Boolean(collapsed);
+    applyManifestAccordionState();
+  };
+  const setManifestCollapsible = (enabled) => {
+    manifestCollapsible = Boolean(enabled);
+    if (!manifestCollapsible) manifestCollapsed = false;
+    applyManifestAccordionState();
+  };
+  manifestHeadTools.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+  });
+  manifestHead.addEventListener("click", () => {
+    if (!manifestCollapsible) return;
+    setManifestCollapsed(!manifestCollapsed);
+  });
+  manifestHead.addEventListener("keydown", (ev) => {
+    if (!manifestCollapsible) return;
+    if (ev.key !== "Enter" && ev.key !== " ") return;
+    ev.preventDefault();
+    setManifestCollapsed(!manifestCollapsed);
+  });
+  applyManifestAccordionState();
+
+  root.append(postStartTop);
 
   return {
     root,
@@ -69,5 +144,7 @@ export function createRunScreen({
     useCurrentBtn,
     injectBtn,
     stepBtn,
+    setManifestCollapsed,
+    setManifestCollapsible,
   };
 }

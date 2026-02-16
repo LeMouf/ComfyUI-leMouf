@@ -4,7 +4,7 @@
 
 song2daw is a deterministic analysis pipeline that produces a stable SongGraph and DAW-facing artifacts.
 
-Release line: `0.3.0`
+Release line: `0.3.1`
 
 ## Runtime architecture
 
@@ -81,7 +81,7 @@ Master workflows are listed in Home by default.
 
 ## Studio UI modes
 
-0.3.0 provides 3 read-only analysis views:
+0.3.1 provides 3 read-only analysis views:
 
 1. Arrange timeline
 2. Tracks summary

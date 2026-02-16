@@ -216,6 +216,156 @@ class LoopRegistry:
 REGISTRY = LoopRegistry()
 
 
+_APPROVED_DECISIONS = {"approve", "approved"}
+_RETRY_DECISIONS = {"replay", "reject"}
+_NON_ACTIONABLE_DECISIONS = {"reject", "replay", "discard"}
+_QUEUE_RUNNING_STATUSES = {"queued", "running"}
+
+
+def _normalize_loop_decision(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _normalize_loop_status(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _entries_for_cycle(state: LoopState, cycle_index: int) -> List[LoopManifestEntry]:
+    return [entry for entry in state.manifest if int(entry.cycle_index) == int(cycle_index)]
+
+
+def _dedupe_cycle_entries(entries: List[LoopManifestEntry]) -> List[LoopManifestEntry]:
+    latest_by_retry: Dict[int, LoopManifestEntry] = {}
+    for entry in entries:
+        retry = int(entry.retry_index)
+        previous = latest_by_retry.get(retry)
+        if previous is None or float(entry.updated_at) >= float(previous.updated_at):
+            latest_by_retry[retry] = entry
+    return list(latest_by_retry.values())
+
+
+def _cycle_has_approved_entry(entries: List[LoopManifestEntry]) -> bool:
+    return any(
+        _normalize_loop_decision(entry.decision) in _APPROVED_DECISIONS
+        for entry in _dedupe_cycle_entries(entries)
+    )
+
+
+def _cycle_has_actionable_entry(entries: List[LoopManifestEntry]) -> bool:
+    for entry in _dedupe_cycle_entries(entries):
+        status = _normalize_loop_status(entry.status)
+        decision = _normalize_loop_decision(entry.decision)
+        if status in _QUEUE_RUNNING_STATUSES:
+            return True
+        if status == "returned" and decision not in _NON_ACTIONABLE_DECISIONS:
+            return True
+    return False
+
+
+def _next_retry_index_for_cycle(entries: List[LoopManifestEntry], needs_generation: bool) -> int:
+    if not entries:
+        return 0
+    max_retry = max(int(entry.retry_index) for entry in entries)
+    if needs_generation:
+        return max_retry + 1
+    running_retries = [
+        int(entry.retry_index)
+        for entry in entries
+        if _normalize_loop_status(entry.status) in _QUEUE_RUNNING_STATUSES
+    ]
+    if running_retries:
+        return max(running_retries)
+    returned_retries = [
+        int(entry.retry_index)
+        for entry in entries
+        if _normalize_loop_status(entry.status) == "returned"
+        and _normalize_loop_decision(entry.decision) not in _NON_ACTIONABLE_DECISIONS
+    ]
+    if returned_retries:
+        return max(returned_retries)
+    return max_retry + 1
+
+
+def _compute_loop_progression(state: LoopState) -> Dict[str, Any]:
+    total_cycles = max(1, int(state.total_cycles or 1))
+    next_cycle_index: Optional[int] = None
+    for idx in range(total_cycles):
+        entries = _entries_for_cycle(state, idx)
+        if not _cycle_has_approved_entry(entries):
+            next_cycle_index = idx
+            break
+
+    if next_cycle_index is None:
+        return {
+            "next_cycle_index": None,
+            "next_retry_index": None,
+            "needs_generation": False,
+            "status": "complete",
+        }
+
+    cycle_entries = _entries_for_cycle(state, next_cycle_index)
+    needs_generation = not _cycle_has_actionable_entry(cycle_entries)
+    next_retry_index = _next_retry_index_for_cycle(cycle_entries, needs_generation)
+    has_running = any(
+        _normalize_loop_status(entry.status) in _QUEUE_RUNNING_STATUSES for entry in state.manifest
+    )
+    return {
+        "next_cycle_index": next_cycle_index,
+        "next_retry_index": next_retry_index,
+        "needs_generation": needs_generation,
+        "status": "running" if has_running else "idle",
+    }
+
+
+def _sync_loop_runtime_from_manifest(state: LoopState) -> Dict[str, Any]:
+    progression = _compute_loop_progression(state)
+    next_cycle_index = progression.get("next_cycle_index")
+    next_retry_index = progression.get("next_retry_index")
+    if next_cycle_index is None:
+        state.current_cycle = max(0, int(state.total_cycles or 0))
+        state.current_retry = 0
+    else:
+        state.current_cycle = int(next_cycle_index)
+        state.current_retry = int(next_retry_index or 0)
+    state.status = str(progression.get("status") or "idle")
+    state.updated_at = time.time()
+    return progression
+
+
+def _apply_loop_decision_state(
+    state: LoopState,
+    cycle_index: int,
+    retry_index: int,
+    decision: Any,
+) -> Optional[Dict[str, Any]]:
+    normalized_decision = _normalize_loop_decision(decision)
+    targets: List[LoopManifestEntry] = []
+    for entry in state.manifest:
+        if int(entry.cycle_index) == int(cycle_index) and int(entry.retry_index) == int(retry_index):
+            targets.append(entry)
+    if not targets:
+        return None
+
+    now = time.time()
+    for target in targets:
+        target.decision = normalized_decision
+        target.updated_at = now
+
+    if normalized_decision in _APPROVED_DECISIONS:
+        for entry in state.manifest:
+            if int(entry.cycle_index) != int(cycle_index):
+                continue
+            if int(entry.retry_index) == int(retry_index):
+                continue
+            if _normalize_loop_decision(entry.decision) in _APPROVED_DECISIONS:
+                entry.decision = "discard"
+                entry.updated_at = now
+
+    progression = _sync_loop_runtime_from_manifest(state)
+    state.updated_at = now
+    return progression
+
+
 # -------------------------
 # song2daw run state + registry
 # -------------------------
@@ -1607,19 +1757,32 @@ def _ensure_routes() -> None:
         loop_id = payload.get("loop_id")
         cycle_index = int(payload.get("cycle_index", -1))
         retry_index = int(payload.get("retry_index", 0))
-        decision = payload.get("decision")
+        decision = _normalize_loop_decision(payload.get("decision"))
         if not loop_id or cycle_index < 0:
             return web.json_response({"error": "invalid_payload"}, status=400)
-        REGISTRY.update_manifest(loop_id, cycle_index, retry_index, decision=decision)
+        if decision not in _APPROVED_DECISIONS.union(_RETRY_DECISIONS).union({"discard"}):
+            return web.json_response({"error": "invalid_decision"}, status=400)
+        updated = REGISTRY.update_manifest(loop_id, cycle_index, retry_index, decision=decision)
+        if not updated:
+            return web.json_response({"error": "entry_not_found"}, status=404)
         s = REGISTRY.get(loop_id)
-        if s:
-            if decision in ("replay", "reject"):
-                s.current_retry = retry_index + 1
-            else:
-                s.current_retry = 0
-                s.current_cycle = cycle_index + 1
-            s.status = "complete" if s.total_cycles and s.current_cycle >= s.total_cycles else "idle"
-        return web.json_response({"ok": True})
+        if not s:
+            return web.json_response({"error": "not_found"}, status=404)
+        progression = _apply_loop_decision_state(s, cycle_index, retry_index, decision)
+        if progression is None:
+            return web.json_response({"error": "entry_not_found"}, status=404)
+        return web.json_response(
+            {
+                "ok": True,
+                "decision": decision,
+                "current_cycle": s.current_cycle,
+                "current_retry": s.current_retry,
+                "status": s.status,
+                "next_cycle_index": progression.get("next_cycle_index"),
+                "next_retry_index": progression.get("next_retry_index"),
+                "needs_generation": bool(progression.get("needs_generation")),
+            }
+        )
 
     async def loop_overrides(request):
         payload = await request.json()
@@ -1873,9 +2036,11 @@ class LoopPipelineStep:
         workflows = _list_workflow_files()
         if not workflows:
             workflows = ["(none)"]
+        else:
+            workflows = ["(none)"] + [name for name in workflows if name != "(none)"]
         return {
             "required": {
-                "role": (["generate", "execute"],),
+                "role": (["generate", "execute", "composition"],),
                 "workflow": (workflows,),
             },
             "optional": {
@@ -2027,6 +2192,7 @@ class LoopReturn:
                     outputs=outputs,
                 ),
             )
+        _sync_loop_runtime_from_manifest(s)
         return (payload,)
 
 

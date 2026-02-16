@@ -1,8 +1,8 @@
 {
   "id": "pipeline-demo",
   "revision": 0,
-  "last_node_id": 4,
-  "last_link_id": 1,
+  "last_node_id": 5,
+  "last_link_id": 2,
   "nodes": [
     {
       "id": 1,
@@ -107,7 +107,9 @@
           "localized_name": "flow",
           "name": "flow",
           "type": "PIPELINE",
-          "links": []
+          "links": [
+            2
+          ]
         }
       ],
       "properties": {
@@ -116,6 +118,62 @@
       "widgets_values": [
         "execute",
         "leMouf_Loop-test_0-1-0.json"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "LoopPipelineStep",
+      "pos": [
+        180,
+        500
+      ],
+      "size": [
+        260,
+        120
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "role",
+          "name": "role",
+          "type": "COMBO",
+          "widget": {
+            "name": "role"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "workflow",
+          "name": "workflow",
+          "type": "COMBO",
+          "widget": {
+            "name": "workflow"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoopPipelineStep"
+      },
+      "widgets_values": [
+        "composition",
+        "(none)"
       ]
     },
     {
@@ -130,7 +188,7 @@
         200
       ],
       "flags": {},
-      "order": 2,
+      "order": 3,
       "mode": 0,
       "inputs": [
         {
@@ -170,7 +228,7 @@
         190
       ],
       "flags": {},
-      "order": 3,
+      "order": 4,
       "mode": 0,
       "inputs": [
         {
@@ -275,6 +333,14 @@
       1,
       0,
       2,
+      2,
+      "PIPELINE"
+    ],
+    [
+      2,
+      2,
+      0,
+      5,
       2,
       "PIPELINE"
     ]

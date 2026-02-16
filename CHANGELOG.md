@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.1 - 2026-02-16
+
+- Add lightbox cycle jump selector for loop cycle previews.
+- Improve lightbox decision flow:
+  - stabilize replay/reject pending skeleton behavior
+  - keep selection on target retry while generation is pending
+  - auto-close lightbox when cycle approval is completed
+- Improve runtime resilience after page reload:
+  - persist pipeline runtime state by `loop_id`
+  - restore pipeline step/run details in Home after `Ctrl+F5`
+  - hydrate pipeline state from selected workflow when cache is missing
+- Improve workflow/home synchronization behavior for in-progress generic loop runs.
+
 ## 0.3.0 - 2026-02-15
 
 - Add `LeMoufWorkflowProfile` node to declare workflow UI profile metadata.

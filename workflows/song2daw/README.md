@@ -1,6 +1,6 @@
 # song2daw ComfyUI workflows
 
-Release line: `0.3.0`
+Release line: `0.3.1`
 
 This folder contains Song2DAW **master workflows** for the leMouf Home panel.
 

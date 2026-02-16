@@ -57,7 +57,7 @@ Each step contributes:
 - metadata and logs
 - SongGraph updates
 
-## Workflow profile routing (0.3.0)
+## Workflow profile routing (0.3.1)
 
 `LeMoufWorkflowProfile` defines UI behavior:
 - `profile_id`

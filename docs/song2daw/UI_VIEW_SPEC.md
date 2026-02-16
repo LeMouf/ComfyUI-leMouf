@@ -1,6 +1,6 @@
 # song2daw — Studio View (ComfyUI Bottom Panel) — Spec
 
-Release line: `0.3.0`
+Release line: `0.3.1`
 
 ## Goal
 A DAW-like Studio View inside the ComfyUI bottom panel to inspect `song2daw` results:
@@ -11,7 +11,7 @@ A DAW-like Studio View inside the ComfyUI bottom panel to inspect `song2daw` res
 - MIDI clips (notes visible)
 - Scrub/play preview consistent with active mute state
 
-No timeline editing in 0.3.0. The view is focused on validation/debug and deterministic inspection.
+No timeline editing in 0.3.1. The view is focused on validation/debug and deterministic inspection.
 
 ## Layout
 Bottom panel tab: **song2daw**
@@ -64,7 +64,7 @@ The UI reads a **UI View Model** JSON (preferred) produced by pipeline export.
 A fixture is provided in:
 - `examples/song2daw/ui/sample_ui_view.json`
 
-## Out of scope (0.3.0)
+## Out of scope (0.3.1)
 - Editing clips/notes
 - Automation lanes
 - Mixer/routing

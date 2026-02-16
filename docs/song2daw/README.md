@@ -4,7 +4,7 @@ Deterministic audio-to-DAW analysis pipeline inside ComfyUI-leMouf.
 
 ## Release status
 
-- Current release line: `0.3.0`
+- Current release line: `0.3.1`
 - SongGraph schema: `1.0.0`
 - Pipeline step family: `0.1.0`
 
@@ -18,6 +18,15 @@ song2daw ingests an audio source and generates a stable, inspectable project mod
 - UI view payload for panel visualization
 
 The system is deterministic by design: same inputs + same configs + same versions => same outputs.
+
+## 0.3.1 user-facing highlights
+
+- Stability pass for loop + pipeline orchestration UI:
+  - cycle lightbox replay/reject/approve flow hardened
+  - cycle jump selector in lightbox
+  - auto-close lightbox on cycle completion
+  - Home pipeline run state restoration after reload (`Ctrl+F5`)
+- Song2DAW Studio and run browser behavior from `0.3.0` remains available.
 
 ## 0.3.0 user-facing highlights
 
