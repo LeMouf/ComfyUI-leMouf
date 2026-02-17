@@ -8,6 +8,7 @@ import { createHomeScreen } from "./ui/home_screen.js";
 import { createRunScreen } from "./ui/run_screen.js";
 import { clearSong2DawStudioView, renderSong2DawStudioView } from "./ui/song2daw/studio_view.js";
 import { clearLoopCompositionStudioView, renderLoopCompositionStudioView } from "./ui/loop_composition_view.js";
+import { setButtonIcon } from "./ui/icons.js";
 
 let lastApiError = "";
 
@@ -142,19 +143,77 @@ function hashString(input) {
   return (hash >>> 0).toString(16);
 }
 
-function signatureFromPrompt(prompt) {
+const VOLATILE_PROMPT_INPUT_KEYS = new Set(["loop_id", "prompt_id"]);
+
+function canonicalizePromptValue(value, path = []) {
+  if (value === null) return null;
+  if (Array.isArray(value)) {
+    return value.map((item, index) => canonicalizePromptValue(item, [...path, String(index)]));
+  }
+  const valueType = typeof value;
+  if (valueType === "undefined" || valueType === "function" || valueType === "symbol") {
+    return null;
+  }
+  if (valueType === "number") {
+    return Number.isFinite(value) ? value : String(value);
+  }
+  if (valueType === "string" || valueType === "boolean") {
+    return value;
+  }
+  if (valueType !== "object") {
+    return String(value);
+  }
+
+  const isInputsObject = path.length >= 1 && path[path.length - 1] === "inputs";
+  const keys = Object.keys(value).sort((a, b) => a.localeCompare(b));
+  const result = {};
+  for (const key of keys) {
+    if (isInputsObject && VOLATILE_PROMPT_INPUT_KEYS.has(String(key).toLowerCase())) {
+      result[key] = "__volatile__";
+      continue;
+    }
+    result[key] = canonicalizePromptValue(value[key], [...path, key]);
+  }
+  return result;
+}
+
+function canonicalPromptString(prompt) {
   if (!prompt || typeof prompt !== "object") return null;
   try {
-    const keys = Object.keys(prompt);
-    let signature = `${keys.length}`;
-    for (const key of keys) {
-      const node = prompt[key];
-      signature += `|${key}:${node?.class_type || node?.type || ""}`;
+    const nodeIds = Object.keys(prompt).sort((a, b) => {
+      const na = Number(a);
+      const nb = Number(b);
+      if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) return na - nb;
+      return String(a).localeCompare(String(b));
+    });
+    const normalized = {};
+    for (const nodeId of nodeIds) {
+      normalized[nodeId] = canonicalizePromptValue(prompt[nodeId], [String(nodeId)]);
     }
-    return hashString(signature);
+    return JSON.stringify(normalized);
   } catch {
     return null;
   }
+}
+
+async function sha256Hex(input) {
+  if (!input) return null;
+  try {
+    const cryptoObj = globalThis?.crypto;
+    if (!cryptoObj?.subtle) return hashString(input);
+    const encoded = new TextEncoder().encode(input);
+    const digest = await cryptoObj.subtle.digest("SHA-256", encoded);
+    const bytes = new Uint8Array(digest);
+    return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return hashString(input);
+  }
+}
+
+async function promptHashFromPrompt(prompt) {
+  const canonical = canonicalPromptString(prompt);
+  if (!canonical) return null;
+  return sha256Hex(canonical);
 }
 
 function extractTypesFromPrompt(prompt) {
@@ -173,6 +232,103 @@ function hasType(types, needle) {
   return types.some((value) => value === needle || value.includes(needle));
 }
 
+function inferCompositionResourceKind(value) {
+  const text = String(value || "").trim().toLowerCase();
+  if (!text) return "image";
+  if (text === "image" || text === "audio" || text === "video") return text;
+  if (text.startsWith("image/")) return "image";
+  if (text.startsWith("audio/")) return "audio";
+  if (text.startsWith("video/")) return "video";
+  const noQuery = text.split("?", 1)[0];
+  const ext = noQuery.includes(".") ? noQuery.slice(noQuery.lastIndexOf(".")) : "";
+  const imageExt = new Set([".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"]);
+  const audioExt = new Set([".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac"]);
+  const videoExt = new Set([".mp4", ".webm", ".mov", ".mkv", ".avi"]);
+  if (imageExt.has(ext)) return "image";
+  if (audioExt.has(ext)) return "audio";
+  if (videoExt.has(ext)) return "video";
+  return "image";
+}
+
+function parseCompositionResourcesInput(rawResources) {
+  const sourceText = String(rawResources || "").trim();
+  if (!sourceText) return [];
+  let parsed = null;
+  try {
+    parsed = JSON.parse(sourceText);
+  } catch {
+    return [];
+  }
+  const items = Array.isArray(parsed)
+    ? parsed
+    : (Array.isArray(parsed?.resources) ? parsed.resources : []);
+  if (!Array.isArray(items)) return [];
+  const normalized = [];
+  for (let i = 0; i < items.length; i += 1) {
+    const value = items[i];
+    if (typeof value === "string") {
+      const src = String(value || "").trim();
+      if (!src) continue;
+      const kind = inferCompositionResourceKind(src);
+      const label = src.split(/[\\/]/).pop() || `${kind} ${i + 1}`;
+      normalized.push({
+        id: `input:${kind}:${i + 1}`,
+        kind,
+        cycle: -1,
+        retry: 0,
+        index: i,
+        source: "pipeline_input",
+        sectionId: "input_resources",
+        sectionOrder: -1000,
+        sectionLabel: "Input resources",
+        src,
+        previewSrc: kind === "image" ? src : "",
+        label,
+        meta: {},
+        videoAudioState: kind === "video" ? "unknown" : undefined,
+      });
+      continue;
+    }
+    if (!value || typeof value !== "object") continue;
+    const kind = inferCompositionResourceKind(
+      value.kind || value.resource_type || value.mime || value.content_type || value.uri || value.src || value.path || value.filename || ""
+    );
+    const filename = String(value.filename || "").trim();
+    const subfolder = String(value.subfolder || "").trim();
+    const storageType = String(value.type || "").trim();
+    const comfySrc = filename ? buildImageSrc({ filename, subfolder, type: storageType || "output" }, false) : "";
+    const previewSrc = filename && kind === "image"
+      ? (buildImageSrc({ filename, subfolder, type: storageType || "output" }, true) || comfySrc)
+      : "";
+    const src = String(value.src || value.uri || value.path || comfySrc || "").trim();
+    if (!src) continue;
+    const label = String(value.label || value.name || filename || `${kind} ${i + 1}`).trim() || `${kind} ${i + 1}`;
+    const meta = {};
+    const numericKeys = ["duration_s", "fps", "sample_rate", "channels", "size_bytes", "width", "height"];
+    for (const key of numericKeys) {
+      const numeric = Number(value[key]);
+      if (Number.isFinite(numeric)) meta[key] = numeric;
+    }
+    normalized.push({
+      id: String(value.id || `input:${kind}:${i + 1}`),
+      kind,
+      cycle: -1,
+      retry: 0,
+      index: i,
+      source: String(value.source || "pipeline_input"),
+      sectionId: String(value.section_id || "input_resources"),
+      sectionOrder: Number.isFinite(Number(value.section_order)) ? Number(value.section_order) : -1000,
+      sectionLabel: String(value.section_label || "Input resources"),
+      src,
+      previewSrc: kind === "image" ? (String(value.preview_src || previewSrc || src)) : "",
+      label,
+      meta,
+      videoAudioState: kind === "video" ? "unknown" : undefined,
+    });
+  }
+  return normalized;
+}
+
 function extractPipelineSteps(prompt) {
   if (!prompt || typeof prompt !== "object") return [];
   const steps = [];
@@ -185,8 +341,15 @@ function extractPipelineSteps(prompt) {
     const fallbackIndex = Number.isFinite(rawIndex) ? rawIndex : Number(nodeId);
     const role = String(inputs.role || "");
     const workflow = String(inputs.workflow || "");
+    const resourcesJson = String(inputs.resources_json || "");
     const id = String(nodeId);
-    steps.push({ id, role, workflow, stepIndex: Number.isFinite(rawIndex) ? rawIndex : fallbackIndex });
+    steps.push({
+      id,
+      role,
+      workflow,
+      resourcesJson,
+      stepIndex: Number.isFinite(rawIndex) ? rawIndex : fallbackIndex,
+    });
     const flow = inputs.flow;
     if (Array.isArray(flow) && flow.length >= 1) {
       const src = String(flow[0]);
@@ -253,6 +416,7 @@ function extractPipelineStepsFromWorkflowGraph(workflow) {
     const widgets = Array.isArray(node?.widgets_values) ? node.widgets_values : [];
     const role = String(widgets?.[0] ?? "");
     const workflowName = String(widgets?.[1] ?? "");
+    const resourcesJson = String(widgets?.[2] ?? "");
     const rawOrder = Number(node?.order);
     const rawId = Number(node?.id);
     const stepIndex = Number.isFinite(rawOrder)
@@ -262,6 +426,7 @@ function extractPipelineStepsFromWorkflowGraph(workflow) {
       id: nodeId,
       role,
       workflow: workflowName,
+      resourcesJson,
       stepIndex,
     });
 
@@ -484,6 +649,12 @@ const WORKFLOW_PROFILE_ADAPTERS = Object.freeze({
     ui_contract_major: 1,
     default_profile_version: "0.1.0",
   }),
+  tool: Object.freeze({
+    id: "tool",
+    label: "Tooling",
+    ui_contract_major: 1,
+    default_profile_version: "0.1.0",
+  }),
   song2daw: Object.freeze({
     id: "song2daw",
     label: "song2daw",
@@ -499,6 +670,33 @@ function normalizeProfileId(value) {
     .replaceAll("-", "_")
     .replaceAll(" ", "_");
   return text;
+}
+
+function stableColorSeed(value) {
+  const text = String(value || "workflow").trim().toLowerCase();
+  let hash = 2166136261 >>> 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function workflowBadgePalette(profile) {
+  const profileId = normalizeProfileId(profile?.profile_id || "workflow");
+  const seed = stableColorSeed(profileId || "workflow");
+  const hue = seed % 360;
+  const sat = 52 + ((seed >>> 5) % 16); // 52..67
+  const bgLight = 87 + ((seed >>> 9) % 6); // 87..92
+  const borderLight = 40 + ((seed >>> 13) % 12); // 40..51
+  const textLight = 18 + ((seed >>> 17) % 10); // 18..27
+  const borderSat = Math.min(86, sat + 14);
+  const textSat = Math.min(90, sat + 18);
+  return {
+    bg: `hsl(${hue} ${sat}% ${bgLight}%)`,
+    border: `hsl(${hue} ${borderSat}% ${borderLight}%)`,
+    text: `hsl(${hue} ${textSat}% ${textLight}%)`,
+  };
 }
 
 function normalizeSemver(value, fallback) {
@@ -647,6 +845,11 @@ function formatWorkflowProfileStatus(profile) {
   return `${base}${source}`;
 }
 
+function isLoopLikeAdapterId(adapterId) {
+  const id = String(adapterId || "").toLowerCase();
+  return id === "generic_loop" || id === "tool";
+}
+
 app.registerExtension({
   name: "lemouf.loop",
   async setup() {
@@ -760,7 +963,7 @@ app.registerExtension({
       status: "idle",
       loopPercent: null,
     };
-    const PANEL_VERSION = "0.3.1";
+    const PANEL_VERSION = "0.3.2";
     let panel = null;
     let headerBackBtn = null;
     let headerMenu = null;
@@ -781,17 +984,21 @@ app.registerExtension({
     let song2dawDetailSection = null;
     let song2dawDetailLayout = null;
     let song2dawRunSummaryPanel = null;
+    let song2dawRunSummaryTitle = null;
     let song2dawDetailHeaderTitle = null;
     let song2dawDetailHeaderMeta = null;
     let song2dawDetailPrevBtn = null;
     let song2dawDetailNextBtn = null;
     let song2dawDetailBalanceRaf = 0;
+    let detailScreenMode = "song2daw";
+    let compositionStepMonitorHost = null;
     let pipelineActiveStepId = null;
     let pipelineSelectedStepId = null;
     const pipelineState = {
       steps: [],
       lastRun: null,
     };
+    const compositionResourcesByLoop = new Map();
     let song2dawRuns = [];
     let currentSong2DawRun = null;
     let selectedSong2DawStepIndex = 0;
@@ -1525,8 +1732,11 @@ app.registerExtension({
       const itemIsPending = itemStatusLower === "queued" || itemStatusLower === "running";
       const explicitPending =
         Boolean(String(lightboxState.pendingReason || "").trim()) &&
-        Number(lightboxState.pendingCycleIndex) === Number(lightboxState.cycleIndex);
-      const pendingRetry = Number(lightboxState.pendingRetryIndex);
+        hasFiniteCycleIndex(lightboxState.pendingCycleIndex) &&
+        Number(normalizeCycleIndex(lightboxState.pendingCycleIndex)) === Number(lightboxState.cycleIndex);
+      const pendingRetry = hasFiniteCycleIndex(lightboxState.pendingRetryIndex)
+        ? Number(Math.round(Number(lightboxState.pendingRetryIndex)))
+        : null;
       const pendingRetryVisible =
         Number.isFinite(pendingRetry) &&
         hasItems &&
@@ -1643,9 +1853,14 @@ app.registerExtension({
 
       const cycleHasPending = lightboxCycleHasPending(inCycle);
       let cyclePendingRetry = null;
-      if (Number(lightboxState.pendingCycleIndex) === cycleIndex) {
-        const pendingRetry = Number(lightboxState.pendingRetryIndex);
-        if (Number.isFinite(pendingRetry)) cyclePendingRetry = pendingRetry;
+      if (
+        hasFiniteCycleIndex(lightboxState.pendingCycleIndex) &&
+        Number(normalizeCycleIndex(lightboxState.pendingCycleIndex)) === cycleIndex
+      ) {
+        const pendingRetry = hasFiniteCycleIndex(lightboxState.pendingRetryIndex)
+          ? Number(Math.round(Number(lightboxState.pendingRetryIndex)))
+          : null;
+        if (pendingRetry !== null) cyclePendingRetry = pendingRetry;
         const pendingEntry = Number.isFinite(pendingRetry)
           ? inCycle.find((entry) => Number(entry?.retry_index) === pendingRetry)
           : null;
@@ -1766,8 +1981,12 @@ app.registerExtension({
     };
 
     const lightboxQueueGenerationSkeleton = (cycleIndex, retryIndex, reason = "replay") => {
-      lightboxState.pendingCycleIndex = Number(cycleIndex);
-      lightboxState.pendingRetryIndex = Number(retryIndex);
+      lightboxState.pendingCycleIndex = hasFiniteCycleIndex(cycleIndex)
+        ? Number(normalizeCycleIndex(cycleIndex))
+        : null;
+      lightboxState.pendingRetryIndex = hasFiniteCycleIndex(retryIndex)
+        ? Number(Math.max(0, Math.round(Number(retryIndex))))
+        : null;
       lightboxState.pendingReason = String(reason || "replay");
       lightboxRender();
       lightboxStartPolling();
@@ -1783,10 +2002,10 @@ app.registerExtension({
       await decideEntry(item.cycleIndex, item.retryIndex, "approve", item.entryStatus || "");
       const after = currentLoopDetail || await refreshLoopDetail({ quiet: true });
       if (after) {
-        const manifest = Array.isArray(after?.manifest) ? after.manifest : [];
-        const cycleEntries = manifest.filter((entry) => Number(entry?.cycle_index) === Number(item.cycleIndex));
-        const cycleCompleted = cycleEntries.some(entryIsApproved);
-        if (cycleCompleted) {
+        const runtimeStatus = String(after?.status || "").toLowerCase();
+        const nextIncomplete = findFirstIncompleteCycleIndex(after);
+        const runComplete = runtimeStatus === "complete" || nextIncomplete === null;
+        if (runComplete) {
           lightboxState.actionBusy = false;
           closeLightbox();
           return;
@@ -1901,6 +2120,98 @@ app.registerExtension({
       Array.isArray(currentSong2DawRun?.summary?.steps) &&
       currentSong2DawRun.summary.steps.length > 0;
 
+    const restoreSong2DawDetailLayout = () => {
+      detailScreenMode = "song2daw";
+      if (song2dawStepTitle) {
+        song2dawStepTitle.textContent = "Step outputs (JSON)";
+      }
+      if (song2dawStepPanel && !song2dawStepPanel.contains(song2dawStepDetail)) {
+        song2dawStepPanel.replaceChildren(song2dawStepTitle, song2dawStepDetail);
+      }
+      if (song2dawRunSummaryTitle) {
+        song2dawRunSummaryTitle.textContent = "Run summary";
+      }
+      if (song2dawDetailPrevBtn) {
+        song2dawDetailPrevBtn.textContent = "Prev step";
+      }
+      if (song2dawDetailNextBtn) {
+        song2dawDetailNextBtn.textContent = "Next step";
+      }
+      if (compositionStepMonitorHost) {
+        compositionStepMonitorHost.replaceChildren();
+      }
+    };
+
+    const formatCompositionStepSummary = (step) => {
+      const lines = [];
+      const role = String(step?.role || "composition");
+      lines.push(`step: ${role}`);
+      lines.push(`workflow: ${String(step?.workflow || "(none)")}`);
+      if (pipelineState.lastRun) {
+        const runEntry = pipelineState.lastRun.steps?.[step.id] || {};
+        const runStatus = String(runEntry?.status || "pending");
+        lines.push(`status: ${runStatus}`);
+        if (runEntry?.startedAt) {
+          lines.push(`started: ${new Date(Number(runEntry.startedAt)).toLocaleString()}`);
+        }
+        if (runEntry?.endedAt) {
+          lines.push(`ended: ${new Date(Number(runEntry.endedAt)).toLocaleString()}`);
+        }
+      }
+      const detail = currentLoopDetail && typeof currentLoopDetail === "object" ? currentLoopDetail : null;
+      if (detail) {
+        const loopId = String(detail?.loop_id || currentLoopId || "");
+        const status = String(detail?.status || "unknown");
+        const total = Number(detail?.total_cycles || 0);
+        const current = Number(detail?.current_cycle || 0);
+        const retry = Number(detail?.current_retry || 0);
+        lines.push("");
+        lines.push(`loop_id: ${loopId || "(none)"}`);
+        lines.push(`loop_status: ${status}`);
+        lines.push(`cycle: ${Number.isFinite(current) ? current : 0}/${Number.isFinite(total) ? total : 0}`);
+        lines.push(`retry: r${Number.isFinite(retry) ? retry : 0}`);
+      }
+      return lines.join("\n");
+    };
+
+    const openToolCompositionStepDetailScreen = async (step) => {
+      detailScreenMode = "tool_composition";
+      if (!compositionStepMonitorHost) {
+        compositionStepMonitorHost = el("div", { class: "lemouf-tool-step-monitor-host" });
+      }
+      if (song2dawStepTitle) song2dawStepTitle.textContent = "Video monitor";
+      if (song2dawStepPanel) {
+        song2dawStepPanel.replaceChildren(song2dawStepTitle, compositionStepMonitorHost);
+      }
+      if (song2dawRunSummaryTitle) {
+        song2dawRunSummaryTitle.textContent = "Step summary";
+      }
+      if (song2dawDetail) {
+        song2dawDetail.textContent = formatCompositionStepSummary(step);
+        song2dawDetail.scrollTop = 0;
+      }
+      if (song2dawDetailHeaderTitle) {
+        const roleName = String(step?.role || "Composition");
+        song2dawDetailHeaderTitle.textContent = `${roleName} step`;
+      }
+      if (song2dawDetailHeaderMeta) {
+        const steps = Array.isArray(pipelineState.steps) ? pipelineState.steps : [];
+        const index = steps.findIndex((entry) => entry && entry.id === step?.id);
+        const total = steps.length;
+        song2dawDetailHeaderMeta.textContent = index >= 0 ? `Step ${index + 1}/${total}` : "Step";
+        if (song2dawDetailPrevBtn) song2dawDetailPrevBtn.disabled = index <= 0;
+        if (song2dawDetailNextBtn) song2dawDetailNextBtn.disabled = index < 0 || index >= total - 1;
+      }
+      setScreen("song2daw_detail");
+      await openLoopEditPanel();
+      if (currentLoopDetail) {
+        renderLoopCompositionStudio(currentLoopDetail);
+      } else {
+        renderLoopCompositionStudio(buildMinimalCompositionDetail());
+      }
+      scheduleSong2DawDetailBalance();
+    };
+
     const updateSong2DawDetailHeader = () => {
       const steps = Array.isArray(currentSong2DawRun?.summary?.steps) ? currentSong2DawRun.summary.steps : [];
       const total = steps.length;
@@ -1934,7 +2245,7 @@ app.registerExtension({
       Math.max(minValue, Math.min(maxValue, value));
 
     const balanceSong2DawDetailPanels = () => {
-      if (!song2dawDetailLayout || !song2dawStepPanel || !song2dawRunSummaryPanel || !song2dawStepDetail || !song2dawDetail) {
+      if (!song2dawDetailLayout || !song2dawStepPanel || !song2dawRunSummaryPanel || !song2dawDetail) {
         return;
       }
       if (currentScreen !== "song2daw_detail") return;
@@ -1959,9 +2270,14 @@ app.registerExtension({
         return;
       }
 
-      const contentChrome = Math.max(28, song2dawStepPanel.offsetHeight - song2dawStepDetail.clientHeight);
+      const contentNode = detailScreenMode === "tool_composition"
+        ? compositionStepMonitorHost
+        : song2dawStepDetail;
+      const contentClientHeight = Math.max(0, Number(contentNode?.clientHeight || 0));
+      const contentScrollHeight = Math.max(0, Number(contentNode?.scrollHeight || 0));
+      const contentChrome = Math.max(28, song2dawStepPanel.offsetHeight - contentClientHeight);
       const summaryChrome = Math.max(28, song2dawRunSummaryPanel.offsetHeight - song2dawDetail.clientHeight);
-      const contentNeed = Math.max(minPanel, Math.ceil(song2dawStepDetail.scrollHeight + contentChrome));
+      const contentNeed = Math.max(minPanel, Math.ceil(contentScrollHeight + contentChrome));
       const summaryNeed = Math.max(minPanel, Math.ceil(song2dawDetail.scrollHeight + summaryChrome));
       const half = Math.floor(available / 2);
 
@@ -2013,6 +2329,19 @@ app.registerExtension({
     };
 
     const stepSong2DawDetailBy = (delta) => {
+      if (detailScreenMode === "tool_composition") {
+        const steps = Array.isArray(pipelineState.steps) ? pipelineState.steps : [];
+        if (!steps.length) return;
+        const currentIndex = Math.max(
+          0,
+          steps.findIndex((entry) => entry && entry.id === pipelineSelectedStepId)
+        );
+        const next = Math.max(0, Math.min(steps.length - 1, currentIndex + delta));
+        const nextStep = steps[next];
+        if (!nextStep || nextStep.id === pipelineSelectedStepId) return;
+        void navigateToPipelineStep(nextStep);
+        return;
+      }
       const steps = Array.isArray(currentSong2DawRun?.summary?.steps) ? currentSong2DawRun.summary.steps : [];
       if (!steps.length) return;
       const next = Math.max(0, Math.min(steps.length - 1, selectedSong2DawStepIndex + delta));
@@ -2028,12 +2357,14 @@ app.registerExtension({
         setSong2DawStatus("No step detail available.");
         return;
       }
+      restoreSong2DawDetailLayout();
       updateSong2DawDetailHeader();
       setScreen("song2daw_detail");
       scheduleSong2DawDetailBalance();
     };
 
     const ensureSong2DawHomeScreen = () => {
+      restoreSong2DawDetailLayout();
       if (currentScreen === "song2daw_detail") setScreen("home");
     };
 
@@ -2057,21 +2388,22 @@ app.registerExtension({
     };
 
     const workflowProfileIcon = (profile) => {
-      const p = profile && typeof profile === "object" ? profile : null;
-      const profileId = String(p?.profile_id || "").toLowerCase();
-      const kind = String(p?.workflow_kind || "master").toLowerCase();
-      if (profileId === "song2daw") return kind === "master" ? "[S2D*]" : "[S2D]";
-      if (profileId === "generic_loop") return kind === "master" ? "[LOOP*]" : "[LOOP]";
-      return kind === "master" ? "[WF*]" : "[WF]";
-    };
+    const p = profile && typeof profile === "object" ? profile : null;
+    const profileId = String(p?.profile_id || "").toLowerCase();
+    const kind = String(p?.workflow_kind || "master").toLowerCase();
+    if (profileId === "song2daw") return kind === "master" ? "[S2D*]" : "[S2D]";
+    if (profileId === "generic_loop") return kind === "master" ? "[LOOP*]" : "[LOOP]";
+    if (profileId === "tool") return kind === "master" ? "[TOOL*]" : "[TOOL]";
+    return kind === "master" ? "[WF*]" : "[WF]";
+  };
 
     const setPipelineGraphStatus = (msg) => {
       pipelineGraphView?.setStatus(msg || "");
     };
 
     const syncPipelineNavVisibility = () => {
-      const isGenericLoopProfile = currentWorkflowProfile?.adapter_id === "generic_loop";
-      const showPipelineGraph = pipelineLoadedState && isGenericLoopProfile;
+      const isLoopLikeProfile = isLoopLikeAdapterId(currentWorkflowProfile?.adapter_id);
+      const showPipelineGraph = pipelineLoadedState && isLoopLikeProfile;
       const hasLoadedSelection =
         Boolean(currentWorkflowName) &&
         String(currentWorkflowName) === String(pipelineSelect?.value || "");
@@ -2217,7 +2549,7 @@ app.registerExtension({
       const selectedName = String(selectedPipelineWorkflowName || pipelineSelect?.value || "").trim();
       if (!selectedName) return false;
       const profile = profileForWorkflowName(selectedName, "catalog_hydrate");
-      if (String(profile?.adapter_id || "") !== "generic_loop") return false;
+      if (!isLoopLikeAdapterId(profile?.adapter_id)) return false;
       pipelineHydrationInFlight = true;
       try {
         const res = await apiPost("/lemouf/workflows/load", { name: selectedName });
@@ -2286,6 +2618,9 @@ app.registerExtension({
         pendingScreen = name;
         return;
       }
+      if (name !== "song2daw_detail" && detailScreenMode === "tool_composition") {
+        restoreSong2DawDetailLayout();
+      }
       if (preStartSection) preStartSection.style.display = name === "home" ? "" : "none";
       if (song2dawDetailSection) song2dawDetailSection.style.display = name === "song2daw_detail" ? "" : "none";
       if (payloadSection) payloadSection.style.display = name === "payload" ? "" : "none";
@@ -2347,6 +2682,7 @@ app.registerExtension({
         pipelineActiveStepId = null;
         pipelineSelectedStepId = null;
         pipelineWorkflowCache.clear();
+        compositionResourcesByLoop.clear();
         setPipelineLoaded(false);
         pipelineGraphView?.root?.replaceChildren();
         setPipelineGraphStatus("Pipeline graph will appear here once loaded.");
@@ -2372,8 +2708,13 @@ app.registerExtension({
           ? pipelineWorkflowProfiles[name]
           : null;
         const profile = finalizeWorkflowProfile(rawProfile, "catalog");
+        const palette = workflowBadgePalette(profile);
+        const icon = el("span", { class: "lemouf-workflow-item-icon", text: workflowProfileBadge(profile) });
+        icon.style.setProperty("--lemouf-wf-badge-bg", palette.bg);
+        icon.style.setProperty("--lemouf-wf-badge-border", palette.border);
+        icon.style.setProperty("--lemouf-wf-badge-text", palette.text);
         const item = el("button", { class: "lemouf-workflow-item", type: "button" }, [
-          el("span", { class: "lemouf-workflow-item-icon", text: workflowProfileBadge(profile) }),
+          icon,
           el("span", { class: "lemouf-workflow-item-name", text: name }),
         ]);
         item.classList.toggle("is-selected", name === selectedName);
@@ -2584,14 +2925,35 @@ app.registerExtension({
 
     const renderLoopCompositionStudio = (detail) => {
       if (!loopCompositionBody) return;
+      const useSidebarMonitorHost =
+        detailScreenMode === "tool_composition" &&
+        currentScreen === "song2daw_detail" &&
+        compositionStepMonitorHost &&
+        typeof compositionStepMonitorHost.appendChild === "function";
+      const effectiveDetail = (() => {
+        const base = detail && typeof detail === "object" ? detail : null;
+        if (!base) return detail;
+        const loopId = String(base.loop_id || currentLoopId || "");
+        if (!loopId) return base;
+        const resources = compositionResourcesByLoop.get(loopId);
+        if (!Array.isArray(resources) || !resources.length) return base;
+        return {
+          ...base,
+          composition_resources: resources.map((resource) => ({
+            ...resource,
+            meta: resource?.meta && typeof resource.meta === "object" ? { ...resource.meta } : {},
+          })),
+        };
+      })();
       const compositionState = getCompositionPipelineState();
       const gateStatus = String(compositionState?.runEntry?.status || "").toLowerCase();
       const isGatePending = gateStatus === "waiting" || gateStatus === "running";
       renderLoopCompositionStudioView({
-        detail,
+        detail: effectiveDetail,
         panelBody: loopCompositionBody,
         dockExpanded: song2dawDockExpanded,
         onOpenAsset: (src, context = null) => openLightbox(src, context),
+        monitorHost: useSidebarMonitorHost ? compositionStepMonitorHost : null,
         compositionGate: {
           enabled: Boolean(compositionState && isGatePending),
           status: gateStatus || "idle",
@@ -2600,6 +2962,14 @@ app.registerExtension({
           },
         },
       });
+      if (useSidebarMonitorHost && song2dawDetail) {
+        const step = Array.isArray(pipelineState.steps)
+          ? (pipelineState.steps.find((entry) => entry && entry.id === pipelineSelectedStepId) || null)
+          : null;
+        if (step) {
+          song2dawDetail.textContent = formatCompositionStepSummary(step);
+        }
+      }
     };
     const buildMinimalCompositionDetail = () => ({
       loop_id: selectedPipelineWorkflowName
@@ -2610,6 +2980,7 @@ app.registerExtension({
       current_cycle: 0,
       current_retry: 0,
       manifest: [],
+      composition_resources: [],
     });
 
     const setDockContentMode = (mode) => {
@@ -3051,7 +3422,10 @@ app.registerExtension({
         : null;
       const selectedProfile = finalizeWorkflowProfile(selectedRawProfile, "catalog");
       if (!silent) {
-        if (selectedProfile.adapter_id === "generic_loop" && pipelineState.steps.length) {
+        if (
+          (selectedProfile.adapter_id === "generic_loop" || selectedProfile.adapter_id === "tool") &&
+          pipelineState.steps.length
+        ) {
           setPipelineStatus("Pipeline loaded. Ready to run.");
         } else {
           setPipelineStatus("Workflow loaded.");
@@ -3068,7 +3442,7 @@ app.registerExtension({
         ? pipelineWorkflowProfiles[selectedName]
         : null;
       const selectedProfile = finalizeWorkflowProfile(selectedRawProfile, "catalog");
-      if (selectedProfile.adapter_id === "generic_loop") {
+      if (selectedProfile.adapter_id === "generic_loop" || selectedProfile.adapter_id === "tool") {
         setPipelineStatus("Running pipeline orchestration...");
         await validateAndStart();
         return;
@@ -3117,12 +3491,17 @@ app.registerExtension({
       const wf = res.workflow;
       const nodes = Array.isArray(wf?.nodes) ? wf.nodes : [];
       const types = nodes.map((n) => String(n?.type || n?.class_type || ""));
+      const promptLike =
+        wf?.output ??
+        wf?.prompt ??
+        (wf && typeof wf === "object" ? wf : null);
       const info = {
         ok: true,
         hasLoopReturn: types.some((t) => t.includes("LoopReturn")),
         hasLoopMap: types.some((t) => t.includes("LoopMap")),
         hasLoopPayload: types.some((t) => t.includes("LoopPayload")),
         hasPipeline: types.some((t) => t.includes("LoopPipelineStep")),
+        promptHash: await promptHashFromPrompt(promptLike),
       };
       pipelineWorkflowCache.set(name, info);
       return info;
@@ -3156,7 +3535,8 @@ app.registerExtension({
     const validatePipelineSteps = async (steps) => {
       if (!steps || steps.length === 0) return false;
       const executeStep = steps.find((s) => s.role === "execute");
-      if (!executeStep) return false;
+      const compositionStep = steps.find((s) => String(s?.role || "").toLowerCase() === "composition");
+      if (!executeStep && !compositionStep) return false;
       for (const step of steps) {
         const role = String(step?.role || "").toLowerCase();
         const workflow = String(step?.workflow || "");
@@ -3174,6 +3554,144 @@ app.registerExtension({
       const entry = pipelineState.lastRun.steps[id] || {};
       pipelineState.lastRun.steps[id] = { ...entry, status, ...meta };
       persistPipelineRuntimeState();
+    };
+
+    const normalizeWorkflowTabName = (value) => {
+      const text = String(value || "").trim().replaceAll("\\", "/");
+      if (!text) return "";
+      const parts = text.split("/").filter(Boolean);
+      return String(parts[parts.length - 1] || text).toLowerCase();
+    };
+
+    const getCurrentPromptHash = async () => {
+      const payload = await getCurrentPromptPayload();
+      const prompt =
+        payload?.output ??
+        payload?.prompt ??
+        (payload && typeof payload === "object" ? payload : null);
+      return String(await promptHashFromPrompt(prompt) || "");
+    };
+
+    const focusWorkflowTabByDom = (workflowName) => {
+      const targetName = normalizeWorkflowTabName(workflowName);
+      if (!targetName) return false;
+      const candidates = Array.from(
+        document.querySelectorAll(
+          "button, [role='tab'], .tab, .comfy-tab, .comfyui-tab, .workflow-tab"
+        )
+      );
+      const target = candidates.find((element) => {
+        const text = normalizeWorkflowTabName(element?.textContent || "");
+        return Boolean(text) && text.includes(targetName);
+      });
+      if (!target) return false;
+      try {
+        target.click();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    const tryFocusExistingWorkflowTab = async (workflowName) => {
+      const targetName = normalizeWorkflowTabName(workflowName);
+      if (!targetName) return false;
+      const comfyApp = getComfyApp();
+      const managers = [
+        comfyApp?.workflowTabs,
+        comfyApp?.tabManager,
+        comfyApp?.workspaceTabs,
+        comfyApp?.workspaceManager,
+      ].filter(Boolean);
+
+      for (const manager of managers) {
+        const tabEntries = Array.isArray(manager?.tabs)
+          ? manager.tabs
+          : (manager?.tabs instanceof Map ? Array.from(manager.tabs.values()) : []);
+        for (const tab of tabEntries) {
+          const tabName = normalizeWorkflowTabName(
+            tab?.name || tab?.title || tab?.label || tab?.path || ""
+          );
+          if (!tabName || !tabName.includes(targetName)) continue;
+          try {
+            if (typeof manager.setActiveTab === "function") manager.setActiveTab(tab.id ?? tab);
+            else if (typeof manager.activateTab === "function") manager.activateTab(tab.id ?? tab);
+            else if (typeof manager.focusTab === "function") manager.focusTab(tab.id ?? tab);
+            else if (typeof manager.selectTab === "function") manager.selectTab(tab.id ?? tab);
+            else if (typeof tab.activate === "function") tab.activate();
+            else if (typeof tab.focus === "function") tab.focus();
+            else continue;
+            return true;
+          } catch {}
+        }
+      }
+
+      return focusWorkflowTabByDom(workflowName);
+    };
+
+    const resolveExpectedWorkflowStepForCycle = () => {
+      const steps = Array.isArray(pipelineState.steps) ? pipelineState.steps : [];
+      if (!steps.length) return null;
+      const activeId = String(pipelineActiveStepId || "");
+      if (activeId) {
+        const activeStep = steps.find((step) =>
+          step &&
+          String(step.id) === activeId &&
+          String(step.workflow || "") &&
+          String(step.workflow || "") !== "(none)"
+        );
+        if (activeStep) return activeStep;
+      }
+      const executeStep = steps.find((step) =>
+        step &&
+        String(step.role || "").toLowerCase() === "execute" &&
+        String(step.workflow || "") &&
+        String(step.workflow || "") !== "(none)"
+      );
+      return executeStep || null;
+    };
+
+    const ensureExpectedWorkflowForCycleRun = async () => {
+      const expectedStep = resolveExpectedWorkflowStepForCycle();
+      if (!expectedStep) return true;
+      const expectedWorkflow = String(expectedStep.workflow || "");
+      if (!expectedWorkflow || expectedWorkflow === "(none)") return true;
+
+      const expectedInfo = await getWorkflowInfo(expectedWorkflow);
+      const expectedHash = String(expectedInfo?.promptHash || "");
+      let currentHash = await getCurrentPromptHash();
+
+      const sameByHash =
+        Boolean(expectedHash) &&
+        Boolean(currentHash) &&
+        expectedHash === currentHash;
+      const sameByName =
+        !workflowDirty &&
+        String(currentWorkflowName || "") === expectedWorkflow;
+
+      if (sameByHash || sameByName) return true;
+
+      const focused = await tryFocusExistingWorkflowTab(expectedWorkflow);
+      if (focused) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        currentHash = await getCurrentPromptHash();
+        const focusedMatch =
+          Boolean(expectedHash) &&
+          Boolean(currentHash) &&
+          expectedHash === currentHash;
+        if (focusedMatch) {
+          setStatus(`Focused expected workflow tab: ${expectedWorkflow}`);
+          return true;
+        }
+      }
+
+      setStatus(`Workflow mismatch detected. Loading expected workflow: ${expectedWorkflow}...`);
+      const loaded = await loadWorkflowByName(expectedWorkflow, { force: true, silent: true });
+      if (!loaded) {
+        setStatus(lastApiError || `Failed to load expected workflow: ${expectedWorkflow}`);
+        return false;
+      }
+      return true;
     };
 
     const waitForManifest = async (predicate, { timeoutMs = 120000 } = {}) => {
@@ -3243,8 +3761,8 @@ app.registerExtension({
           }
         }
         await renderPipelineGraph(pipelineState.steps.length ? pipelineState.steps : [step]);
-        await openLoopEditPanel();
-        setStatus("Composition studio opened.");
+        await openToolCompositionStepDetailScreen(step);
+        setStatus("Composition step view opened.");
         return;
       }
       if (!step.workflow || step.workflow === "(none)") return;
@@ -3318,7 +3836,10 @@ app.registerExtension({
 
     const updateSong2DawDockToggle = () => {
       if (song2dawDockHeaderToggleBtn) {
-        song2dawDockHeaderToggleBtn.textContent = song2dawDockVisible ? "Hide" : "Show";
+        setButtonIcon(song2dawDockHeaderToggleBtn, {
+          icon: song2dawDockVisible ? "eye_off" : "eye",
+          title: song2dawDockVisible ? "Hide studio" : "Show studio",
+        });
         song2dawDockHeaderToggleBtn.classList.toggle("is-active", song2dawDockVisible);
       }
       if (song2dawDockToggleBtn) {
@@ -3331,7 +3852,10 @@ app.registerExtension({
         song2dawDockExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
       }
       if (song2dawDockHeaderExpandBtn) {
-        song2dawDockHeaderExpandBtn.textContent = song2dawDockExpanded ? "Restore" : "Max";
+        setButtonIcon(song2dawDockHeaderExpandBtn, {
+          icon: song2dawDockExpanded ? "panel_restore" : "panel_max",
+          title: song2dawDockExpanded ? "Restore studio size" : "Maximize studio",
+        });
         song2dawDockHeaderExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
       }
     };
@@ -3431,12 +3955,12 @@ app.registerExtension({
       syncPipelineNavVisibility();
       const wantsSong2DawUI = effective.adapter_id === "song2daw" && effective.compatible;
       const wantsLoopCompositionUI =
-        effective.adapter_id === "generic_loop" && effective.compatible && loopCompositionRequested;
+        isLoopLikeAdapterId(effective.adapter_id) && effective.compatible && loopCompositionRequested;
       const wantsAnyDockUI = wantsSong2DawUI || wantsLoopCompositionUI;
       if (song2dawBlock) {
         song2dawBlock.style.display = wantsSong2DawUI ? "" : "none";
       }
-      if (effective.adapter_id !== "generic_loop") {
+      if (!isLoopLikeAdapterId(effective.adapter_id)) {
         loopCompositionRequested = false;
         clearLoopCompositionStudio();
       }
@@ -3534,6 +4058,7 @@ app.registerExtension({
         await refreshLoopDetail();
       } else {
         setCurrentLoopId("");
+        compositionResourcesByLoop.clear();
       }
       setStatus(loops.length ? "Loops refreshed." : "No loops found.");
     };
@@ -3544,6 +4069,13 @@ app.registerExtension({
       if (!quiet) setStatus("Loading loop detail...");
       const data = await apiGet(`/lemouf/loop/${loopId}`);
       if (!data) return;
+      const compositionResources = compositionResourcesByLoop.get(loopId);
+      if (Array.isArray(compositionResources) && compositionResources.length) {
+        data.composition_resources = compositionResources.map((resource) => ({
+          ...resource,
+          meta: resource?.meta && typeof resource.meta === "object" ? { ...resource.meta } : {},
+        }));
+      }
       currentLoopDetail = data;
       const hadPipelineSteps = Array.isArray(pipelineState.steps) && pipelineState.steps.length > 0;
       await ensurePipelineRuntimeState(data);
@@ -4171,8 +4703,8 @@ app.registerExtension({
         if (!silent) setStatus("Unable to read current workflow.");
         return;
       }
-      const signature = signatureFromPrompt(prompt);
-      if (!force && signature && signature === lastWorkflowSignature && !workflowDirty) {
+      const promptHash = await promptHashFromPrompt(prompt);
+      if (!force && promptHash && promptHash === lastWorkflowSignature && !workflowDirty) {
         if (!silent) setStatus("Workflow unchanged.");
         return true;
       }
@@ -4188,7 +4720,7 @@ app.registerExtension({
         if (!silent) setStatus(lastApiError || "Set workflow failed (see console).");
         return;
       }
-      lastWorkflowSignature = signature || lastWorkflowSignature;
+      lastWorkflowSignature = promptHash || lastWorkflowSignature;
       workflowDirty = false;
       await refreshLoopDetail();
       if (!silent) setStatus("Workflow loaded ✅");
@@ -4237,6 +4769,8 @@ app.registerExtension({
     const stepCycle = async ({ cycleIndex = null, retryIndex = null, autoInject = false, forceSync = false } = {}) => {
       const loopId = currentLoopId;
       if (!loopId) return;
+      const expectedWorkflowOk = await ensureExpectedWorkflowForCycleRun();
+      if (!expectedWorkflowOk) return;
       pendingRetryCandidate = null;
       setManifestRunButtonVisibility("running");
       manifestBusyGuardUntil = Date.now() + MANIFEST_BUSY_GUARD_MS;
@@ -4525,6 +5059,7 @@ app.registerExtension({
       const loopId = currentLoopId;
       if (loopId) {
         await apiPost("/lemouf/loop/reset", { loop_id: loopId, keep_workflow: true });
+        compositionResourcesByLoop.delete(loopId);
       }
       setCurrentLoopId("");
       retryBadge.textContent = "r0";
@@ -4644,12 +5179,12 @@ app.registerExtension({
           workflow: payload?.workflow,
         });
         applyWorkflowProfile(detectedProfile, { sourceHint: detectedProfile.source || "validation" });
-        const signature = signatureFromPrompt(prompt);
-        if (!force && signature && signature === lastValidationSignature) {
+        const promptHash = await promptHashFromPrompt(prompt);
+        if (!force && promptHash && promptHash === lastValidationSignature) {
           return { ok: !validateBtn.disabled, errors: [], warnings: [] };
         }
         const validation = validateWorkflow(prompt, workflowNodes);
-        lastValidationSignature = signature || lastValidationSignature;
+        lastValidationSignature = promptHash || lastValidationSignature;
         const pipelineSteps = extractPipelineSteps(prompt);
         if (pipelineSteps.length) {
           pipelineState.steps = pipelineSteps;
@@ -4688,7 +5223,8 @@ app.registerExtension({
       const generateStep = steps.find((s) => s.role === "generate");
       const executeStep = steps.find((s) => s.role === "execute");
       const compositionStep = steps.find((s) => String(s?.role || "").toLowerCase() === "composition");
-      if (!executeStep) {
+      const compositionOnly = !executeStep && Boolean(compositionStep);
+      if (!executeStep && !compositionOnly) {
         setStatus("Pipeline missing execute step.");
         return false;
       }
@@ -4701,6 +5237,45 @@ app.registerExtension({
         steps: Object.fromEntries(steps.map((s) => [s.id, { status: "pending" }])),
       };
       await renderPipelineGraph(steps);
+
+      if (compositionOnly && compositionStep) {
+        const desiredCycles = Number(cyclesInput.value || 1);
+        const loopId = await createLoopInternal(Math.max(1, desiredCycles));
+        if (!loopId) return false;
+        setCurrentLoopId(loopId);
+        await refreshLoopDetail();
+
+        const resources = parseCompositionResourcesInput(compositionStep.resourcesJson);
+        compositionResourcesByLoop.set(loopId, resources);
+
+        const now = Date.now();
+        updatePipelineStep(compositionStep.id, "running", { startedAt: now });
+        pipelineActiveStepId = compositionStep.id;
+        pipelineSelectedStepId = compositionStep.id;
+        await renderPipelineGraph(steps);
+
+        loopCompositionRequested = true;
+        setDockContentMode("loop_composition");
+        setSong2DawDockVisible(true, { userIntent: true });
+        setSong2DawDockExpanded(true);
+
+        const detail = currentLoopDetail || await refreshLoopDetail({ quiet: true });
+        if (detail) {
+          renderLoopCompositionStudio(detail);
+        } else {
+          renderLoopCompositionStudio({
+            ...buildMinimalCompositionDetail(),
+            loop_id: loopId,
+            composition_resources: resources,
+          });
+        }
+        setStatus(
+          resources.length
+            ? `Composition studio ready (${resources.length} resource(s)).`
+            : "Composition studio ready."
+        );
+        return true;
+      }
 
       const desiredCycles = Number(cyclesInput.value || 1);
       const loopId = await createLoopInternal(desiredCycles);
@@ -4874,8 +5449,8 @@ app.registerExtension({
 
     const resizer = el("div", { class: "lemouf-loop-resizer" });
     const song2dawDockResizer = el("div", { class: "lemouf-song2daw-dock-resizer" });
-    song2dawDockHeaderExpandBtn = el("button", { class: "lemouf-loop-btn alt", text: "Max", type: "button" });
-    song2dawDockHeaderToggleBtn = el("button", { class: "lemouf-loop-btn alt", text: "Hide", type: "button" });
+    song2dawDockHeaderExpandBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+    song2dawDockHeaderToggleBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
     const song2dawDockHeaderActions = el("div", { class: "lemouf-song2daw-dock-header-actions" }, [
       song2dawDockHeaderExpandBtn,
       song2dawDockHeaderToggleBtn,
@@ -4899,6 +5474,10 @@ app.registerExtension({
     const toggleHeaderMenu = () => headerMenu.classList.toggle("is-open");
     headerBackBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (currentScreen === "song2daw_detail") {
+        setScreen("home");
+        return;
+      }
       const isSong2DawProfile = currentWorkflowProfile?.adapter_id === "song2daw";
       if (isSong2DawProfile) {
         setScreen("home");
@@ -4989,8 +5568,9 @@ app.registerExtension({
     });
     song2dawDetailPrevBtn.addEventListener("click", () => stepSong2DawDetailBy(-1));
     song2dawDetailNextBtn.addEventListener("click", () => stepSong2DawDetailBy(1));
+    song2dawRunSummaryTitle = el("div", { class: "lemouf-song2daw-step-title", text: "Run summary" });
     song2dawRunSummaryPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-song2daw-detail-summary-panel" }, [
-      el("div", { class: "lemouf-song2daw-step-title", text: "Run summary" }),
+      song2dawRunSummaryTitle,
       song2dawDetail,
     ]);
     song2dawDetailSection = el("div", { class: "lemouf-loop-screen lemouf-song2daw-detail-screen", style: "display:none;" }, [
@@ -5154,7 +5734,7 @@ app.registerExtension({
         return;
       }
 
-      if (adapterId === "generic_loop" && currentScreen === "run") {
+      if (isLoopLikeAdapterId(adapterId) && currentScreen === "run") {
         if (isArrowUp || isArrowDown) {
           ev.preventDefault();
           moveManifestCycleSelectionBy(isArrowUp ? -1 : 1).catch(() => {});
@@ -5167,7 +5747,7 @@ app.registerExtension({
         }
       }
 
-      if (adapterId === "generic_loop" && currentScreen === "home" && pipelineLoadedState) {
+      if (isLoopLikeAdapterId(adapterId) && currentScreen === "home" && pipelineLoadedState) {
         if (isArrowUp || isArrowDown) {
           ev.preventDefault();
           stepPipelineSelectionBy(isArrowUp ? -1 : 1).catch(() => {});

@@ -1,4 +1,5 @@
 import { el } from "./dom.js";
+import { setButtonIcon } from "./icons.js";
 
 export function createHomeScreen() {
   const root = el("div", { class: "lemouf-loop-prestart lemouf-loop-screen" });
@@ -12,6 +13,7 @@ export function createHomeScreen() {
   const workflowUseCurrentBtn = el("button", { class: "lemouf-loop-btn alt", text: "Use current WF" });
   const pipelineNav = el("div", { class: "lemouf-loop-block lemouf-home-card lemouf-home-card-compact" });
   const pipelineRefreshBtn = el("button", { class: "lemouf-loop-btn ghost icon", text: "⟳", title: "Refresh list" });
+  setButtonIcon(pipelineRefreshBtn, { icon: "refresh", title: "Refresh workflow list" });
   const pipelineLoadBtn = el("button", { class: "lemouf-loop-btn alt", text: "Load pipeline" });
   const pipelineRunBtn = el("button", { class: "lemouf-loop-btn alt", text: "Run pipeline" });
   const validateBtn = el("button", { class: "lemouf-loop-btn alt", text: "Validate & Start" });

@@ -72,6 +72,25 @@ def test_resolve_workflow_profile_from_workflow_node():
     assert profile["source"] == "workflow_node"
 
 
+def test_resolve_workflow_profile_from_workflow_node_tool_profile():
+    workflow = {
+        "nodes": [
+            {
+                "type": "LeMoufWorkflowProfile",
+                "widgets_values": ["tool", "", "0.1.0", "1.0.0", "master"],
+            }
+        ]
+    }
+
+    profile = nodes._resolve_workflow_profile(workflow=workflow, prompt=None)
+
+    assert profile["profile_id"] == "tool"
+    assert profile["profile_version"] == "0.1.0"
+    assert profile["ui_contract_version"] == "1.0.0"
+    assert profile["workflow_kind"] == "master"
+    assert profile["source"] == "workflow_node"
+
+
 def test_resolve_workflow_profile_from_prompt_node():
     prompt = {
         "13": {

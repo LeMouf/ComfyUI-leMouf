@@ -38,11 +38,34 @@ def test_workflow_profile_node_declares_custom_profile():
     assert workflow_kind == "branch"
 
 
+def test_workflow_profile_node_supports_tool_profile():
+    node = nodes.LeMoufWorkflowProfile()
+    input_types = node.INPUT_TYPES()
+    profile_options = list(input_types["required"]["profile_id"][0])
+    assert "tool" in profile_options
+
+    flow, profile_id, profile_version, ui_contract_version, workflow_kind = node.declare(
+        profile_id="tool",
+        profile_id_custom="",
+        profile_version="0.1.0",
+        ui_contract_version="1.0.0",
+        workflow_kind="master",
+        flow="seed_flow",
+    )
+
+    assert flow == "seed_flow"
+    assert profile_id == "tool"
+    assert profile_version == "0.1.0"
+    assert ui_contract_version == "1.0.0"
+    assert workflow_kind == "master"
+
+
 def test_loop_pipeline_step_input_types_include_composition_and_none_workflow(monkeypatch):
     monkeypatch.setattr(nodes, "_list_workflow_files", lambda: ["wf_a.json", "wf_b.json"])
 
     input_types = nodes.LoopPipelineStep.INPUT_TYPES()
     required = input_types["required"]
+    optional = input_types["optional"]
     roles = list(required["role"][0])
     workflows = list(required["workflow"][0])
 
@@ -50,6 +73,8 @@ def test_loop_pipeline_step_input_types_include_composition_and_none_workflow(mo
     assert workflows[0] == "(none)"
     assert "wf_a.json" in workflows
     assert "wf_b.json" in workflows
+    assert "resources_json" in optional
+    assert optional["resources_json"][1]["default"] == "[]"
 
 
 def test_loop_pipeline_step_input_types_fallback_to_none_workflow(monkeypatch):
@@ -59,6 +84,17 @@ def test_loop_pipeline_step_input_types_fallback_to_none_workflow(monkeypatch):
     workflows = list(input_types["required"]["workflow"][0])
 
     assert workflows == ["(none)"]
+
+
+def test_loop_pipeline_step_noop_accepts_resources_json():
+    node = nodes.LoopPipelineStep()
+    (flow,) = node.noop(
+        role="composition",
+        workflow="(none)",
+        resources_json='[{"kind":"image","filename":"x.png","type":"output"}]',
+        flow="seed_flow",
+    )
+    assert flow == "seed_flow"
 
 
 def test_song2daw_node_run_invokes_default_runner(monkeypatch):

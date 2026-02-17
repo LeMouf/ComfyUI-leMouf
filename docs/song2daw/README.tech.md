@@ -4,7 +4,7 @@
 
 song2daw is a deterministic analysis pipeline that produces a stable SongGraph and DAW-facing artifacts.
 
-Release line: `0.3.1`
+Release line: `0.3.2`
 
 ## Runtime architecture
 
@@ -43,6 +43,7 @@ song2daw/
     runner.py
     cache.py
     ui_view.py
+    composition_manifest.py
     steps/
   schemas/
     SongGraph.schema.json
@@ -81,11 +82,16 @@ Master workflows are listed in Home by default.
 
 ## Studio UI modes
 
-0.3.1 provides 3 read-only analysis views:
+0.3.2 provides 3 analysis views for song2daw runs:
 
 1. Arrange timeline
 2. Tracks summary
 3. Spectrum 3D
+
+In addition, `0.3.2` introduces a composition-oriented studio workflow family (`profile_id=tool`) through:
+
+- `workflows/composition/composition_studio_master_0-1-0.json`
+- deterministic composition resource manifest normalization in `song2daw/core/composition_manifest.py`
 
 ## Testing
 

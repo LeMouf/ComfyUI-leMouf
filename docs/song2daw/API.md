@@ -1,6 +1,6 @@
 # song2daw - Core API
 
-This document describes practical API surfaces used in release `0.3.1`.
+This document describes practical API surfaces used in release `0.3.2`.
 
 ## Python surfaces
 

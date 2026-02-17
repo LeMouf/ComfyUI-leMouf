@@ -1,4 +1,5 @@
 import { el } from "../dom.js";
+import { setButtonIcon } from "../icons.js";
 
 const SPECTRUM_STATE = new WeakMap();
 const FREQ_BINS = 64;
@@ -262,7 +263,10 @@ function updateStatus(state) {
 }
 
 function updatePlayButton(state) {
-  state.playPauseBtn.textContent = state.isPlaying ? "Pause" : "Play";
+  setButtonIcon(state.playPauseBtn, {
+    icon: state.isPlaying ? "pause" : "play",
+    title: state.isPlaying ? "Pause" : "Play",
+  });
 }
 
 function stopAnimation(state) {
@@ -470,8 +474,10 @@ export async function renderSong2DawSpectrum3D({
   const toolbar = el("div", { class: "lemouf-song2daw-studio-toolbar" });
   const controls = el("div", { class: "lemouf-song2daw-studio-toolbar-group" });
   const camera = el("div", { class: "lemouf-song2daw-studio-toolbar-group" });
-  const playPauseBtn = el("button", { class: "lemouf-loop-btn", type: "button", text: "Play" });
-  const stopBtn = el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Stop" });
+  const playPauseBtn = el("button", { class: "lemouf-loop-btn icon", type: "button" });
+  const stopBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+  setButtonIcon(playPauseBtn, { icon: "play", title: "Play" });
+  setButtonIcon(stopBtn, { icon: "stop", title: "Stop" });
   controls.append(playPauseBtn, stopBtn);
 
   const cameraSelect = el("select", { class: "lemouf-loop-select lemouf-song2daw-viz-select" });

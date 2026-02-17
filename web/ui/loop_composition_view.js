@@ -1,8 +1,12 @@
 import { el } from "./dom.js";
+import { createIcon, setButtonIcon } from "./icons.js";
 import { clearSong2DawTimeline, renderSong2DawTimeline } from "./song2daw/studio_timeline.js";
 
 const manualResourcesByScope = new Map();
+const placementByScope = new Map();
 let manualResourceSeq = 1;
+const VIDEO_HOVER_PREVIEW_DELAY_MS = 500;
+const VIDEO_POSTER_SEEK_SEC = 0.04;
 
 function toNumber(value, fallback = 0) {
   const numeric = Number(value);
@@ -40,6 +44,16 @@ function toReadableBytes(value) {
   }
   const decimals = idx === 0 ? 0 : (num >= 10 ? 1 : 2);
   return `${num.toFixed(decimals)} ${units[idx]}`;
+}
+
+function formatClipDuration(valueSec) {
+  const sec = toFiniteNumber(valueSec);
+  if (sec == null || sec <= 0) return "";
+  if (sec < 10) return `${sec.toFixed(1)}s`;
+  if (sec < 60) return `${sec.toFixed(0)}s`;
+  const minutes = Math.floor(sec / 60);
+  const seconds = Math.floor(sec - minutes * 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function inferVideoHasAudio(meta = {}) {
@@ -172,6 +186,7 @@ function clearManualResources(scopeKey) {
   const rows = getManualResources(scopeKey);
   revokeManualResources(rows);
   manualResourcesByScope.delete(scopeKey);
+  placementByScope.delete(scopeKey);
 }
 
 function detectKindFromFile(file) {
@@ -248,6 +263,8 @@ function probeManualMediaMetadata(resource) {
   return new Promise((resolve) => {
     const media = document.createElement(kind === "video" ? "video" : "audio");
     media.preload = "metadata";
+    media.muted = true;
+    media.playsInline = true;
     let done = false;
     const finish = () => {
       if (done) return;
@@ -258,6 +275,60 @@ function probeManualMediaMetadata(resource) {
       } catch {}
       resolve(resource);
     };
+    const detectVideoAudioState = async () => {
+      if (kind !== "video") return null;
+      let hasAudio = null;
+      if (typeof media.mozHasAudio === "boolean") {
+        hasAudio = media.mozHasAudio ? true : false;
+      }
+      if (
+        hasAudio !== true &&
+        media.audioTracks &&
+        typeof media.audioTracks.length === "number" &&
+        media.audioTracks.length > 0
+      ) {
+        hasAudio = true;
+      }
+      if (hasAudio !== true) {
+        try {
+          const stream =
+            typeof media.captureStream === "function"
+              ? media.captureStream()
+              : (typeof media.mozCaptureStream === "function" ? media.mozCaptureStream() : null);
+          if (stream && typeof stream.getAudioTracks === "function" && stream.getAudioTracks().length > 0) {
+            hasAudio = true;
+          }
+        } catch {}
+      }
+      if (
+        hasAudio !== true &&
+        typeof media.webkitAudioDecodedByteCount === "number" &&
+        media.webkitAudioDecodedByteCount > 0
+      ) {
+        hasAudio = true;
+      }
+      if (hasAudio !== true) {
+        try {
+          const playPromise = media.play?.();
+          if (playPromise && typeof playPromise.then === "function") {
+            await playPromise;
+            await new Promise((r) => setTimeout(r, 140));
+          }
+        } catch {}
+        try {
+          media.pause?.();
+        } catch {}
+        if (
+          typeof media.webkitAudioDecodedByteCount === "number" &&
+          media.webkitAudioDecodedByteCount > 0
+        ) {
+          hasAudio = true;
+        }
+      }
+      if (hasAudio === true) return "with_audio";
+      if (hasAudio === false) return "no_audio";
+      return null;
+    };
     media.onloadedmetadata = () => {
       const duration = toFiniteNumber(media.duration);
       if (duration != null && duration > 0) resource.meta.durationSec = duration;
@@ -266,20 +337,14 @@ function probeManualMediaMetadata(resource) {
         const height = toFiniteNumber(media.videoHeight);
         if (width != null && width > 0) resource.meta.width = width;
         if (height != null && height > 0) resource.meta.height = height;
-        let hasAudio = null;
-        if (typeof media.mozHasAudio === "boolean") hasAudio = media.mozHasAudio;
-        if (hasAudio == null && typeof media.webkitAudioDecodedByteCount === "number") {
-          hasAudio = media.webkitAudioDecodedByteCount > 0;
-        }
-        if (
-          hasAudio == null &&
-          media.audioTracks &&
-          typeof media.audioTracks.length === "number"
-        ) {
-          hasAudio = media.audioTracks.length > 0;
-        }
-        if (hasAudio === true) resource.videoAudioState = "with_audio";
-        if (hasAudio === false) resource.videoAudioState = "no_audio";
+        void detectVideoAudioState()
+          .then((state) => {
+            if (state === "with_audio" || state === "no_audio") {
+              resource.videoAudioState = state;
+            }
+          })
+          .finally(() => finish());
+        return;
       }
       finish();
     };
@@ -336,6 +401,37 @@ function collectPipelineResources(detail) {
   return resources;
 }
 
+function collectInputResources(detail) {
+  const inputResources = Array.isArray(detail?.composition_resources) ? detail.composition_resources : [];
+  const resources = [];
+  for (let i = 0; i < inputResources.length; i += 1) {
+    const resource = inputResources[i];
+    if (!resource || typeof resource !== "object") continue;
+    const kind = String(resource.kind || "").toLowerCase();
+    if (kind !== "image" && kind !== "audio" && kind !== "video") continue;
+    const src = String(resource.src || resource.uri || "").trim();
+    if (!src) continue;
+    const meta = resource.meta && typeof resource.meta === "object" ? { ...resource.meta } : {};
+    resources.push({
+      id: String(resource.id || `input:${kind}:${i + 1}`),
+      kind,
+      cycle: Number.isFinite(Number(resource.cycle)) ? Number(resource.cycle) : -1,
+      retry: Number.isFinite(Number(resource.retry)) ? Number(resource.retry) : 0,
+      index: i,
+      source: String(resource.source || "pipeline_input"),
+      sectionId: String(resource.sectionId || "input_resources"),
+      sectionOrder: Number.isFinite(Number(resource.sectionOrder)) ? Number(resource.sectionOrder) : -1000,
+      sectionLabel: String(resource.sectionLabel || "Input resources"),
+      src,
+      previewSrc: kind === "image" ? String(resource.previewSrc || src) : "",
+      label: String(resource.label || `${kind} ${i + 1}`),
+      meta,
+      videoAudioState: kind === "video" ? String(resource.videoAudioState || "unknown") : undefined,
+    });
+  }
+  return resources;
+}
+
 function resolveVideoAudioState(resource) {
   if (String(resource?.kind || "") !== "video") return "unknown";
   const explicit = String(resource?.videoAudioState || "").toLowerCase();
@@ -348,7 +444,8 @@ function resolveVideoAudioState(resource) {
 
 function collectResources(detail) {
   const scopeKey = scopeKeyFromDetail(detail);
-  return collectPipelineResources(detail)
+  return collectInputResources(detail)
+    .concat(collectPipelineResources(detail))
     .concat(getManualResources(scopeKey))
     .map((resource) => {
       const safe = resource && typeof resource === "object" ? resource : {};
@@ -361,117 +458,230 @@ function collectResources(detail) {
     });
 }
 
-function buildStudioData(resources) {
-  const bySection = new Map();
-  for (const resource of resources) {
-    const sectionId = String(resource?.sectionId || "default");
-    if (!bySection.has(sectionId)) {
-      bySection.set(sectionId, {
-        id: sectionId,
-        order: toNumber(resource?.sectionOrder, 0),
-        label: String(resource?.sectionLabel || "Section"),
-        entries: [],
-      });
-    }
-    bySection.get(sectionId).entries.push(resource);
+function defaultClipDurationSec(resource) {
+  const hinted = toFiniteNumber(resource?.meta?.durationSec);
+  if (hinted != null && hinted > 0.05) return Math.min(60, hinted);
+  if (String(resource?.kind || "") === "audio") return 4;
+  if (String(resource?.kind || "") === "video") return 3;
+  return 2;
+}
+
+function deriveVideoAudioTrackNames(videoTrackName) {
+  const track = String(videoTrackName || "").trim();
+  const match = track.match(/^video\s*(\d+)$/i);
+  if (match) {
+    const lane = Math.max(1, Number(match[1]) || 1);
+    return {
+      stereo: `Video Audio ${lane}`,
+      mono: `Video Audio M${lane}`,
+    };
   }
+  return {
+    stereo: "Video Audio 1",
+    mono: "Video Audio M1",
+  };
+}
 
-  const sectionsOrdered = Array.from(bySection.values()).sort((a, b) => {
-    const orderDelta = toNumber(a.order) - toNumber(b.order);
-    if (orderDelta !== 0) return orderDelta;
-    return String(a.label).localeCompare(String(b.label));
-  });
+function normalizeMediaSrcForCompare(src) {
+  const text = String(src || "").trim();
+  if (!text) return "";
+  try {
+    return new URL(text, window.location.href).href;
+  } catch {
+    return text;
+  }
+}
 
-  const sections = [];
-  const eventsByTrack = {};
-  const videoEvents = [];
-  const audioEvents = [];
+function getPlacementMap(scopeKey) {
+  const key = String(scopeKey || "default");
+  if (!placementByScope.has(key)) placementByScope.set(key, new Map());
+  return placementByScope.get(key);
+}
+
+function buildStudioData(resources, scopeKey) {
+  const placementMap = getPlacementMap(scopeKey);
   const audioAssetByKey = {};
-  const clipSec = 2;
-  let cursor = 0;
+  const tracksByName = new Map();
+  const eventsByTrack = {};
 
-  for (const section of sectionsOrdered) {
-    const entries = Array.isArray(section.entries) ? section.entries : [];
-    const visuals = entries.filter((entry) => entry.kind === "image" || entry.kind === "video");
-    const audios = entries.filter((entry) => entry.kind === "audio" && entry.src);
-    const clipCount = Math.max(1, visuals.length, audios.length);
-    const sectionDuration = clipCount * clipSec;
-    const start = cursor;
-    const end = start + sectionDuration;
+  const ensureTrack = (track) => {
+    const name = String(track?.name || "").trim();
+    if (!name) return;
+    if (!tracksByName.has(name)) tracksByName.set(name, { ...track });
+    if (!Array.isArray(eventsByTrack[name])) eventsByTrack[name] = [];
+  };
 
-    sections.push({
-      name: section.label,
-      start,
-      end,
-    });
+  const kindCounter = {
+    video: 0,
+    image: 0,
+    audio: 0,
+  };
 
-    for (let i = 0; i < visuals.length; i += 1) {
-      const resource = visuals[i];
-      videoEvents.push({
-        time: start + i * clipSec,
-        duration: clipSec,
-        label: resource.label || "visual",
-      });
+  let defaultCursor = 0;
+  for (const resource of resources) {
+    const kind = String(resource?.kind || "").toLowerCase();
+    if (kind !== "video" && kind !== "image" && kind !== "audio") continue;
+    const clipDuration = defaultClipDurationSec(resource);
+    const resourceId = String(resource?.id || `${kind}:${kindCounter[kind] + 1}`);
+    const existing = placementMap.get(resourceId) || null;
+
+    let trackName = String(existing?.trackName || "");
+    let timeSec = toFiniteNumber(existing?.timeSec, null);
+    let durationSec = toFiniteNumber(existing?.durationSec, null);
+
+    if (!trackName) {
+      if (kind === "video") {
+        kindCounter.video += 1;
+        trackName = `Video ${Math.max(1, (kindCounter.video % 2) || 2)}`;
+      } else if (kind === "image") {
+        kindCounter.image += 1;
+        trackName = `Image ${Math.max(1, (kindCounter.image % 2) || 2)}`;
+      } else {
+        kindCounter.audio += 1;
+        trackName = `Audio S${kindCounter.audio}`;
+      }
     }
 
-    for (let i = 0; i < audios.length; i += 1) {
-      const resource = audios[i];
-      const assetKey = `loop_audio:${resource.id}`;
-      if (resource.src) audioAssetByKey[assetKey] = resource.src;
-      audioEvents.push({
-        time: start + i * clipSec,
-        duration: clipSec,
+    if (timeSec == null) {
+      timeSec = defaultCursor;
+      defaultCursor += clipDuration;
+    }
+    if (durationSec == null) durationSec = clipDuration;
+
+    if (kind === "audio") {
+      const keyBase = `audio:${resourceId}`;
+      const stereoTrackName = trackName;
+      const monoTrackName = `Audio M${kindCounter.audio}`;
+      const assetKey = `${keyBase}:stereo`;
+      if (resource?.src) audioAssetByKey[assetKey] = String(resource.src);
+
+      ensureTrack({
+        name: stereoTrackName,
+        kind: "audio",
+        channelMode: "stereo",
+        partition: "step_tracks",
+        source: resource.label || resourceId,
+        audioAssetKey: assetKey,
+        events: 0,
+      });
+      ensureTrack({
+        name: monoTrackName,
+        kind: "audio",
+        channelMode: "mono",
+        playAudio: false,
+        partition: "step_tracks",
+        source: resource.label || resourceId,
+        audioAssetKey: assetKey,
+        events: 0,
+      });
+
+      eventsByTrack[stereoTrackName].push({
+        time: Math.max(0, timeSec),
+        duration: Math.max(0.1, durationSec),
         label: resource.label || "audio",
         assetKey,
+        resourceId,
       });
+      eventsByTrack[monoTrackName].push({
+        time: Math.max(0, timeSec),
+        duration: Math.max(0.1, durationSec),
+        label: `${resource.label || "audio"} mono`,
+        assetKey,
+        resourceId,
+      });
+
+      placementMap.set(resourceId, {
+        trackName: stereoTrackName,
+        timeSec: Math.max(0, timeSec),
+        durationSec: Math.max(0.1, durationSec),
+      });
+      continue;
     }
 
-    cursor = end;
-  }
-
-  if (!sections.length) {
-    sections.push({ name: "Cycle 1", start: 0, end: 4 });
-    cursor = 4;
-  }
-
-  if (videoEvents.length) eventsByTrack.Video = videoEvents;
-  if (audioEvents.length) eventsByTrack.Audio = audioEvents;
-
-  const tracks = [];
-  if (videoEvents.length) {
-    tracks.push({
-      name: "Video",
-      kind: "project",
+    ensureTrack({
+      name: trackName,
+      kind,
       partition: "step_tracks",
-      source: "approved/images",
+      source: resource.label || resourceId,
       audioAssetKey: "",
-      events: videoEvents.length,
+      events: 0,
+    });
+    eventsByTrack[trackName].push({
+      time: Math.max(0, timeSec),
+      duration: Math.max(0.1, durationSec),
+      label: resource.label || kind,
+      resourceId,
+      src: String(resource?.src || ""),
+      previewSrc: String(resource?.previewSrc || ""),
+    });
+    if (kind === "video" && String(resource?.videoAudioState || "") === "with_audio" && resource?.src) {
+      const linkedTracks = deriveVideoAudioTrackNames(trackName);
+      const assetKey = `video_audio:${resourceId}`;
+      audioAssetByKey[assetKey] = String(resource.src);
+      const linkedTrackName = linkedTracks.stereo;
+      ensureTrack({
+        name: linkedTrackName,
+        kind: "audio",
+        channelMode: "stereo",
+        partition: "step_tracks",
+        source: `${resource.label || resourceId} audio`,
+        audioAssetKey: assetKey,
+        events: 0,
+      });
+      const clipTime = Math.max(0, timeSec);
+      const clipDuration = Math.max(0.1, durationSec);
+      eventsByTrack[linkedTrackName].push({
+        time: clipTime,
+        duration: clipDuration,
+        label: `${resource.label || "video"} audio`,
+        assetKey,
+        resourceId,
+      });
+    }
+    placementMap.set(resourceId, {
+      trackName,
+      timeSec: Math.max(0, timeSec),
+      durationSec: Math.max(0.1, durationSec),
     });
   }
-  if (audioEvents.length) {
-    const firstAudioAsset = Object.keys(audioAssetByKey)[0] || "";
-    tracks.push({
-      name: "Audio",
-      kind: "audio",
-      partition: "step_tracks",
-      source: "manual/audio",
-      audioAssetKey: firstAudioAsset,
-      events: audioEvents.length,
+
+  for (const [trackName, events] of Object.entries(eventsByTrack)) {
+    if (!Array.isArray(events)) continue;
+    events.sort((a, b) => {
+      const t = toNumber(a?.time) - toNumber(b?.time);
+      if (t !== 0) return t;
+      return String(a?.resourceId || "").localeCompare(String(b?.resourceId || ""));
     });
+    const track = tracksByName.get(trackName);
+    if (track) track.events = events.length;
   }
+
+  const tracks = Array.from(tracksByName.values());
   if (!tracks.length) {
     tracks.push({
-      name: "Visual",
-      kind: "project",
+      name: "Video 1",
+      kind: "video",
       partition: "step_tracks",
-      source: "approved/images",
+      source: "",
       audioAssetKey: "",
       events: 0,
     });
   }
 
+  const maxEventEnd = Object.values(eventsByTrack).reduce((max, events) => {
+    if (!Array.isArray(events)) return max;
+    for (const event of events) {
+      const end = toNumber(event?.time) + Math.max(0.1, toNumber(event?.duration, 0.1));
+      if (end > max) max = end;
+    }
+    return max;
+  }, 0);
+
+  const durationSec = Math.max(6, maxEventEnd);
+  const sections = [{ name: "Composition", start: 0, end: durationSec }];
+
   return {
-    durationSec: Math.max(1, cursor),
+    durationSec,
     tempoBpm: 120,
     sections,
     tracks,
@@ -480,28 +690,53 @@ function buildStudioData(resources) {
   };
 }
 
-function makeResourceCard(resource, onOpenAsset) {
+function makeResourceCard(resource, onOpenAsset, options = {}) {
   const tooltip = buildResourceTooltip(resource);
+  const displayDuration = formatClipDuration(
+    toFiniteNumber(options?.durationSec) ?? toFiniteNumber(resource?.meta?.durationSec)
+  );
   const card = el("button", {
     class: "lemouf-loop-composition-resource",
     type: "button",
     title: tooltip || resource.label,
   });
+  let stopVideoPreview = null;
+  card.draggable = true;
+  card.dataset.resourceId = String(resource?.id || "");
+  card.addEventListener("dragstart", (event) => {
+    if (typeof stopVideoPreview === "function") stopVideoPreview();
+    const resourceId = String(resource?.id || "");
+    const resourceKind = String(resource?.kind || "").toLowerCase();
+    if (!resourceId || !event?.dataTransfer) return;
+    event.dataTransfer.setData("application/x-lemouf-resource-id", resourceId);
+    if (resourceKind) {
+      event.dataTransfer.setData("application/x-lemouf-resource-kind", resourceKind);
+    }
+    event.dataTransfer.setData("text/plain", resourceId);
+    event.dataTransfer.effectAllowed = "copyMove";
+  });
+  card.addEventListener("dragend", () => {
+    if (typeof stopVideoPreview === "function") stopVideoPreview();
+  });
   const videoAudioState = String(resource?.videoAudioState || "unknown");
-  const kindText = resource.kind === "audio"
-    ? "AUD"
-    : (resource.kind === "video"
-      ? (videoAudioState === "with_audio" ? "VID+AUD" : (videoAudioState === "no_audio" ? "VID" : "VID?"))
-      : "IMG");
-  card.appendChild(
-    el("span", {
-      class: `lemouf-loop-composition-resource-kind ${resource.kind} ${
-        resource.kind === "video" ? `is-${videoAudioState}` : ""
-      }`,
-      text: kindText,
-      title: tooltip || resource.label,
-    })
-  );
+  const kindIconName = resource.kind === "audio"
+    ? "media_audio"
+    : (resource.kind === "video" ? "media_video" : "media_image");
+  const kindTitle = resource.kind === "audio"
+    ? "Audio resource"
+    : (resource.kind === "video" ? "Video resource" : "Image resource");
+  const kindBadge = el("span", {
+    class: `lemouf-loop-composition-resource-kind ${resource.kind} ${
+      resource.kind === "video" ? `is-${videoAudioState}` : ""
+    }`,
+    title: kindTitle,
+  });
+  kindBadge.appendChild(createIcon(kindIconName, {
+    className: "lemouf-loop-composition-resource-kind-icon",
+    size: 11,
+    title: kindTitle,
+  }));
+  card.appendChild(kindBadge);
 
   if (resource.kind === "image" && resource.previewSrc) {
     const img = el("img", {
@@ -510,6 +745,132 @@ function makeResourceCard(resource, onOpenAsset) {
       alt: resource.label,
     });
     card.appendChild(img);
+  } else if (resource.kind === "video") {
+    const thumbWrap = el("div", { class: "lemouf-loop-composition-resource-thumb-wrap" });
+    const previewSrc = String(resource?.previewSrc || "");
+    const videoSrc = String(resource?.src || "");
+    const hasPoster = Boolean(previewSrc);
+    let poster = null;
+    card.classList.toggle("is-video-no-poster", !hasPoster);
+    if (previewSrc) {
+      poster = el("img", {
+        class: "lemouf-loop-composition-resource-thumb",
+        src: previewSrc,
+        alt: resource.label,
+      });
+      thumbWrap.appendChild(poster);
+    } else {
+      thumbWrap.appendChild(
+        el("div", {
+          class: "lemouf-loop-composition-resource-fallback",
+          text: "VIDEO",
+        })
+      );
+    }
+    const audioFlagIconName =
+      videoAudioState === "with_audio"
+        ? "audio_on"
+        : (videoAudioState === "no_audio" ? "audio_off" : "audio_unknown");
+    const audioFlagTitle =
+      videoAudioState === "with_audio"
+        ? "Video with audio"
+        : (videoAudioState === "no_audio" ? "Video without audio" : "Video audio unknown");
+    const audioFlagNode = el("span", {
+      class: `lemouf-loop-composition-resource-audio-flag is-${videoAudioState}`,
+      title: audioFlagTitle,
+    });
+    audioFlagNode.appendChild(createIcon(audioFlagIconName, {
+      className: "lemouf-loop-composition-resource-audio-flag-icon",
+      size: 11,
+      title: audioFlagTitle,
+    }));
+    thumbWrap.appendChild(audioFlagNode);
+    if (displayDuration) {
+      thumbWrap.appendChild(
+        el("span", {
+          class: "lemouf-loop-composition-resource-duration",
+          text: displayDuration,
+          title: `Clip duration: ${displayDuration}`,
+        })
+      );
+    }
+    if (videoSrc) {
+      const video = document.createElement("video");
+      video.className = "lemouf-loop-composition-resource-thumb lemouf-loop-composition-resource-thumb-video";
+      video.src = videoSrc;
+      video.preload = "metadata";
+      video.muted = true;
+      video.loop = true;
+      video.playsInline = true;
+      video.volume = 0.8;
+      video.addEventListener("loadedmetadata", () => {
+        if (hasPoster) return;
+        const duration = Number(video.duration || 0);
+        const seekTo = Number.isFinite(duration) && duration > VIDEO_POSTER_SEEK_SEC
+          ? VIDEO_POSTER_SEEK_SEC
+          : 0;
+        try {
+          video.currentTime = seekTo;
+        } catch {}
+      });
+      thumbWrap.appendChild(video);
+      let hoverTimer = null;
+      let hoverActive = false;
+      const startPreview = () => {
+        if (hoverActive) return;
+        hoverActive = true;
+        card.classList.add("is-video-previewing");
+        const wantsAudioPreview =
+          videoAudioState === "with_audio" &&
+          Boolean(globalThis?.navigator?.userActivation?.hasBeenActive);
+        video.muted = !wantsAudioPreview;
+        const playPromise = video.play();
+        if (playPromise && typeof playPromise.catch === "function") {
+          playPromise.catch(() => {
+            if (wantsAudioPreview) {
+              // Deterministic fallback: keep hover preview active even if autoplay-with-audio is blocked.
+              video.muted = true;
+              const mutedPlay = video.play();
+              if (mutedPlay && typeof mutedPlay.catch === "function") {
+                mutedPlay.catch(() => {
+                  hoverActive = false;
+                  card.classList.remove("is-video-previewing");
+                });
+              }
+              return;
+            }
+            hoverActive = false;
+            card.classList.remove("is-video-previewing");
+          });
+        }
+      };
+      const stopPreview = () => {
+        if (hoverTimer) {
+          clearTimeout(hoverTimer);
+          hoverTimer = null;
+        }
+        if (!hoverActive) return;
+        hoverActive = false;
+        card.classList.remove("is-video-previewing");
+        try {
+          video.pause();
+          video.currentTime = 0;
+          video.muted = true;
+        } catch {}
+      };
+      stopVideoPreview = stopPreview;
+      card.addEventListener("pointerdown", stopPreview, true);
+      card.addEventListener("pointerenter", () => {
+        if (hoverTimer) clearTimeout(hoverTimer);
+        hoverTimer = setTimeout(() => {
+          hoverTimer = null;
+          startPreview();
+        }, VIDEO_HOVER_PREVIEW_DELAY_MS);
+      });
+      card.addEventListener("pointerleave", stopPreview);
+      card.addEventListener("blur", stopPreview, true);
+    }
+    card.appendChild(thumbWrap);
   } else {
     card.appendChild(
       el("div", {
@@ -517,6 +878,14 @@ function makeResourceCard(resource, onOpenAsset) {
         text: resource.kind.toUpperCase(),
       })
     );
+    if (displayDuration) {
+      card.appendChild(
+        el("div", {
+          class: "lemouf-loop-composition-resource-duration-inline",
+          text: displayDuration,
+        })
+      );
+    }
   }
 
   card.appendChild(
@@ -564,6 +933,7 @@ export function renderLoopCompositionStudioView({
   dockExpanded = false,
   onOpenAsset,
   compositionGate = null,
+  monitorHost = null,
 }) {
   if (!panelBody) return;
   clearLoopCompositionStudioView({ panelBody });
@@ -571,21 +941,25 @@ export function renderLoopCompositionStudioView({
 
   const scopeKey = scopeKeyFromDetail(detail);
 
-  const openFilePicker = (kind) => {
+  const openMediaPicker = () => {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    if (kind === "image") input.accept = "image/*";
-    if (kind === "audio") input.accept = "audio/*";
-    if (kind === "video") input.accept = "video/*";
+    input.accept = "image/*,audio/*,video/*,.png,.jpg,.jpeg,.webp,.gif,.bmp,.tif,.tiff,.wav,.mp3,.flac,.ogg,.m4a,.aac,.mp4,.webm,.mov,.mkv,.avi";
     input.addEventListener("change", () => {
       const files = Array.from(input.files || []);
       if (!files.length) return;
-      const additions = files.map((file) => createManualResource(file, kind));
+      const additions = [];
+      for (const file of files) {
+        const detected = detectKindFromFile(file);
+        if (!detected) continue;
+        additions.push(createManualResource(file, detected));
+      }
+      if (!additions.length) return;
       appendManualResources(scopeKey, additions);
-      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate });
+      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
       Promise.all(additions.map((resource) => probeManualMediaMetadata(resource))).then(() => {
-        renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate });
+        renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
       });
     });
     input.click();
@@ -623,86 +997,60 @@ export function renderLoopCompositionStudioView({
       }
       if (!additions.length) return;
       appendManualResources(scopeKey, additions);
-      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate });
+      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
       Promise.all(additions.map((resource) => probeManualMediaMetadata(resource))).then(() => {
-        renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate });
+        renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
       });
     });
     input.click();
   };
 
   const resources = collectResources(detail);
-  const studio = buildStudioData(resources);
+  const studio = buildStudioData(resources, scopeKey);
+  const resourcesById = new Map(resources.map((resource) => [String(resource?.id || ""), resource]));
   panelBody.innerHTML = "";
 
   const summary = el("div", { class: "lemouf-song2daw-studio-meta" });
   summary.textContent = `resources ${resources.length}  |  duration ${studio.durationSec.toFixed(1)}s  |  tracks ${studio.tracks.length}`;
 
   const manualCount = getManualResources(scopeKey).length;
-  const gateEnabled = Boolean(compositionGate && compositionGate.enabled);
-  const gateStatus = String(compositionGate?.status || "").toLowerCase();
   const resourceHeader = el("div", { class: "lemouf-loop-composition-resources-head" }, [
     el("div", { class: "lemouf-song2daw-step-title", text: "Resources" }),
     el("div", { class: "lemouf-loop-composition-resources-meta", text: `${resources.length} item(s)` }),
   ]);
 
   const actionButtons = [];
-  if (gateEnabled) {
-    actionButtons.push(
-      el("button", {
-        class: "lemouf-loop-btn lemouf-loop-composition-gate-btn",
-        type: "button",
-        text: gateStatus === "running" ? "Validate composition step" : "Validate composition gate",
-      })
-    );
-  }
-  actionButtons.push(
-    el("button", { class: "lemouf-loop-btn", type: "button", text: "Load approved export" }),
-    el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Add image" }),
-    el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Add audio" }),
-    el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Add video" }),
-    el("button", {
-      class: "lemouf-loop-btn ghost",
-      type: "button",
-      text: `Clear added (${manualCount})`,
-      disabled: manualCount <= 0,
-    })
-  );
+  const loadApprovedBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-action-btn",
+    type: "button",
+  });
+  setButtonIcon(loadApprovedBtn, { icon: "import_approved", title: "Load approved export" });
+  const addMediaBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-action-btn",
+    type: "button",
+  });
+  setButtonIcon(addMediaBtn, { icon: "add_resource", title: "Add media resource" });
+  const clearAddedBtn = el("button", {
+    class: "lemouf-loop-btn ghost icon lemouf-loop-composition-action-btn",
+    type: "button",
+    disabled: manualCount <= 0,
+  });
+  setButtonIcon(clearAddedBtn, {
+    icon: "clear_resources",
+    title: manualCount > 0 ? `Clear added resources (${manualCount})` : "No added resources",
+  });
+  actionButtons.push(loadApprovedBtn, addMediaBtn, clearAddedBtn);
   const resourceActions = el("div", { class: "lemouf-loop-composition-resources-actions" }, actionButtons);
-
-  const actionNodes = Array.from(resourceActions.querySelectorAll("button"));
-  let actionOffset = 0;
-  let validateGateBtn = null;
-  if (gateEnabled) {
-    validateGateBtn = actionNodes[0] || null;
-    actionOffset = 1;
-  }
-  const loadApprovedBtn = actionNodes[actionOffset] || null;
-  const addImageBtn = actionNodes[actionOffset + 1] || null;
-  const addAudioBtn = actionNodes[actionOffset + 2] || null;
-  const addVideoBtn = actionNodes[actionOffset + 3] || null;
-  const clearAddedBtn = actionNodes[actionOffset + 4] || null;
-  if (validateGateBtn) {
-    validateGateBtn.addEventListener("click", async () => {
-      const callback = compositionGate && typeof compositionGate.onComplete === "function"
-        ? compositionGate.onComplete
-        : null;
-      if (!callback) return;
-      validateGateBtn.disabled = true;
-      try {
-        await callback();
-      } finally {
-        validateGateBtn.disabled = false;
-      }
-    });
-  }
   loadApprovedBtn?.addEventListener("click", openApprovedExportPicker);
-  addImageBtn?.addEventListener("click", () => openFilePicker("image"));
-  addAudioBtn?.addEventListener("click", () => openFilePicker("audio"));
-  addVideoBtn?.addEventListener("click", () => openFilePicker("video"));
+  addMediaBtn?.addEventListener("click", openMediaPicker);
   clearAddedBtn?.addEventListener("click", () => {
+    if (manualCount <= 0) return;
+    const confirmed = window.confirm(
+      `Clear ${manualCount} manually added resource${manualCount > 1 ? "s" : ""}?`
+    );
+    if (!confirmed) return;
     clearManualResources(scopeKey);
-    renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate });
+    renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
   });
 
   const resourceRail = el("div", { class: "lemouf-loop-composition-resources-rail" });
@@ -712,21 +1060,195 @@ export function renderLoopCompositionStudioView({
     );
   } else {
     for (const resource of resources) {
-      resourceRail.appendChild(makeResourceCard(resource, onOpenAsset));
+      const resourceId = String(resource?.id || "");
+      const placement = getPlacementMap(scopeKey).get(resourceId) || null;
+      const durationSec = toFiniteNumber(placement?.durationSec) ?? toFiniteNumber(resource?.meta?.durationSec);
+      resourceRail.appendChild(
+        makeResourceCard(resource, onOpenAsset, { durationSec })
+      );
     }
   }
 
+  const resourcesContent = el("div", { class: "lemouf-loop-composition-resources-content" }, [
+    resourceRail,
+    resourceActions,
+  ]);
   const resourcesPanel = el("div", { class: "lemouf-loop-composition-resources" }, [
     resourceHeader,
-    resourceActions,
-    resourceRail,
+    resourcesContent,
   ]);
+
+  const videoTrackOrder = new Map();
+  (Array.isArray(studio.tracks) ? studio.tracks : []).forEach((track, index) => {
+    if (String(track?.kind || "").toLowerCase() !== "video") return;
+    const name = String(track?.name || "").trim();
+    if (!name) return;
+    videoTrackOrder.set(name, index);
+  });
+  const videoEvents = [];
+  for (const [trackName, events] of Object.entries(studio.eventsByTrack || {})) {
+    if (!videoTrackOrder.has(trackName)) continue;
+    if (!Array.isArray(events)) continue;
+    for (const event of events) {
+      const src = String(event?.src || event?.previewSrc || "").trim();
+      if (!src) continue;
+      const start = Math.max(0, toNumber(event?.time, 0));
+      const duration = Math.max(0.01, toNumber(event?.duration, 0.01));
+      const end = start + duration;
+      videoEvents.push({
+        trackName,
+        trackOrder: Number(videoTrackOrder.get(trackName) || 0),
+        start,
+        end,
+        duration,
+        src,
+        label: String(event?.label || "video"),
+        resourceId: String(event?.resourceId || ""),
+      });
+    }
+  }
+  videoEvents.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start;
+    if (a.trackOrder !== b.trackOrder) return b.trackOrder - a.trackOrder;
+    return a.trackName.localeCompare(b.trackName);
+  });
+
+  const monitorPanel = el("div", { class: "lemouf-loop-composition-monitor" });
+  const monitorStatus = el("div", { class: "lemouf-loop-composition-monitor-status", text: "No video clip at playhead." });
+  const monitorHead = el("div", { class: "lemouf-loop-composition-monitor-head" }, [
+    monitorStatus,
+  ]);
+  const monitorStage = el("div", { class: "lemouf-loop-composition-monitor-stage" });
+  const monitorVideo = document.createElement("video");
+  monitorVideo.className = "lemouf-loop-composition-monitor-video";
+  monitorVideo.preload = "auto";
+  monitorVideo.muted = true;
+  monitorVideo.playsInline = true;
+  const monitorEmpty = el("div", {
+    class: "lemouf-loop-composition-monitor-empty",
+    text: "No video clip at current position.",
+  });
+  monitorStage.append(monitorVideo, monitorEmpty);
+  const monitorMeta = el("div", { class: "lemouf-loop-composition-monitor-meta", text: "idle" });
+  const monitorActions = el("div", { class: "lemouf-loop-composition-monitor-actions" }, [
+    el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Save project (soon)", disabled: true }),
+    el("button", { class: "lemouf-loop-btn alt", type: "button", text: "Export render (soon)", disabled: true }),
+  ]);
+  monitorPanel.append(monitorHead, monitorStage, monitorMeta, monitorActions);
 
   const editorBody = el("div", {
     class: "lemouf-song2daw-studio-body lemouf-loop-composition-editor-body",
   });
 
-  panelBody.append(summary, resourcesPanel, editorBody);
+  const resolvedMonitorHost = monitorHost && typeof monitorHost.appendChild === "function"
+    ? monitorHost
+    : null;
+  if (resolvedMonitorHost) {
+    resolvedMonitorHost.innerHTML = "";
+    resolvedMonitorHost.appendChild(monitorPanel);
+    panelBody.append(summary, resourcesPanel, editorBody);
+  } else {
+    panelBody.append(summary, resourcesPanel, monitorPanel, editorBody);
+  }
+
+  let monitorCurrentKey = "";
+  let monitorPendingLocalTimeSec = 0;
+  let monitorPendingPlay = false;
+  const MONITOR_EDGE_EPS_SEC = 1 / 240;
+  const pickMonitorEvent = (playheadSec) => {
+    const time = Math.max(0, toNumber(playheadSec, 0));
+    const active = videoEvents.filter(
+      (event) => time >= event.start - MONITOR_EDGE_EPS_SEC && time <= event.end + MONITOR_EDGE_EPS_SEC
+    );
+    if (active.length) {
+      active.sort((a, b) => {
+        if (a.trackOrder !== b.trackOrder) return b.trackOrder - a.trackOrder;
+        if (a.start !== b.start) return b.start - a.start;
+        return a.trackName.localeCompare(b.trackName);
+      });
+      return active[0] || null;
+    }
+    if (!videoEvents.length) return null;
+    const ranked = videoEvents
+      .map((event) => {
+        const distance = time < event.start
+          ? event.start - time
+          : (time > event.end ? time - event.end : 0);
+        return { event, distance };
+      })
+      .sort((a, b) => {
+        if (a.distance !== b.distance) return a.distance - b.distance;
+        if (a.event.trackOrder !== b.event.trackOrder) return b.event.trackOrder - a.event.trackOrder;
+        if (a.event.start !== b.event.start) return a.event.start - b.event.start;
+        return a.event.trackName.localeCompare(b.event.trackName);
+      });
+    return ranked[0]?.event || null;
+  };
+  const applyMonitorTransport = () => {
+    const duration = Number(monitorVideo.duration || 0);
+    const maxLocal = Number.isFinite(duration) && duration > 0.05
+      ? Math.max(0, duration - 0.02)
+      : Number.POSITIVE_INFINITY;
+    const targetLocal = Math.max(0, Math.min(maxLocal, Number(monitorPendingLocalTimeSec || 0)));
+    try {
+      if (Math.abs(Number(monitorVideo.currentTime || 0) - targetLocal) > 0.03) {
+        monitorVideo.currentTime = targetLocal;
+      }
+    } catch {}
+    if (monitorPendingPlay) {
+      const p = monitorVideo.play();
+      if (p && typeof p.catch === "function") p.catch(() => {});
+    } else {
+      try { monitorVideo.pause(); } catch {}
+    }
+  };
+  monitorVideo.addEventListener("loadedmetadata", applyMonitorTransport);
+  monitorVideo.addEventListener("canplay", applyMonitorTransport);
+  monitorVideo.addEventListener("error", () => {
+    monitorEmpty.style.display = "";
+    monitorVideo.style.display = "none";
+    monitorStatus.textContent = "Unable to load video source.";
+  });
+  const syncVideoMonitor = ({ playheadSec = 0, isPlaying = false, modeLabel = "idle" } = {}) => {
+    if (!videoEvents.length) {
+      monitorEmpty.style.display = "";
+      monitorVideo.style.display = "none";
+      monitorStatus.textContent = "No video resource loaded.";
+      monitorMeta.textContent = `${modeLabel}`;
+      return;
+    }
+    const selected = pickMonitorEvent(playheadSec);
+    if (!selected) {
+      monitorCurrentKey = "";
+      try { monitorVideo.pause(); } catch {}
+      monitorEmpty.style.display = "";
+      monitorVideo.style.display = "none";
+      monitorStatus.textContent = "No video clip at playhead.";
+      monitorMeta.textContent = `${modeLabel} · ${Number(playheadSec || 0).toFixed(2)}s`;
+      return;
+    }
+    const eventKey = `${selected.trackName}:${selected.resourceId}:${selected.start.toFixed(4)}`;
+    const localTime = Math.max(
+      0,
+      Math.min(Math.max(0.01, Number(selected.duration || 0.01) - 0.02), Number(playheadSec || 0) - selected.start)
+    );
+    monitorPendingLocalTimeSec = localTime;
+    monitorPendingPlay = Boolean(isPlaying);
+    const normalizedSelectedSrc = normalizeMediaSrcForCompare(selected.src);
+    const normalizedMonitorSrc = normalizeMediaSrcForCompare(monitorVideo.src);
+    if (monitorCurrentKey !== eventKey || normalizedMonitorSrc !== normalizedSelectedSrc) {
+      monitorCurrentKey = eventKey;
+      monitorVideo.src = selected.src;
+      applyMonitorTransport();
+    } else {
+      applyMonitorTransport();
+    }
+    monitorEmpty.style.display = "none";
+    monitorVideo.style.display = "";
+    monitorStatus.textContent = `${selected.trackName} · ${selected.label}`;
+    monitorMeta.textContent =
+      `${modeLabel} · clip ${selected.start.toFixed(2)}-${selected.end.toFixed(2)}s · local ${localTime.toFixed(2)}s`;
+  };
 
   renderSong2DawTimeline({
     runData: { summary: { steps: [] } },
@@ -739,6 +1261,7 @@ export function renderLoopCompositionStudioView({
     },
     body: editorBody,
     layoutMode: dockExpanded ? "full" : "compact",
+    allowDurationExtend: true,
     onJumpToStep: null,
     onOpenRunDir: null,
     onResolveAudioUrl: (assetKey) => {
@@ -746,5 +1269,51 @@ export function renderLoopCompositionStudioView({
       if (!key) return "";
       return String(studio.audioAssetByKey[key] || "");
     },
+    onDropResource: ({ resourceId, resourceKind, trackName, timeSec }) => {
+      const id = String(resourceId || "");
+      let track = String(trackName || "").trim();
+      if (!id || !track) return false;
+      const resource = resourcesById.get(id);
+      if (!resource) return false;
+      const kind = String(resourceKind || resource?.kind || "").toLowerCase();
+      const trackInfo = Array.isArray(studio?.tracks)
+        ? studio.tracks.find((item) => String(item?.name || "").trim() === track)
+        : null;
+      const trackKind = String(trackInfo?.kind || "").toLowerCase();
+      if (!trackKind) return false;
+      if (kind === "audio" && trackKind !== "audio") return false;
+      if ((kind === "image" || kind === "video") && trackKind !== kind) return false;
+      if (kind === "audio") {
+        const monoMatch = track.match(/^audio\s*m(\d+)$/i);
+        if (monoMatch) track = `Audio S${monoMatch[1]}`;
+      }
+      const scopePlacements = getPlacementMap(scopeKey);
+      const previous = scopePlacements.get(id) || {};
+      const durationSec = Math.max(0.1, toFiniteNumber(previous.durationSec, defaultClipDurationSec(resource)) || 0.1);
+      scopePlacements.set(id, {
+        trackName: track,
+        timeSec: Math.max(0, toFiniteNumber(timeSec, 0)),
+        durationSec,
+      });
+      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
+      return true;
+    },
+    onClipEdit: ({ resourceId, trackName, timeSec, durationSec }) => {
+      const id = String(resourceId || "").trim();
+      const track = String(trackName || "").trim();
+      if (!id || !track) return false;
+      const resource = resourcesById.get(id);
+      if (!resource) return false;
+      const scopePlacements = getPlacementMap(scopeKey);
+      scopePlacements.set(id, {
+        trackName: track,
+        timeSec: Math.max(0, toFiniteNumber(timeSec, 0)),
+        durationSec: Math.max(0.1, toFiniteNumber(durationSec, defaultClipDurationSec(resource)) || 0.1),
+      });
+      renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
+      return true;
+    },
+    onPlaybackUpdate: syncVideoMonitor,
   });
+  syncVideoMonitor({ playheadSec: 0, isPlaying: false, modeLabel: "stopped" });
 }

@@ -1,6 +1,6 @@
 # song2daw — UI View Model
 
-Release line: `0.3.1`
+Release line: `0.3.2`
 
 The panel consumes a stable view model derived from SongGraph and artifacts.
 The UI must not need direct SongGraph internals to render timeline/studio views.
@@ -68,7 +68,7 @@ The UI must not need direct SongGraph internals to render timeline/studio views.
 }
 ```
 
-## Recommended extensions used in 0.3.1
+## Recommended extensions used in 0.3.2
 
 - `run`
   - summary metadata shown in the studio header/footer.

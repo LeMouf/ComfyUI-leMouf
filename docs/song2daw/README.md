@@ -4,7 +4,7 @@ Deterministic audio-to-DAW analysis pipeline inside ComfyUI-leMouf.
 
 ## Release status
 
-- Current release line: `0.3.1`
+- Current release line: `0.3.2`
 - SongGraph schema: `1.0.0`
 - Pipeline step family: `0.1.0`
 
@@ -18,6 +18,18 @@ song2daw ingests an audio source and generates a stable, inspectable project mod
 - UI view payload for panel visualization
 
 The system is deterministic by design: same inputs + same configs + same versions => same outputs.
+
+## 0.3.2 user-facing highlights
+
+- Composition Studio workflow family (`tool` profile) added:
+  - new master workflow: `workflows/composition/composition_studio_master_0-1-0.json`
+  - optional deterministic resource preload via `resources_json`
+- Composition monitor + timeline robustness pass:
+  - improved drag/drop feedback for clip placement (stronger ghost clip)
+  - safer runtime state restoration and monitor synchronization after reload/navigation
+- UI consistency pass:
+  - profile-routed home loading path hardened
+  - step/detail and composition controls cleaned up (less duplicated controls/titles)
 
 ## 0.3.1 user-facing highlights
 

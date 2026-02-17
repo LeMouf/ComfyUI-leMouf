@@ -323,16 +323,36 @@ export function injectStyles() {
       justify-content: space-between;
       gap: 8px;
     }
+    .lemouf-loop-composition-gate-row {
+      display: flex;
+      align-items: stretch;
+    }
     .lemouf-loop-composition-resources-actions {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+      display: flex;
+      flex-direction: column;
+      flex: 0 0 auto;
       gap: 6px;
     }
-    .lemouf-loop-composition-resources-actions .lemouf-loop-btn {
-      min-height: 26px;
-      padding: 4px 7px;
-      font-size: 10px;
-      line-height: 1.1;
+    .lemouf-loop-composition-resources-content {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-height: 88px;
+    }
+    .lemouf-loop-composition-action-btn {
+      width: 34px;
+      min-width: 34px;
+      height: 34px;
+      min-height: 34px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-composition-action-btn .lemouf-btn-icon {
+      width: 15px;
+      height: 15px;
     }
     .lemouf-loop-composition-gate-btn {
       background: linear-gradient(180deg, #2f7a4f, #246a43);
@@ -349,6 +369,8 @@ export function injectStyles() {
       white-space: nowrap;
     }
     .lemouf-loop-composition-resources-rail {
+      flex: 1 1 auto;
+      min-width: 0;
       display: flex;
       gap: 6px;
       overflow-x: auto;
@@ -386,13 +408,18 @@ export function injectStyles() {
       border-radius: 999px;
       border: 1px solid #bda996;
       background: rgba(246, 235, 220, 0.94);
-      color: #f8f2e8;
-      font-size: 9px;
-      font-weight: 700;
-      letter-spacing: 0.28px;
-      padding: 1px 5px;
-      text-transform: uppercase;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 18px;
+      height: 18px;
+      padding: 0;
       color: #6f5b49;
+    }
+    .lemouf-loop-composition-resource-kind-icon {
+      width: 11px;
+      height: 11px;
+      display: block;
     }
     .lemouf-loop-composition-resource-kind.image {
       border-color: #bda996;
@@ -438,6 +465,87 @@ export function injectStyles() {
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
+    .lemouf-loop-composition-resource-thumb-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      overflow: hidden;
+      background: #efe2d1;
+    }
+    .lemouf-loop-composition-resource-audio-flag {
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      z-index: 2;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid #bda996;
+      background: rgba(246, 235, 220, 0.95);
+      color: #6f5b49;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      box-shadow: 0 1px 3px rgba(35, 26, 18, 0.16);
+    }
+    .lemouf-loop-composition-resource-audio-flag-icon {
+      width: 11px;
+      height: 11px;
+      display: block;
+    }
+    .lemouf-loop-composition-resource-audio-flag.is-with_audio {
+      border-color: #95b79e;
+      background: rgba(228, 242, 231, 0.96);
+      color: #2f5b3a;
+    }
+    .lemouf-loop-composition-resource-audio-flag.is-no_audio {
+      border-color: #c8a793;
+      background: rgba(245, 233, 226, 0.96);
+      color: #6b4a37;
+    }
+    .lemouf-loop-composition-resource-audio-flag.is-unknown {
+      border-color: #9fb7cc;
+      background: rgba(227, 237, 247, 0.96);
+      color: #34506b;
+    }
+    .lemouf-loop-composition-resource-duration {
+      position: absolute;
+      left: 4px;
+      bottom: 4px;
+      z-index: 2;
+      border-radius: 999px;
+      border: 1px solid rgba(116, 94, 74, 0.55);
+      background: rgba(248, 240, 229, 0.94);
+      color: #5d4b3b;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.2px;
+      padding: 1px 6px;
+      line-height: 1.25;
+      box-shadow: 0 1px 2px rgba(30, 21, 14, 0.14);
+    }
+    .lemouf-loop-composition-resource-thumb-wrap .lemouf-loop-composition-resource-thumb {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      aspect-ratio: auto;
+      transition: opacity 180ms ease;
+    }
+    .lemouf-loop-composition-resource-thumb-video {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .lemouf-loop-composition-resource.is-video-no-poster .lemouf-loop-composition-resource-thumb-video {
+      opacity: 1;
+    }
+    .lemouf-loop-composition-resource.is-video-previewing .lemouf-loop-composition-resource-thumb-video {
+      opacity: 1;
+    }
+    .lemouf-loop-composition-resource.is-video-previewing .lemouf-loop-composition-resource-thumb-wrap img {
+      opacity: 0.32;
+    }
     .lemouf-loop-composition-resource-label {
       font-size: 9px;
       color: #6b5948;
@@ -449,6 +557,90 @@ export function injectStyles() {
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    .lemouf-loop-composition-resource-duration-inline {
+      font-size: 9px;
+      color: #705c49;
+      background: rgba(253, 246, 237, 0.92);
+      border-top: 1px solid rgba(150, 125, 103, 0.22);
+      padding: 1px 5px 3px;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+      text-align: right;
+      line-height: 1.2;
+    }
+    .lemouf-loop-composition-monitor {
+      border: 1px solid #cdbba9;
+      border-radius: 10px;
+      background: #fffaf3;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lemouf-loop-composition-monitor-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .lemouf-loop-composition-monitor-status {
+      font-size: 10px;
+      color: #6e5a48;
+      text-transform: uppercase;
+      letter-spacing: 0.24px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-composition-monitor-stage {
+      position: relative;
+      width: 100%;
+      min-height: 160px;
+      max-height: min(32vh, 320px);
+      aspect-ratio: 16 / 9;
+      border: 1px solid rgba(150, 125, 103, 0.34);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #ece0d1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lemouf-loop-composition-monitor-video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #111;
+      display: none;
+    }
+    .lemouf-loop-composition-monitor-empty {
+      font-size: 11px;
+      color: #7a6756;
+      text-transform: uppercase;
+      letter-spacing: 0.28px;
+      text-align: center;
+      padding: 10px;
+    }
+    .lemouf-loop-composition-monitor-meta {
+      font-size: 10px;
+      color: #6f5d4d;
+      text-transform: uppercase;
+      letter-spacing: 0.22px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-composition-monitor-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .lemouf-loop-composition-monitor-actions .lemouf-loop-btn {
+      min-height: 26px;
+      padding: 4px 7px;
+      font-size: 10px;
+      line-height: 1.1;
     }
     .lemouf-loop-composition-editor-body {
       flex: 1 1 auto;
@@ -524,6 +716,14 @@ export function injectStyles() {
       font-size: 15px;
       line-height: 1;
       text-align: center;
+    }
+    .lemouf-icon,
+    .lemouf-btn-icon {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      color: currentColor;
+      vertical-align: middle;
     }
     .lemouf-loop-inline {
       display: flex;
@@ -613,14 +813,14 @@ export function injectStyles() {
       flex: 0 0 auto;
       min-width: 36px;
       text-align: center;
-      border: 1px solid #b59c86;
+      border: 1px solid var(--lemouf-wf-badge-border, #b59c86);
       border-radius: 999px;
       padding: 1px 5px;
-      background: #f7ecdf;
+      background: var(--lemouf-wf-badge-bg, #f7ecdf);
       font-size: 9px;
       text-transform: uppercase;
       letter-spacing: 0.35px;
-      color: #5b4637;
+      color: var(--lemouf-wf-badge-text, #5b4637);
     }
     .lemouf-workflow-item-name {
       flex: 1 1 auto;
@@ -2419,6 +2619,22 @@ export function injectStyles() {
       flex: 1 1 50%;
       min-height: 110px;
       overflow: hidden;
+    }
+    .lemouf-tool-step-monitor-host {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow: auto;
+    }
+    .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor {
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor-stage {
+      max-height: none;
+      min-height: 220px;
     }
     .lemouf-song2daw-detail-pre {
       flex: 1 1 auto;

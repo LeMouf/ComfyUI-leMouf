@@ -57,7 +57,7 @@ Each step contributes:
 - metadata and logs
 - SongGraph updates
 
-## Workflow profile routing (0.3.1)
+## Workflow profile routing (0.3.2)
 
 `LeMoufWorkflowProfile` defines UI behavior:
 - `profile_id`
@@ -67,6 +67,7 @@ Each step contributes:
 
 Master workflows are listed by default in the Home panel.
 Branch workflows are used as internal/support workflows.
+Tooling workflows (for example composition studio) are routed via dedicated profile adapters.
 
 ## Runtime API surfaces (UI)
 

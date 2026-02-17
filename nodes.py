@@ -2044,6 +2044,10 @@ class LoopPipelineStep:
                 "workflow": (workflows,),
             },
             "optional": {
+                "resources_json": (
+                    "STRING",
+                    {"default": "[]", "multiline": True},
+                ),
                 "flow": ("PIPELINE",),
             },
         }
@@ -2053,7 +2057,7 @@ class LoopPipelineStep:
     FUNCTION = "noop"
     CATEGORY = "leMouf/Pipeline"
 
-    def noop(self, role: str, workflow: str, flow: str = ""):
+    def noop(self, role: str, workflow: str, resources_json: str = "[]", flow: str = ""):
         return (flow or "",)
 
 
@@ -2062,7 +2066,7 @@ class LeMoufWorkflowProfile:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "profile_id": (["song2daw", "generic_loop", "custom"],),
+                "profile_id": (["song2daw", "generic_loop", "tool", "custom"],),
                 "profile_id_custom": ("STRING", {"default": "", "multiline": False}),
                 "profile_version": ("STRING", {"default": "0.1.0", "multiline": False}),
                 "ui_contract_version": ("STRING", {"default": "1.0.0", "multiline": False}),

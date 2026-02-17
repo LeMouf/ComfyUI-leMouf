@@ -1,6 +1,6 @@
 # Feature Design: Workflow Loop Orchestrator
 
-Version target: `0.3.1`
+Version target: `0.3.2`
 
 ## Goal
 
@@ -18,6 +18,18 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Payload preview screen for WF1 (auto-detected output types).
 - Export: approved images copied to output/lemouf/{loop_id}/.
 - Exit: early exit resets the loop state; complete exit appears at the end.
+
+## 0.3.2 Extensions (Implemented)
+
+- Composition Studio master workflow (`profile_id=tool`, `workflow_kind=master`):
+  - `workflows/composition/composition_studio_master_0-1-0.json`
+  - optional `resources_json` preload support on pipeline step.
+- Composition panel UX pass:
+  - unified resource actions via icon rail
+  - deterministic resource manifest normalization
+  - improved timeline drag/drop visibility with stronger ghost clip rendering.
+- Robustness pass:
+  - loop/composition UI state synchronization hardened across workflow switches and reload scenarios.
 
 ## 0.3.1 Extensions (Implemented)
 

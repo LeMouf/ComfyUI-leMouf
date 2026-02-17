@@ -1,0 +1,237 @@
+{
+  "id": "composition-studio-master-0-1-0",
+  "revision": 0,
+  "last_node_id": 3,
+  "last_link_id": 0,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "LoopPipelineStep",
+      "pos": [
+        220,
+        200
+      ],
+      "size": [
+        360,
+        210
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "role",
+          "name": "role",
+          "type": "COMBO",
+          "widget": {
+            "name": "role"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "workflow",
+          "name": "workflow",
+          "type": "COMBO",
+          "widget": {
+            "name": "workflow"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "resources_json",
+          "name": "resources_json",
+          "type": "STRING",
+          "widget": {
+            "name": "resources_json"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoopPipelineStep"
+      },
+      "widgets_values": [
+        "composition",
+        "(none)",
+        "[]"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "LoopMap",
+      "pos": [
+        640,
+        180
+      ],
+      "size": [
+        360,
+        200
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "map_json",
+          "name": "map_json",
+          "type": "STRING",
+          "widget": {
+            "name": "map_json"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "map_json",
+          "name": "map_json",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoopMap"
+      },
+      "widgets_values": [
+        "{\n  \"schema\": \"lemouf.loopmap.v1\",\n  \"mappings\": []\n}"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "LeMoufWorkflowProfile",
+      "pos": [
+        -100,
+        120
+      ],
+      "size": [
+        320,
+        190
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "profile_id",
+          "name": "profile_id",
+          "type": "COMBO",
+          "widget": {
+            "name": "profile_id"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "profile_id_custom",
+          "name": "profile_id_custom",
+          "type": "STRING",
+          "widget": {
+            "name": "profile_id_custom"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "profile_version",
+          "name": "profile_version",
+          "type": "STRING",
+          "widget": {
+            "name": "profile_version"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "ui_contract_version",
+          "name": "ui_contract_version",
+          "type": "STRING",
+          "widget": {
+            "name": "ui_contract_version"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "workflow_kind",
+          "name": "workflow_kind",
+          "type": "COMBO",
+          "widget": {
+            "name": "workflow_kind"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "flow",
+          "name": "flow",
+          "type": "PIPELINE",
+          "links": []
+        },
+        {
+          "localized_name": "profile_id",
+          "name": "profile_id",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "profile_version",
+          "name": "profile_version",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "ui_contract_version",
+          "name": "ui_contract_version",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "localized_name": "workflow_kind",
+          "name": "workflow_kind",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LeMoufWorkflowProfile"
+      },
+      "widgets_values": [
+        "tool",
+        "",
+        "0.1.0",
+        "1.0.0",
+        "master"
+      ]
+    }
+  ],
+  "links": [],
+  "groups": [],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 1.0,
+      "offset": [
+        0,
+        0
+      ]
+    }
+  },
+  "version": 0.4
+}
