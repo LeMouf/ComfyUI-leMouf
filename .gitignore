@@ -9,4 +9,6 @@ __pycache__/
 Thumbs.db
 *.log
 .pytest_cache/
-song2daw/tests/.tmp_preview_mix_audio/
+features/song2daw/tests/.tmp_preview_mix_audio/
+.version_bump_next
+.feature_bump_next.json

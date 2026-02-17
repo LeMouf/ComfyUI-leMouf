@@ -24,6 +24,13 @@ THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 if THIS_DIR not in sys.path:
     sys.path.insert(0, THIS_DIR)
 
+try:
+    from .backend.workflows import catalog as workflow_catalog
+    from .backend.workflows import profiles as workflow_profiles
+except Exception:  # pragma: no cover - direct import context
+    from backend.workflows import catalog as workflow_catalog
+    from backend.workflows import profiles as workflow_profiles
+
 def _int_env(name: str, default: int) -> int:
     try:
         return int(os.getenv(name, str(default)))
@@ -714,235 +721,49 @@ def _workflows_dir() -> str:
     return os.path.join(os.path.dirname(__file__), "workflows")
 
 
+def _is_feature_scoped_workflow_name(name: str) -> bool:
+    return workflow_catalog.is_feature_scoped_workflow_name(name)
+
+
 def _list_workflow_files() -> List[str]:
-    folder = _workflows_dir()
-    if not os.path.isdir(folder):
-        return []
-    files = []
-    for root, _dirs, names in os.walk(folder):
-        for name in names:
-            if not name.lower().endswith(".json"):
-                continue
-            full = os.path.join(root, name)
-            if os.path.isfile(full):
-                rel = os.path.relpath(full, folder).replace("\\", "/")
-                files.append(rel)
-    return sorted(files)
+    return workflow_catalog.list_workflow_files(_workflows_dir())
 
 
 def _load_workflow_file(name: str) -> Dict[str, Any]:
-    raw = str(name or "").strip()
-    if not raw:
-        raise RuntimeError("invalid_name")
-    normalized = raw.replace("\\", "/")
-    if normalized.startswith("/") or normalized.startswith("./") or normalized.startswith("../"):
-        raise RuntimeError("invalid_name")
-    parts = [part for part in normalized.split("/") if part and part != "."]
-    if not parts or any(part == ".." for part in parts):
-        raise RuntimeError("invalid_name")
-
-    root = os.path.realpath(_workflows_dir())
-    full = os.path.realpath(os.path.join(root, *parts))
-    root_prefix = root if root.endswith(os.sep) else root + os.sep
-    if not (full == root or full.startswith(root_prefix)):
-        raise RuntimeError("invalid_name")
-    if not os.path.isfile(full):
-        raise RuntimeError("not_found")
-    with open(full, "r", encoding="utf-8") as handle:
-        return json.load(handle)
+    return workflow_catalog.load_workflow_file(name, _workflows_dir())
 
 
-_WORKFLOW_PROFILE_NODE_TYPE = "LeMoufWorkflowProfile"
-_WORKFLOW_PROFILE_DEFAULT = {
-    "profile_id": "generic_loop",
-    "profile_version": "0.1.0",
-    "ui_contract_version": "1.0.0",
-    "workflow_kind": "master",
-}
+_WORKFLOW_PROFILE_NODE_TYPE = workflow_profiles.WORKFLOW_PROFILE_NODE_TYPE
+_WORKFLOW_PROFILE_DEFAULT = workflow_profiles.WORKFLOW_PROFILE_DEFAULT
 
 
 def _normalize_profile_id(value: Any) -> str:
-    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-    return text
+    return workflow_profiles.normalize_profile_id(value)
 
 
 def _normalize_semver(value: Any, fallback: str) -> str:
-    text = str(value or "").strip()
-    if re.match(r"^\d+\.\d+\.\d+$", text):
-        return text
-    return fallback
+    return workflow_profiles.normalize_semver(value, fallback)
 
 
 def _normalize_workflow_kind(value: Any, fallback: str = "master") -> str:
-    text = str(value or "").strip().lower()
-    if text in {"master", "branch"}:
-        return text
-    return fallback
+    return workflow_profiles.normalize_workflow_kind(value, fallback)
 
 
 def _coalesce_profile_id(profile_id_raw: Any, profile_id_custom_raw: Any) -> str:
-    profile_id = _normalize_profile_id(profile_id_raw)
-    custom = _normalize_profile_id(profile_id_custom_raw)
-    if profile_id in {"custom", "other"}:
-        return custom or ""
-    return profile_id or custom or ""
-
-
-def _finalize_workflow_profile(raw: Optional[Mapping[str, Any]], source: str) -> Dict[str, Any]:
-    value = raw or {}
-    profile_id = _coalesce_profile_id(
-        value.get("profile_id"),
-        value.get("profile_id_custom"),
-    )
-    if not profile_id:
-        profile_id = _WORKFLOW_PROFILE_DEFAULT["profile_id"]
-    return {
-        "profile_id": profile_id,
-        "profile_version": _normalize_semver(
-            value.get("profile_version"),
-            _WORKFLOW_PROFILE_DEFAULT["profile_version"],
-        ),
-        "ui_contract_version": _normalize_semver(
-            value.get("ui_contract_version"),
-            _WORKFLOW_PROFILE_DEFAULT["ui_contract_version"],
-        ),
-        "workflow_kind": _normalize_workflow_kind(
-            value.get("workflow_kind"),
-            _WORKFLOW_PROFILE_DEFAULT["workflow_kind"],
-        ),
-        "source": str(value.get("source") or source or "fallback"),
-    }
-
-
-def _extract_workflow_profile_from_prompt(prompt: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
-    if not isinstance(prompt, Mapping):
-        return None
-    for node in prompt.values():
-        if not isinstance(node, Mapping):
-            continue
-        class_type = str(node.get("class_type") or node.get("type") or "").strip()
-        if class_type != _WORKFLOW_PROFILE_NODE_TYPE:
-            continue
-        inputs = node.get("inputs")
-        if not isinstance(inputs, Mapping):
-            inputs = {}
-        return _finalize_workflow_profile(
-            {
-                "profile_id": inputs.get("profile_id"),
-                "profile_id_custom": inputs.get("profile_id_custom"),
-                "profile_version": inputs.get("profile_version"),
-                "ui_contract_version": inputs.get("ui_contract_version"),
-                "workflow_kind": inputs.get("workflow_kind"),
-                "source": "prompt_node",
-            },
-            "prompt_node",
-        )
-    return None
-
-
-def _extract_workflow_profile_from_workflow(workflow: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
-    if not isinstance(workflow, Mapping):
-        return None
-    nodes = workflow.get("nodes")
-    if not isinstance(nodes, list):
-        return None
-    for node in nodes:
-        if not isinstance(node, Mapping):
-            continue
-        class_type = str(node.get("type") or node.get("class_type") or "").strip()
-        if class_type != _WORKFLOW_PROFILE_NODE_TYPE:
-            continue
-        direct_inputs = node.get("inputs")
-        if not isinstance(direct_inputs, Mapping):
-            direct_inputs = {}
-        widget_values = node.get("widgets_values")
-        if not isinstance(widget_values, list):
-            widget_values = []
-        has_custom_field = len(widget_values) >= 4
-        has_kind_field = len(widget_values) >= 5
-        profile_id = direct_inputs.get("profile_id")
-        if profile_id is None and len(widget_values) >= 1:
-            profile_id = widget_values[0]
-        profile_id_custom = direct_inputs.get("profile_id_custom")
-        if profile_id_custom is None and has_custom_field:
-            profile_id_custom = widget_values[1]
-        profile_version = direct_inputs.get("profile_version")
-        if profile_version is None:
-            if has_custom_field and len(widget_values) >= 3:
-                profile_version = widget_values[2]
-            elif len(widget_values) >= 2:
-                profile_version = widget_values[1]
-        ui_contract_version = direct_inputs.get("ui_contract_version")
-        if ui_contract_version is None:
-            if has_custom_field and len(widget_values) >= 4:
-                ui_contract_version = widget_values[3]
-            elif len(widget_values) >= 3:
-                ui_contract_version = widget_values[2]
-        workflow_kind = direct_inputs.get("workflow_kind")
-        if workflow_kind is None and has_kind_field:
-            workflow_kind = widget_values[4]
-        return _finalize_workflow_profile(
-            {
-                "profile_id": profile_id,
-                "profile_id_custom": profile_id_custom,
-                "profile_version": profile_version,
-                "ui_contract_version": ui_contract_version,
-                "workflow_kind": workflow_kind,
-                "source": "workflow_node",
-            },
-            "workflow_node",
-        )
-    return None
+    return workflow_profiles.coalesce_profile_id(profile_id_raw, profile_id_custom_raw)
 
 
 def _resolve_workflow_profile(
     workflow: Optional[Mapping[str, Any]] = None,
     prompt: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
-    if isinstance(prompt, Mapping):
-        from_prompt = _extract_workflow_profile_from_prompt(prompt)
-        if from_prompt:
-            return from_prompt
-    if isinstance(workflow, Mapping):
-        from_workflow = _extract_workflow_profile_from_workflow(workflow)
-        if from_workflow:
-            return from_workflow
-
-    types: List[str] = []
-    if isinstance(prompt, Mapping):
-        for node in prompt.values():
-            if not isinstance(node, Mapping):
-                continue
-            types.append(str(node.get("class_type") or node.get("type") or "").strip())
-    if not types and isinstance(workflow, Mapping):
-        nodes = workflow.get("nodes")
-        if isinstance(nodes, list):
-            for node in nodes:
-                if not isinstance(node, Mapping):
-                    continue
-                types.append(str(node.get("type") or node.get("class_type") or "").strip())
-    lowered = [item.lower() for item in types if item]
-    if "song2dawrun" in lowered or any("song2daw" in item for item in lowered):
-        return _finalize_workflow_profile(
-            {
-                "profile_id": "song2daw",
-                "source": "heuristic_song2daw",
-            },
-            "heuristic_song2daw",
-        )
-    return _finalize_workflow_profile(
-        {
-            "profile_id": "generic_loop",
-            "source": "fallback_generic",
-        },
-        "fallback_generic",
-    )
+    return workflow_profiles.resolve_workflow_profile(workflow=workflow, prompt=prompt)
 
 
 def _list_workflow_entries() -> List[Dict[str, Any]]:
     entries: List[Dict[str, Any]] = []
     for name in _list_workflow_files():
-        profile = _finalize_workflow_profile(
+        profile = workflow_profiles.finalize_workflow_profile(
             {
                 "profile_id": "generic_loop",
                 "source": "list_fallback",
@@ -986,7 +807,7 @@ def _song2daw_run_summary(result: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _song2daw_build_ui_view_payload(run: Song2DawRunState) -> Dict[str, Any]:
-    from song2daw.core.ui_view import build_ui_view, validate_ui_view
+    from features.song2daw.core.ui_view import build_ui_view, validate_ui_view
 
     ui_view = build_ui_view(
         run.result,
@@ -2228,7 +2049,7 @@ class Song2DawRun:
         model_versions_json: str = "{}",
         output_dir: str = "",
     ):
-        from song2daw.core.runner import run_default_song2daw_pipeline, save_run_outputs
+        from features.song2daw.core.runner import run_default_song2daw_pipeline, save_run_outputs
 
         step_configs, step_configs_error = _parse_json_field(step_configs_json, "step_configs")
         if step_configs_error:

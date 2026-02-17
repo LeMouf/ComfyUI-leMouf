@@ -76,7 +76,7 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Pre-start: Run pipeline button enabled only when pipeline + workflows validate.
 - Pipeline graph persists after exit and shows last run status + duration per step.
 - Home view hides graph/actions until a pipeline is loaded.
-- Pre-start: pipeline workflow loader from `workflows/`.
+- Pre-start: pipeline workflow loader from `workflows/` feature folders.
 - Pre-start: pipeline graph view (steps + validation summary).
 - Post-start:
   - Progress bar (exec percent if available, otherwise loop completion).
@@ -159,10 +159,12 @@ If no links exist, the panel falls back to node id ordering.
 
 ## Example Workflows
 
-Example workflows live in workflows/ and can be loaded in ComfyUI.
+Example workflows live in feature folders under `workflows/` and can be loaded in ComfyUI.
 Suggested naming:
 - loop_basic_image.json
 - loop_basic_image_sd15.json
 - loop_basic_image_sdxl.json
-- leMouf_Loop-pipeline_0-1-0.json
-- leMouf_Loop-payload_0-1-0.json
+- loop/leMouf_Loop-pipeline_0-1-0.json
+- loop/leMouf_Loop-payload_0-1-0.json
+
+Workflow JSON files should always be grouped by feature (`workflows/<feature>/*.json`) and not stored at `workflows/` root.

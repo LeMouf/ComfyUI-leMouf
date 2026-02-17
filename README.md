@@ -12,6 +12,76 @@ tools, techniques, and practical building blocks for creators.
 
 Current version: `0.3.1`
 
+## Versioning Workflow
+
+Versioning follows a Commitizen-like policy with 3 levels:
+
+- `major` = breaking release
+- `medium` = feature release
+- `minor` = commit-level iteration
+
+Rules:
+
+- `minor` is bumped automatically on every commit.
+- `medium` and `major` are bumped only on explicit request.
+- Feature versions are tracked separately in `feature_versions.json`.
+- Touched features are auto-bumped (`minor` by default) on each commit.
+
+Setup once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Request next commit bump level:
+
+```bash
+python features/tools/versioning.py request --level medium
+# or
+python features/tools/versioning.py request --level major
+```
+
+Request next feature bump level:
+
+```bash
+python features/tools/versioning.py feature-request --feature song2daw --level medium
+# or for all features:
+python features/tools/versioning.py feature-request-all --level major
+```
+
+Manual commands:
+
+```bash
+python features/tools/versioning.py show
+python features/tools/versioning.py bump --level minor
+python features/tools/versioning.py bump --level medium
+python features/tools/versioning.py bump --level major
+python features/tools/versioning.py feature-show
+python features/tools/versioning.py feature-auto
+python features/tools/versioning.py feature-changelog --stage
+```
+
+Commit messages are validated with Conventional Commits:
+
+```text
+type(scope): subject
+```
+
+Examples:
+
+- `feat(song2daw): add deterministic ui hydration`
+- `fix(composition): keep linked audio/video trim in sync`
+
+## Friendly WIP Disclaimer
+
+This project is a personal playground and an active experiment.
+
+- Things can change fast (UI, workflows, nodes, APIs).
+- Breaking changes can happen between updates.
+- Please treat it as beta/testing material, not a stable production dependency.
+
+If you use it, use it with a builder mindset: try, test, iterate, have fun.
+
 ### 0.3.1 highlights
 
 - Loop lightbox cycle jump via inline cycle selector.
@@ -66,7 +136,7 @@ Current version: `0.3.1`
 3. Add **Loop Map (leMouf)** to define how payload values map into node inputs.
 4. (Optional) Add **Loop Payload (leMouf)** with a JSON array of per-cycle payloads.
 5. Use **Inject loop_id** from the panel (or set the loop_id on the node).
-6. In the **leMouf Loop** panel:
+6. In the **leMouf Studio** panel:
    - set **Total cycles**
    - click **Validate & Start**
 7. Use **Approve / Reject / Replay** to control each cycle.
@@ -90,15 +160,16 @@ Loop Map example (expressive):
 
 ## Example Workflows
 
-Sample workflows live in `workflows/` and can be loaded in ComfyUI as normal JSON files.
+Sample workflows live in feature folders under `workflows/` and can be loaded in ComfyUI as normal JSON files.
 Recommended naming:
 - `loop_basic_image.json`
 - `loop_basic_image_sd15.json`
 - `loop_basic_image_sdxl.json`
-- `leMouf_Loop-pipeline_0-1-0.json` (pipeline)
-- `leMouf_Loop-payload_0-1-0.json` (WF1 payload generator)
+- `loop/leMouf_Loop-pipeline_0-1-0.json` (pipeline)
+- `loop/leMouf_Loop-payload_0-1-0.json` (WF1 payload generator)
 
-The panel can also load pipeline workflows directly from `workflows/`.
+Workflow JSON files are feature-scoped (`workflows/<feature>/*.json`) and should never be placed at `workflows/` root.
+The panel can load pipeline workflows directly from `workflows/`.
 
 Pipeline steps can be linked in the graph (flow output → flow input). If no links exist, the panel falls back to node id ordering.
 
@@ -110,9 +181,12 @@ Click the pipeline step cards to load their workflow into the UI. The panel swit
 
 ## Panel Toggle
 
-You can show/hide the leMouf Loop panel using:
-- ComfyUI menu item: **Show/Hide leMouf Loop panel**
+You can show/hide the leMouf Studio panel using:
+- ComfyUI menu item: **Show/Hide leMouf Studio panel**
 - Keyboard shortcut: `Alt+L`
+
+UI entrypoint naming:
+- `web/lemouf_studio.js`
 
 ## Documentation
 

@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+set -e
+
+if command -v python >/dev/null 2>&1; then
+  python features/tools/versioning.py bump --from-request --stage --no-changelog >/dev/null
+  python features/tools/versioning.py feature-auto --stage >/dev/null
+  python features/tools/versioning.py feature-changelog --stage >/dev/null
+elif command -v py >/dev/null 2>&1; then
+  py -3 features/tools/versioning.py bump --from-request --stage --no-changelog >/dev/null
+  py -3 features/tools/versioning.py feature-auto --stage >/dev/null
+  py -3 features/tools/versioning.py feature-changelog --stage >/dev/null
+else
+  echo "No python runtime found for version bump hook." >&2
+  exit 1
+fi

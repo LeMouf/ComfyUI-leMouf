@@ -36,7 +36,7 @@ Cache keys include:
 ## Repository map (current)
 
 ```
-song2daw/
+features/song2daw/
   core/
     graph.py
     pipeline.py
@@ -53,8 +53,13 @@ song2daw/
 
 UI integration lives in:
 
-- `web/lemouf_loop.js`
-- `web/ui/song2daw/*`
+- `web/lemouf_studio.js` (entrypoint)
+- `web/features/song2daw/*` (song2daw adapters)
+- `web/features/studio_engine/*` (shared studio engine)
+
+Backend feature modules:
+
+- `backend/workflows/*` (workflow catalog + profile resolution)
 
 ## Workflow profile model
 
@@ -66,6 +71,16 @@ The panel uses `LeMoufWorkflowProfile`:
 - `workflow_kind` (`master` or `branch`)
 
 Master workflows are listed in Home by default.
+
+## Workflow repository convention
+
+Workflow JSON files are feature-scoped:
+
+- `workflows/song2daw/*.json`
+- `workflows/loop/*.json`
+- `workflows/composition/*.json`
+
+Root-level JSON files directly under `workflows/` are not supported.
 
 ## SongGraph shape (simplified)
 
@@ -91,7 +106,7 @@ Master workflows are listed in Home by default.
 In addition, `0.3.2` introduces a composition-oriented studio workflow family (`profile_id=tool`) through:
 
 - `workflows/composition/composition_studio_master_0-1-0.json`
-- deterministic composition resource manifest normalization in `song2daw/core/composition_manifest.py`
+- deterministic composition resource manifest normalization in `features/song2daw/core/composition_manifest.py`
 
 ## Testing
 

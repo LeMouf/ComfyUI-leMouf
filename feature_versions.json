@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "features": {
+    "panel": {
+      "version": "0.3.2",
+      "scopes": [
+        "panel",
+        "studio",
+        "ui"
+      ],
+      "paths": [
+        "web/lemouf_studio.js",
+        "web/app/",
+        "web/shared/",
+        "nodes.py"
+      ]
+    },
+    "loop": {
+      "version": "0.3.2",
+      "scopes": [
+        "loop"
+      ],
+      "paths": [
+        "backend/loop/",
+        "workflows/loop/"
+      ]
+    },
+    "song2daw": {
+      "version": "0.3.2",
+      "scopes": [
+        "song2daw",
+        "s2d"
+      ],
+      "paths": [
+        "features/song2daw/",
+        "docs/song2daw/",
+        "web/features/song2daw/",
+        "workflows/song2daw/"
+      ]
+    },
+    "composition": {
+      "version": "0.3.2",
+      "scopes": [
+        "composition",
+        "comp"
+      ],
+      "paths": [
+        "web/features/composition/",
+        "workflows/composition/"
+      ]
+    },
+    "studio_engine": {
+      "version": "0.3.2",
+      "scopes": [
+        "studio_engine",
+        "engine"
+      ],
+      "paths": [
+        "web/features/studio_engine/"
+      ]
+    }
+  }
+}

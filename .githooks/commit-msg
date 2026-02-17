@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+set -e
+
+MSG_FILE="$1"
+if [ -z "$MSG_FILE" ]; then
+  echo "commit-msg hook: missing commit message file argument" >&2
+  exit 1
+fi
+
+if command -v python >/dev/null 2>&1; then
+  python features/tools/commit_convention.py validate --file "$MSG_FILE"
+elif command -v py >/dev/null 2>&1; then
+  py -3 features/tools/commit_convention.py validate --file "$MSG_FILE"
+else
+  echo "No python runtime found for commit convention hook." >&2
+  exit 1
+fi

@@ -7,7 +7,7 @@ This document describes practical API surfaces used in release `0.3.2`.
 ### Graph validation
 
 ```python
-from song2daw.core.graph import validate_songgraph
+from features.song2daw.core.graph import validate_songgraph
 
 validate_songgraph(songgraph_dict)
 ```
@@ -15,7 +15,7 @@ validate_songgraph(songgraph_dict)
 ### Pipeline execution
 
 ```python
-from song2daw.core.pipeline import load_pipeline_steps, run_pipeline
+from features.song2daw.core.pipeline import load_pipeline_steps, run_pipeline
 
 steps = load_pipeline_steps(pipeline_yaml_path)
 result = run_pipeline(audio_path, stems_dir, steps=steps)
@@ -24,7 +24,7 @@ result = run_pipeline(audio_path, stems_dir, steps=steps)
 ### Run persistence
 
 ```python
-from song2daw.core.runner import save_run_outputs
+from features.song2daw.core.runner import save_run_outputs
 
 run_dir = save_run_outputs(result, output_dir)
 ```
@@ -47,6 +47,6 @@ run_dir = save_run_outputs(result, output_dir)
 
 ## Stability notes
 
-- SongGraph schema is validated against `song2daw/schemas/SongGraph.schema.json`.
+- SongGraph schema is validated against `features/song2daw/schemas/SongGraph.schema.json`.
 - UI payload should be treated as read-only view data.
 - Workflow profile metadata controls UI adapter routing.

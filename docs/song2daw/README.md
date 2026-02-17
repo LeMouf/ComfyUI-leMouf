@@ -84,6 +84,8 @@ Each step is deterministic, cacheable, and independently inspectable.
 
 Used to execute and orchestrate pipelines.
 
+Workflow files are grouped by feature in `workflows/<feature>/` (for example `workflows/song2daw/`, `workflows/loop/`, `workflows/composition/`).
+
 ### leMouf panel
 
 Used to:

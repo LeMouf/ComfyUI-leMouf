@@ -13,9 +13,13 @@
 - Provide `__all__` for public surfaces where appropriate.
 
 ## JSON contracts
-- SongGraph must validate against the JSON Schema (`song2daw/schemas/SongGraph.schema.json`).
+- SongGraph must validate against the JSON Schema (`features/song2daw/schemas/SongGraph.schema.json`).
 - Never delete fields without a migration path.
 - Add new fields as optional first; then tighten when stable.
+
+## Workflow repository structure
+- Place workflow JSON files only in feature folders: `workflows/<feature>/*.json`.
+- Do not add workflow JSON files directly under `workflows/` root.
 
 ## Tests
 - Every new pipeline step gets:
