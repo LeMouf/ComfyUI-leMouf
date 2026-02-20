@@ -1,5 +1,5 @@
 import { el } from "../../shared/ui/dom.js";
-import { setButtonIcon } from "../../shared/ui/icons.js";
+import { createIcon, setButtonIcon } from "../../shared/ui/icons.js";
 import { buildPresetIntent, inferMidiPreset, midiNoteToFrequency, planDsp } from "./audio_preset_plan.js";
 
 const TIMELINE_STATE = new WeakMap();
@@ -27,6 +27,7 @@ const SCRUB_GAIN = 0.8;
 const SECTION_WAVE_ALPHA = 0.78;
 const SECTION_WAVE_DETAIL = 32;
 const SECTION_VIZ_STORAGE_KEY = "lemoufSong2DawSectionVizMode";
+const SKELETON_MODE_STORAGE_KEY = "lemoufStudioTimelineSkeletonMode";
 const TIMELINE_SNAP_STORAGE_KEY = "lemoufSong2DawTimelineSnapEnabled";
 const TRACK_ROW_SCALE_STORAGE_KEY = "lemoufSong2DawTrackRowScale";
 const SECTION_VIZ_MODES = ["bands", "filled", "peaks"];
@@ -35,10 +36,28 @@ const RULER_STEP_OPTIONS_SEC = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300
 const MIDI_MASTER_GAIN = 0.5;
 const CLIP_EDIT_MIN_DURATION_SEC = 0.1;
 const CLIP_EDIT_SNAP_PX = 10;
+const CLIP_EDIT_TIME_EPS_SEC = 1e-6;
+const CLIP_WINDOW_BAR_HEIGHT = 5;
+const CLIP_WINDOW_BAR_BOTTOM_MARGIN = 3;
 const TIMELINE_EDIT_MAX_DURATION_SEC = 21_600;
+const VIDEO_FILMSTRIP_MIN_FRAMES = 3;
+const VIDEO_FILMSTRIP_MAX_FRAMES = 10;
+const VIDEO_FILMSTRIP_TARGET_WIDTH = 128;
+const VIDEO_FILMSTRIP_TARGET_HEIGHT = 72;
+const VIDEO_FILMSTRIP_TARGET_HEIGHT_LIGHT = 48;
+const VIDEO_FILMSTRIP_TILE_GAP = 3;
+const VIDEO_FILMSTRIP_MAX_CONCURRENCY = 2;
+const VIDEO_PREVIEW_MODE_STORAGE_KEY = "lemoufStudioVideoPreviewMode";
+const VIDEO_PREVIEW_MODES = ["auto", "light", "full"];
+const VIDEO_PREVIEW_QUALITY_HINTS = ["auto", "low", "medium", "high"];
+const VIDEO_FILMSTRIP_FRAME_BUCKETS = [2, 3, 4, 5, 6, 8, 10, 12];
 const TRACK_ROW_SCALE_MIN = 0.6;
 const TRACK_ROW_SCALE_MAX = 2.8;
 const SCISSORS_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='2' y='18' font-size='18'%3E%E2%9C%82%3C/text%3E%3C/svg%3E\") 4 16, crosshair";
+const JOIN_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ctext x='2' y='18' font-size='17'%3E%E2%87%94%3C/text%3E%3C/svg%3E\") 5 12, pointer";
+const CLIP_JOIN_TIME_EPS_SEC = 0.035;
+let FILMSTRIP_QUEUE_ACTIVE = 0;
+const FILMSTRIP_QUEUE = [];
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -64,6 +83,37 @@ function stableTrackColor(trackName) {
   }
   const hue = ((hash % 360) + 360) % 360;
   return `hsl(${hue} 58% 58%)`;
+}
+
+function clipHueByTrackKind(trackKind, trackName) {
+  const kind = String(trackKind || "").toLowerCase();
+  if (kind === "video") return 104;
+  if (kind === "image") return 64;
+  if (kind === "audio") return 286;
+  if (kind === "midi") return 228;
+  const text = String(trackName || "track");
+  let hash = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    hash = (hash * 31 + text.charCodeAt(i)) | 0;
+  }
+  return ((hash % 360) + 360) % 360;
+}
+
+function resolveAlternatingClipFill(trackKind, trackName, clipIndex = 0) {
+  const hue = clipHueByTrackKind(trackKind, trackName);
+  const alt = Math.abs(Number(clipIndex || 0)) % 2 === 1;
+  const saturation = 44;
+  const lightness = alt ? 66 : 56;
+  return `hsl(${hue} ${saturation}% ${lightness}%)`;
+}
+
+function resolveAlternatingClipStroke(trackKind, trackName, clipIndex = 0, selected = false) {
+  if (selected) return "rgba(36, 26, 18, 0.88)";
+  const hue = clipHueByTrackKind(trackKind, trackName);
+  const alt = Math.abs(Number(clipIndex || 0)) % 2 === 1;
+  const saturation = alt ? 32 : 38;
+  const lightness = alt ? 34 : 30;
+  return `hsl(${hue} ${saturation}% ${lightness}% / 0.76)`;
 }
 
 function buildTrackClips(events, durationSec, secPerBar) {
@@ -126,7 +176,12 @@ function buildExplicitResourceClips(events, durationSec, fallbackLabel) {
       notesCount: 0,
       resourceId: resourceId || null,
       clipId: explicitClipId || (resourceId ? `resource:${resourceId}` : `event:${i}:${time.toFixed(4)}`),
+      linkGroupId: String(event?.linkGroupId || "").trim(),
       startOffsetSec: Math.max(0, Number(event?.startOffsetSec || 0)),
+      sourceDurationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(event?.sourceDurationSec || duration || CLIP_EDIT_MIN_DURATION_SEC)
+      ),
       thumbnailSrc: String(event?.previewSrc || event?.src || "").trim(),
       src: String(event?.src || "").trim(),
       previewSrc: String(event?.previewSrc || "").trim(),
@@ -172,6 +227,38 @@ function normalizeSnapEnabled(value) {
     normalized === "off" ||
     normalized === "no"
   );
+}
+
+function normalizeVideoPreviewMode(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (VIDEO_PREVIEW_MODES.includes(normalized)) return normalized;
+  return "auto";
+}
+
+function normalizeVideoPreviewQualityHint(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (VIDEO_PREVIEW_QUALITY_HINTS.includes(normalized)) return normalized;
+  return "auto";
+}
+
+function bucketizeFilmstripFrameCount(value) {
+  const numeric = Math.max(0, Math.round(Number(value || 0)));
+  if (!numeric) return 0;
+  let closest = VIDEO_FILMSTRIP_FRAME_BUCKETS[0];
+  let bestDelta = Math.abs(numeric - closest);
+  for (const bucket of VIDEO_FILMSTRIP_FRAME_BUCKETS) {
+    const delta = Math.abs(numeric - bucket);
+    if (delta < bestDelta) {
+      closest = bucket;
+      bestDelta = delta;
+    }
+  }
+  return closest;
+}
+
+function normalizeFilmstripTargetHeight(value) {
+  const numeric = clamp(Math.round(Number(value || VIDEO_FILMSTRIP_TARGET_HEIGHT)), 24, VIDEO_FILMSTRIP_TARGET_HEIGHT);
+  return Math.max(24, Math.round(numeric / 4) * 4);
 }
 
 function resolveTrackStepIndex(track) {
@@ -277,14 +364,17 @@ function normalizeResourceKind(value) {
 
 function isTrackDropCompatible(track, resourceKind) {
   const kind = normalizeResourceKind(resourceKind);
+  const rawTrackKind = String(track?.kind || "").trim().toLowerCase();
+  if (rawTrackKind === "dropzone") return true;
   if (!kind) return true;
-  const trackKind = normalizeResourceKind(track?.kind);
+  const trackKind = normalizeResourceKind(rawTrackKind);
   if (!trackKind) return false;
   if (kind === "audio") return trackKind === "audio";
   return trackKind === kind;
 }
 
 function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
+  const strictTargeting = String(state?.dropTargetMode || "").toLowerCase() === "strict";
   const rows = Array.isArray(state?.trackRows) ? state.trackRows : [];
   const compatibleRows = [];
   for (const row of rows) {
@@ -292,6 +382,7 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
     if (!isTrackDropCompatible(row.track, resourceKind)) continue;
     const trackName = String(row.track?.name || "").trim();
     if (!trackName) continue;
+    if (isTrackLocked(state, trackName)) continue;
     compatibleRows.push({
       row,
       trackName,
@@ -300,8 +391,8 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
   }
   if (!compatibleRows.length) return null;
 
-  // Accept drops on the label side too; use current playhead there.
-  const usePlayheadTime = x < LEFT_GUTTER;
+  // If x is in the left lane (labels), use playhead time as drop anchor.
+  const usePlayheadTime = Number(x) < LEFT_GUTTER;
   const clampedX = clamp(
     Number(x),
     LEFT_GUTTER,
@@ -310,7 +401,10 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
   const rawTime = usePlayheadTime
     ? Number(state?.playheadSec || 0)
     : state.t0Sec + (clampedX - LEFT_GUTTER) / Math.max(1e-6, state.pxPerSec);
-  const timeSec = clamp(rawTime, 0, Math.max(0, Number(state.durationSec || 0)));
+  const maxTimelineTimeSec = state?.allowDurationExtend
+    ? TIMELINE_EDIT_MAX_DURATION_SEC
+    : Math.max(0, Number(state?.durationSec || 0));
+  const timeSec = clamp(rawTime, 0, maxTimelineTimeSec);
 
   const hitRow = compatibleRows.find(({ row }) => y >= row.rowTop + 1 && y <= row.rowBottom - 1);
   if (hitRow) {
@@ -321,6 +415,15 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
       rowBottom: hitRow.row.rowBottom,
       timeSec,
     };
+  }
+
+  if (strictTargeting) {
+    const canvasHeight = Number(state?.canvas?.clientHeight || 0);
+    const sectionHeight = resolveVisibleSectionHeight(state, canvasHeight);
+    const minTop = RULER_HEIGHT + sectionHeight;
+    const maxBottom = Math.max(minTop + 1, canvasHeight);
+    const verticalPad = 12;
+    if (!(Number(y) >= minTop - verticalPad && Number(y) <= maxBottom + verticalPad)) return null;
   }
 
   // If dropped between rows, snap to nearest compatible row by center distance.
@@ -344,7 +447,19 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
 }
 
 function readResourceDragPayload(dataTransfer) {
-  if (!dataTransfer) return { resourceId: "", resourceKind: "" };
+  const readGlobalPayload = () => {
+    try {
+      const payload = globalThis.__lemoufResourceDragPayload;
+      if (!payload || typeof payload !== "object") return { resourceId: "", resourceKind: "" };
+      return {
+        resourceId: String(payload.resourceId || "").trim(),
+        resourceKind: normalizeResourceKind(payload.resourceKind || ""),
+      };
+    } catch {
+      return { resourceId: "", resourceKind: "" };
+    }
+  };
+  if (!dataTransfer) return readGlobalPayload();
   const resourceId = String(
     dataTransfer.getData("application/x-lemouf-resource-id") ||
       dataTransfer.getData("text/plain") ||
@@ -354,27 +469,33 @@ function readResourceDragPayload(dataTransfer) {
   const resourceKind = normalizeResourceKind(
     dataTransfer.getData("application/x-lemouf-resource-kind") || ""
   );
-  return { resourceId, resourceKind };
+  if (resourceId) return { resourceId, resourceKind };
+  return readGlobalPayload();
 }
 
 function sameDropTarget(a, b) {
   if (!a && !b) return true;
   if (!a || !b) return false;
   if (String(a.trackName || "") !== String(b.trackName || "")) return false;
+  if (String(a.trackKind || "") !== String(b.trackKind || "")) return false;
   if (String(a.resourceId || "") !== String(b.resourceId || "")) return false;
+  if (String(a.resourceKind || "") !== String(b.resourceKind || "")) return false;
   return Math.abs(Number(a.timeSec || 0) - Number(b.timeSec || 0)) < 0.02;
 }
 
-function collectTrackEventEdgesSec(state, trackName, excludeResourceId = "") {
+function collectTrackEventEdgesSec(state, trackName, excludeResourceId = "", excludeClipId = "") {
   const name = String(trackName || "").trim();
   if (!name) return [];
   const eventsByTrack = state?.studioData?.eventsByTrack;
   const events = Array.isArray(eventsByTrack?.[name]) ? eventsByTrack[name] : [];
   const exclude = String(excludeResourceId || "").trim();
+  const excludeClip = String(excludeClipId || "").trim();
   const edges = [];
   for (const event of events) {
     const resourceId = String(event?.resourceId || "").trim();
+    const clipId = String(event?.clipId || "").trim();
     if (exclude && resourceId && resourceId === exclude) continue;
+    if (excludeClip && clipId && clipId === excludeClip) continue;
     const t0 = toFiniteNumber(event?.time, null);
     const dur = toFiniteNumber(event?.duration, null);
     if (t0 == null) continue;
@@ -418,18 +539,21 @@ function trackNameSupportsKind(state, trackName, trackKind) {
   return false;
 }
 
-function trackHasOverlap(state, trackName, startSec, endSec, excludeResourceId = "") {
+function trackHasOverlap(state, trackName, startSec, endSec, excludeResourceId = "", excludeClipId = "") {
   const name = String(trackName || "").trim();
   if (!name) return false;
   const eventsByTrack = state?.studioData?.eventsByTrack;
   const events = Array.isArray(eventsByTrack?.[name]) ? eventsByTrack[name] : [];
   const exclude = String(excludeResourceId || "").trim();
+  const excludeClip = String(excludeClipId || "").trim();
   const start = Number(startSec || 0);
   const end = Number(endSec || 0);
   if (!(end > start + 1e-4)) return false;
   for (const event of events) {
     const eventResourceId = String(event?.resourceId || "").trim();
+    const eventClipId = String(event?.clipId || "").trim();
     if (exclude && eventResourceId && eventResourceId === exclude) continue;
+    if (excludeClip && eventClipId && eventClipId === excludeClip) continue;
     const eventStart = Math.max(0, Number(event?.time || 0));
     const eventEnd = Math.max(
       eventStart + CLIP_EDIT_MIN_DURATION_SEC,
@@ -438,6 +562,82 @@ function trackHasOverlap(state, trackName, startSec, endSec, excludeResourceId =
     if (intervalsOverlapSec(start, end, eventStart, eventEnd)) return true;
   }
   return false;
+}
+
+function collectTrackNeighborBounds(state, {
+  trackName = "",
+  clipStartSec = 0,
+  clipEndSec = 0,
+  excludeClipKeys = null,
+  excludeResourceId = "",
+  excludeClipId = "",
+} = {}) {
+  const name = String(trackName || "").trim();
+  if (!name) {
+    return {
+      leftBoundSec: 0,
+      rightBoundSec: Number.POSITIVE_INFINITY,
+    };
+  }
+  const eventsByTrack = state?.studioData?.eventsByTrack;
+  const events = Array.isArray(eventsByTrack?.[name]) ? eventsByTrack[name] : [];
+  const clipStart = Math.max(0, Number(clipStartSec || 0));
+  const clipEnd = Math.max(clipStart + CLIP_EDIT_MIN_DURATION_SEC, Number(clipEndSec || clipStart + CLIP_EDIT_MIN_DURATION_SEC));
+  const excludeRes = String(excludeResourceId || "").trim();
+  const excludeCid = String(excludeClipId || "").trim();
+  const excluded = excludeClipKeys instanceof Set ? excludeClipKeys : null;
+  let leftBoundSec = 0;
+  let rightBoundSec = Number.POSITIVE_INFINITY;
+  for (const event of events) {
+    const eventTrackName = name;
+    const eventClipId = String(event?.clipId || event?.resourceId || "").trim();
+    const eventResourceId = String(event?.resourceId || "").trim();
+    if (excludeRes && eventResourceId && eventResourceId === excludeRes) continue;
+    if (excludeCid && eventClipId && eventClipId === excludeCid) continue;
+    if (excluded && excluded.has(makeClipSelectionKey(eventTrackName, eventClipId))) continue;
+    const eventStart = Math.max(0, Number(event?.time || 0));
+    const eventEnd = Math.max(
+      eventStart + CLIP_EDIT_MIN_DURATION_SEC,
+      eventStart + Math.max(0, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC))
+    );
+    if (eventEnd <= clipStart + 1e-4) {
+      if (eventEnd > leftBoundSec) leftBoundSec = eventEnd;
+      continue;
+    }
+    if (eventStart >= clipEnd - 1e-4) {
+      if (eventStart < rightBoundSec) rightBoundSec = eventStart;
+    }
+  }
+  return { leftBoundSec, rightBoundSec };
+}
+
+function resolveMoveDeltaBoundsForClip(state, {
+  trackName = "",
+  clipStartSec = 0,
+  clipEndSec = 0,
+  excludeClipKeys = null,
+  excludeResourceId = "",
+  excludeClipId = "",
+  maxTimelineSec = 0,
+} = {}) {
+  const start = Math.max(0, Number(clipStartSec || 0));
+  const end = Math.max(start + CLIP_EDIT_MIN_DURATION_SEC, Number(clipEndSec || start + CLIP_EDIT_MIN_DURATION_SEC));
+  const maxTime = Math.max(end, Number(maxTimelineSec || 0));
+  const { leftBoundSec, rightBoundSec } = collectTrackNeighborBounds(state, {
+    trackName,
+    clipStartSec: start,
+    clipEndSec: end,
+    excludeClipKeys,
+    excludeResourceId,
+    excludeClipId,
+  });
+  const minDelta = leftBoundSec - start;
+  const rightClamp = Number.isFinite(rightBoundSec) ? rightBoundSec : maxTime;
+  const maxDelta = rightClamp - end;
+  return {
+    minDelta: Number.isFinite(minDelta) ? minDelta : -start,
+    maxDelta: Number.isFinite(maxDelta) ? maxDelta : (maxTime - end),
+  };
 }
 
 function trackLaneSortValue(trackName, trackKind) {
@@ -469,6 +669,7 @@ function resolveNonOverlappingTrackName(state, options = {}) {
   const startSec = Number(options?.startSec || 0);
   const endSec = Number(options?.endSec || 0);
   const excludeResourceId = String(options?.excludeResourceId || "").trim();
+  const excludeClipId = String(options?.excludeClipId || "").trim();
   const allowCreateLane = options?.allowCreateLane !== false;
   if (!(trackKind === "video" || trackKind === "image")) return preferredTrackName;
 
@@ -490,7 +691,8 @@ function resolveNonOverlappingTrackName(state, options = {}) {
   if (!ordered.length && preferredTrackName) return preferredTrackName;
 
   for (const trackName of ordered) {
-    if (!trackHasOverlap(state, trackName, startSec, endSec, excludeResourceId)) {
+    if (isTrackLocked(state, trackName)) continue;
+    if (!trackHasOverlap(state, trackName, startSec, endSec, excludeResourceId, excludeClipId)) {
       return trackName;
     }
   }
@@ -501,6 +703,13 @@ function resolveNonOverlappingTrackName(state, options = {}) {
 function findResourceDurationHintSec(state, resourceId, fallback = 1) {
   const id = String(resourceId || "").trim();
   if (!id) return Math.max(0.25, Number(fallback || 1));
+  const explicitHints = state?.studioData?.resourceDurationById;
+  if (explicitHints && typeof explicitHints === "object") {
+    const hinted = Number(explicitHints[id] || 0);
+    if (Number.isFinite(hinted) && hinted > 0) {
+      return Math.max(0.25, hinted);
+    }
+  }
   const eventsByTrack = state?.studioData?.eventsByTrack;
   if (!eventsByTrack || typeof eventsByTrack !== "object") {
     return Math.max(0.25, Number(fallback || 1));
@@ -521,7 +730,7 @@ function findResourceDurationHintSec(state, resourceId, fallback = 1) {
 function snapTimeSec(state, rawTimeSec, options = {}) {
   const maxTimeSec = Number.isFinite(Number(options?.maxTimeSec))
     ? Math.max(0, Number(options.maxTimeSec))
-    : Math.max(0, Number(state?.durationSec || 0));
+    : getTimelineMaxTimeSec(state, { includePreview: true });
   const time = clamp(Number(rawTimeSec || 0), 0, maxTimeSec);
   if (state?.snapEnabled === false) return time;
   const thresholdSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, Number(state?.pxPerSec || 1));
@@ -543,7 +752,12 @@ function snapTimeSec(state, rawTimeSec, options = {}) {
   }
   const trackName = String(options?.trackName || "").trim();
   if (trackName) {
-    const trackEdges = collectTrackEventEdgesSec(state, trackName, options?.excludeResourceId || "");
+    const trackEdges = collectTrackEventEdgesSec(
+      state,
+      trackName,
+      options?.excludeResourceId || "",
+      options?.excludeClipId || ""
+    );
     for (const edge of trackEdges) candidates.push(edge);
   }
 
@@ -561,21 +775,424 @@ function snapTimeSec(state, rawTimeSec, options = {}) {
   return time;
 }
 
+function isNearTimelineOrigin(state, rawTimeSec, pointerCanvasX = null) {
+  const pxPerSec = Math.max(1e-6, Number(state?.pxPerSec || 1));
+  const boundarySnapSec = CLIP_EDIT_SNAP_PX / pxPerSec;
+  const raw = Math.max(0, Number(rawTimeSec || 0));
+  if (raw <= boundarySnapSec) return true;
+  if (!Number.isFinite(Number(pointerCanvasX))) return false;
+  const canvasWidth = Math.max(0, Number(state?.canvas?.clientWidth || 0));
+  const t0Sec = Math.max(0, Number(state?.t0Sec || 0));
+  const originX = LEFT_GUTTER + (0 - t0Sec) * pxPerSec;
+  if (originX < LEFT_GUTTER - CLIP_EDIT_SNAP_PX || originX > canvasWidth + CLIP_EDIT_SNAP_PX) {
+    return false;
+  }
+  return Math.abs(Number(pointerCanvasX) - originX) <= CLIP_EDIT_SNAP_PX;
+}
+
+function getTimelineMaxTimeSec(state, { includePreview = false } = {}) {
+  const baseDurationSec = Math.max(0, Number(state?.durationSec || 0));
+  if (!state?.allowDurationExtend) return baseDurationSec;
+  let maxSec = baseDurationSec;
+  const eventsByTrack = state?.studioData?.eventsByTrack;
+  if (eventsByTrack && typeof eventsByTrack === "object") {
+    for (const events of Object.values(eventsByTrack)) {
+      if (!Array.isArray(events)) continue;
+      for (const event of events) {
+        const t0 = Math.max(0, Number(event?.time || 0));
+        const dur = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+        maxSec = Math.max(maxSec, t0 + dur);
+      }
+    }
+  }
+  if (includePreview && state?.previewClipEdits instanceof Map) {
+    for (const edit of state.previewClipEdits.values()) {
+      if (!edit || typeof edit !== "object") continue;
+      const t0 = Math.max(0, Number(edit?.start || 0));
+      const t1 = Math.max(t0 + CLIP_EDIT_MIN_DURATION_SEC, Number(edit?.end || t0 + CLIP_EDIT_MIN_DURATION_SEC));
+      maxSec = Math.max(maxSec, t1);
+    }
+  }
+  return clamp(maxSec, 0, TIMELINE_EDIT_MAX_DURATION_SEC);
+}
+
 function getClipId(clip, fallback = "") {
   const id = String(clip?.clipId || clip?.resourceId || fallback || "").trim();
   return id || "";
 }
 
-function getPreviewClipEdit(state, clipId) {
+function makeClipSelectionKey(trackName, clipId) {
+  const safeTrack = String(trackName || "").trim();
+  const safeClip = String(clipId || "").trim();
+  if (!safeTrack || !safeClip) return "";
+  return `${safeTrack}::${safeClip}`;
+}
+
+function isClipSelectedInSet(state, trackName, clipId) {
+  const key = makeClipSelectionKey(trackName, clipId);
+  if (!key) return false;
+  return Boolean(state?.selectedClipKeys && state.selectedClipKeys.has(key));
+}
+
+function clearClipSelectionSet(state) {
+  if (!state?.selectedClipKeys || !(state.selectedClipKeys instanceof Set)) return false;
+  if (!state.selectedClipKeys.size) return false;
+  state.selectedClipKeys.clear();
+  return true;
+}
+
+function toggleClipSelectionFromHit(state, hit) {
+  const trackName = String(hit?.track_name || "").trim();
+  const clipId = String(hit?.clip_id || "").trim();
+  if (!trackName || !clipId) return false;
+  if (!(state.selectedClipKeys instanceof Set)) state.selectedClipKeys = new Set();
+  const key = makeClipSelectionKey(trackName, clipId);
+  if (!key) return false;
+  if (state.selectedClipKeys.has(key)) state.selectedClipKeys.delete(key);
+  else state.selectedClipKeys.add(key);
+  return true;
+}
+
+function collectSelectedClipIdsForTrack(state, trackName) {
+  const safeTrackName = String(trackName || "").trim();
+  if (!safeTrackName) return [];
+  if (!(state?.selectedClipKeys instanceof Set) || !state.selectedClipKeys.size) return [];
+  const prefix = `${safeTrackName}::`;
+  const out = [];
+  for (const key of state.selectedClipKeys.values()) {
+    const value = String(key || "").trim();
+    if (!value.startsWith(prefix)) continue;
+    const clipId = value.slice(prefix.length).trim();
+    if (!clipId) continue;
+    out.push(clipId);
+  }
+  return Array.from(new Set(out));
+}
+
+function resolvePrimaryClipSelectionKey(state) {
+  const selection = state?.selection;
+  if (!selection || typeof selection !== "object") return "";
+  if (String(selection.type || "") !== "clip") return "";
+  const trackName = String(selection.track_name || "").trim();
+  const clipId = String(selection.clip_id || "").trim();
+  return makeClipSelectionKey(trackName, clipId);
+}
+
+function resolveEffectiveSelectedClipCount(state) {
+  const setCount = state?.selectedClipKeys instanceof Set ? state.selectedClipKeys.size : 0;
+  if (setCount > 0) return setCount;
+  return resolvePrimaryClipSelectionKey(state) ? 1 : 0;
+}
+
+function makePreviewClipEditKey(clipId, trackName = "") {
+  const id = String(clipId || "").trim();
+  if (!id) return "";
+  const track = String(trackName || "").trim();
+  return track ? `${track}::${id}` : id;
+}
+
+function getPreviewClipEdit(state, clipId, trackName = "") {
   const key = String(clipId || "").trim();
   if (!key || !state?.previewClipEdits) return null;
-  return state.previewClipEdits.get(key) || null;
+  const byTrack = makePreviewClipEditKey(key, trackName);
+  if (byTrack) {
+    const scoped = state.previewClipEdits.get(byTrack);
+    if (scoped && typeof scoped === "object") return scoped;
+  }
+  const generic = state.previewClipEdits.get(key);
+  if (!generic || typeof generic !== "object") return null;
+  const safeTrack = String(trackName || "").trim();
+  const genericTrack = String(generic.trackName || "").trim();
+  if (safeTrack && genericTrack && safeTrack !== genericTrack) return null;
+  return generic;
+}
+
+function resolveFinalPreviewClipEdit(state, session) {
+  if (!state?.previewClipEdits || !session) return null;
+  const preferTrackKind = String(session.trackKind || "").trim().toLowerCase();
+  const targets = Array.isArray(session.previewTargets) ? session.previewTargets : [];
+  const preferredTargets = targets.filter(
+    (target) => String(target?.trackKind || "").trim().toLowerCase() === preferTrackKind
+  );
+  const orderedTargets = preferredTargets.length ? preferredTargets.concat(targets.filter((t) => !preferredTargets.includes(t))) : targets;
+
+  for (const target of orderedTargets) {
+    const clipId = String(target?.clipId || "").trim();
+    if (!clipId) continue;
+    const trackName = String(target?.trackName || "").trim();
+    const byResolved = getPreviewClipEdit(state, clipId, trackName);
+    if (byResolved && typeof byResolved === "object") return byResolved;
+    const scopedKey = makePreviewClipEditKey(clipId, trackName);
+    const scoped = scopedKey ? state.previewClipEdits.get(scopedKey) : null;
+    if (scoped && typeof scoped === "object") return scoped;
+    const generic = state.previewClipEdits.get(clipId);
+    if (generic && typeof generic === "object") return generic;
+  }
+
+  const safeClipId = String(session.clipId || "").trim();
+  if (safeClipId) {
+    const any = collectPreviewEditsForClip(state, safeClipId);
+    if (any.length) {
+      if (preferTrackKind) {
+        const withKind = any.find((row) => {
+          const trackName = String(row?.trackName || "").trim();
+          const kind = inferStudioTrackKindByName(trackName);
+          return kind === preferTrackKind;
+        });
+        if (withKind) return withKind;
+      }
+      return any[0];
+    }
+    const generic = state.previewClipEdits.get(safeClipId);
+    if (generic && typeof generic === "object") return generic;
+  }
+  return null;
+}
+
+function collectPreviewEditsForClip(state, clipId) {
+  const key = String(clipId || "").trim();
+  if (!key || !(state?.previewClipEdits instanceof Map) || state.previewClipEdits.size === 0) return [];
+  const out = [];
+  const seen = new Set();
+  for (const [entryKeyRaw, value] of state.previewClipEdits.entries()) {
+    const entryKey = String(entryKeyRaw || "").trim();
+    if (!entryKey || !value || typeof value !== "object") continue;
+    if (!(entryKey === key || entryKey.endsWith(`::${key}`))) continue;
+    const trackName = String(value.trackName || "").trim();
+    const start = Math.max(0, Number(value.start || 0));
+    const end = Math.max(start + CLIP_EDIT_MIN_DURATION_SEC, Number(value.end || (start + CLIP_EDIT_MIN_DURATION_SEC)));
+    const startOffsetSec = Math.max(0, Number(value.startOffsetSec || 0));
+    const sourceDurationSec = Math.max(
+      CLIP_EDIT_MIN_DURATION_SEC,
+      Number(value.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+    );
+    const signature = `${trackName}|${start.toFixed(4)}|${end.toFixed(4)}|${startOffsetSec.toFixed(4)}|${sourceDurationSec.toFixed(4)}`;
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    out.push({
+      trackName,
+      start,
+      end,
+      startOffsetSec,
+      sourceDurationSec,
+    });
+  }
+  return out;
+}
+
+function collectLinkedClipTargets(state, {
+  clipId = "",
+  resourceId = "",
+  linkGroupId = "",
+  fallbackTrackName = "",
+  fallbackTrackKind = "",
+} = {}) {
+  const safeClipId = String(clipId || "").trim();
+  const safeResourceId = String(resourceId || "").trim();
+  const safeLinkGroupId = String(linkGroupId || "").trim();
+  const out = [];
+  const seen = new Set();
+  const eventsByTrack = state?.studioData?.eventsByTrack && typeof state.studioData.eventsByTrack === "object"
+    ? state.studioData.eventsByTrack
+    : null;
+  const tracks = Array.isArray(state?.studioData?.tracks) ? state.studioData.tracks : [];
+  const kindByTrack = new Map(
+    tracks.map((track) => [String(track?.name || "").trim(), String(track?.kind || "").toLowerCase()])
+  );
+  if (eventsByTrack) {
+    for (const [trackName, events] of Object.entries(eventsByTrack)) {
+      if (!Array.isArray(events)) continue;
+      const safeTrackName = String(trackName || "").trim();
+      const trackKind = String(kindByTrack.get(safeTrackName) || inferStudioTrackKindByName(safeTrackName)).toLowerCase();
+      for (const event of events) {
+        const eventClipId = String(event?.clipId || event?.resourceId || "").trim();
+        if (!eventClipId) continue;
+        const eventResourceId = String(event?.resourceId || "").trim();
+        const eventLinkGroupId = String(event?.linkGroupId || "").trim();
+        const samePrimary = safeClipId && safeResourceId
+          ? eventClipId === safeClipId && eventResourceId === safeResourceId
+          : (safeClipId ? eventClipId === safeClipId : false);
+        const sameLink = Boolean(safeLinkGroupId) &&
+          eventLinkGroupId === safeLinkGroupId &&
+          (!safeResourceId || !eventResourceId || eventResourceId === safeResourceId);
+        if (!samePrimary && !sameLink) continue;
+        const key = `${safeTrackName}::${eventClipId}::${eventResourceId || "-"}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          clipId: eventClipId,
+          resourceId: eventResourceId,
+          trackName: safeTrackName,
+          trackKind,
+          linkGroupId: eventLinkGroupId || safeLinkGroupId,
+        });
+      }
+    }
+  }
+  if (!out.length && safeClipId) {
+    out.push({
+      clipId: safeClipId,
+      resourceId: safeResourceId,
+      trackName: String(fallbackTrackName || "").trim(),
+      trackKind: String(fallbackTrackKind || "").trim().toLowerCase(),
+      linkGroupId: safeLinkGroupId,
+    });
+  }
+  return out;
+}
+
+function writePreviewClipEdits(state, session, next) {
+  if (!state?.previewClipEdits || !session) return;
+  const targets = Array.isArray(session.previewTargets) && session.previewTargets.length
+    ? session.previewTargets
+    : [{
+        clipId: String(session.clipId || ""),
+        resourceId: String(session.resourceId || ""),
+        trackName: String(session.trackName || ""),
+        trackKind: String(session.trackKind || ""),
+        linkGroupId: String(session.linkGroupId || ""),
+      }];
+  // Keep preview map deterministic while dragging across lanes:
+  // remove stale scoped entries for the same clip ids before writing the new geometry.
+  // Otherwise finalization can accidentally read an outdated scoped key and commit
+  // back to the previous track.
+  const targetClipIds = new Set(
+    targets
+      .map((target) => String(target?.clipId || "").trim())
+      .filter(Boolean)
+  );
+  const primaryClipId = String(session.clipId || "").trim();
+  if (primaryClipId) targetClipIds.add(primaryClipId);
+  if (targetClipIds.size) {
+    for (const key of Array.from(state.previewClipEdits.keys())) {
+      const textKey = String(key || "").trim();
+      if (!textKey) continue;
+      for (const clipId of targetClipIds.values()) {
+        if (!clipId) continue;
+        if (textKey === clipId || textKey.endsWith(`::${clipId}`)) {
+          state.previewClipEdits.delete(key);
+          break;
+        }
+      }
+    }
+  }
+  const nextStart = Math.max(
+    0,
+    Number(toFiniteNumber(next?.start, toFiniteNumber(session.start, 0)))
+  );
+  const nextEnd = Math.max(
+    nextStart + CLIP_EDIT_MIN_DURATION_SEC,
+    Number(
+      toFiniteNumber(
+        next?.end,
+        toFiniteNumber(session.end, nextStart + CLIP_EDIT_MIN_DURATION_SEC)
+      )
+    )
+  );
+  const nextTrackName = String(next?.trackName || session.trackName || "");
+  const nextStartOffsetSec = Math.max(0, Number(next?.startOffsetSec ?? session.startOffsetSec ?? 0));
+  const nextSourceDurationSec = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(next?.sourceDurationSec || session.sourceDurationSec || (nextEnd - nextStart) || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const canonicalVideoTrackFromAudio = session.trackKind === "audio"
+    ? deriveVideoTrackNameFromLinkedAudio(nextTrackName)
+    : "";
+  let primaryPreview = null;
+  const primaryTarget = targets.find(
+    (target) => String(target?.trackKind || "").toLowerCase() === String(session.trackKind || "").toLowerCase()
+  ) || targets[0] || null;
+  for (const target of targets) {
+    const targetClipId = String(target?.clipId || "").trim();
+    if (!targetClipId) continue;
+    const targetTrackKind = String(target?.trackKind || "").toLowerCase();
+    let targetTrackName = String(target?.trackName || nextTrackName || "").trim();
+    if (session.mode === "move") {
+      if (targetTrackKind === session.trackKind) {
+        targetTrackName = nextTrackName;
+      } else if (
+        session.trackKind === "video" &&
+        targetTrackKind === "audio" &&
+        /^video\s*audio/i.test(targetTrackName)
+      ) {
+        targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(nextTrackName, targetTrackName);
+      } else if (session.trackKind === "audio" && canonicalVideoTrackFromAudio) {
+        if (targetTrackKind === "video") {
+          targetTrackName = canonicalVideoTrackFromAudio;
+        } else if (targetTrackKind === "audio" && /^video\s*audio/i.test(targetTrackName)) {
+          targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(canonicalVideoTrackFromAudio, targetTrackName);
+        }
+      }
+    }
+    const preview = {
+      start: nextStart,
+      end: nextEnd,
+      trackName: targetTrackName,
+      startOffsetSec: nextStartOffsetSec,
+      sourceDurationSec: nextSourceDurationSec,
+    };
+    const scopedKey = makePreviewClipEditKey(targetClipId, targetTrackName);
+    if (scopedKey) state.previewClipEdits.set(scopedKey, preview);
+    if (
+      !primaryPreview &&
+      primaryTarget &&
+      String(primaryTarget.clipId || "").trim() === targetClipId &&
+      String(primaryTarget.trackKind || "").toLowerCase() === String(target.trackKind || "").toLowerCase()
+    ) {
+      primaryPreview = preview;
+    }
+  }
+  if (String(session.clipId || "").trim()) {
+    const fallbackPreview = primaryPreview || {
+      start: nextStart,
+      end: nextEnd,
+      trackName: nextTrackName,
+      startOffsetSec: nextStartOffsetSec,
+      sourceDurationSec: nextSourceDurationSec,
+    };
+    state.previewClipEdits.set(String(session.clipId || "").trim(), fallbackPreview);
+  }
+}
+
+function clearPreviewClipEditsForSession(state, session) {
+  if (!state?.previewClipEdits || !session) return;
+  const targets = Array.isArray(session.previewTargets) && session.previewTargets.length
+    ? session.previewTargets
+    : [{ clipId: String(session.clipId || "") }];
+  for (const target of targets) {
+    const clipId = String(target?.clipId || "").trim();
+    const trackName = String(target?.trackName || "").trim();
+    const scopedKey = makePreviewClipEditKey(clipId, trackName);
+    if (scopedKey) state.previewClipEdits.delete(scopedKey);
+  }
+  const primaryKey = String(session.clipId || "").trim();
+  if (primaryKey) state.previewClipEdits.delete(primaryKey);
+  const clipIds = new Set(
+    targets
+      .map((target) => String(target?.clipId || "").trim())
+      .filter(Boolean)
+      .concat(primaryKey ? [primaryKey] : [])
+  );
+  if (clipIds.size) {
+    for (const key of Array.from(state.previewClipEdits.keys())) {
+      const textKey = String(key || "");
+      for (const clipId of clipIds) {
+        if (!clipId) continue;
+        if (textKey === clipId || textKey.endsWith(`::${clipId}`)) {
+          state.previewClipEdits.delete(key);
+          break;
+        }
+      }
+    }
+  }
 }
 
 function applyPreviewClipGeometry(state, clip, trackName) {
   const clipId = getClipId(clip);
-  const edit = getPreviewClipEdit(state, clipId);
+  const edit = getPreviewClipEdit(state, clipId, trackName);
   if (!edit) return clip;
+  const editTrackName = String(edit.trackName || "").trim();
+  if (editTrackName && editTrackName !== String(trackName || "").trim()) return null;
   const maxDurationSec = state?.allowDurationExtend
     ? TIMELINE_EDIT_MAX_DURATION_SEC
     : Math.max(0, Number(state?.durationSec || 0));
@@ -589,7 +1206,313 @@ function applyPreviewClipGeometry(state, clip, trackName) {
     ...clip,
     start,
     end,
+    startOffsetSec: Math.max(0, Number(edit.startOffsetSec ?? clip?.startOffsetSec ?? 0)),
+    sourceDurationSec: Math.max(
+      CLIP_EDIT_MIN_DURATION_SEC,
+      Number(edit.sourceDurationSec ?? clip?.sourceDurationSec ?? CLIP_EDIT_MIN_DURATION_SEC)
+    ),
   };
+}
+
+function collectPreviewInjectedClipsForTrack(state, trackName, trackKind, clipClampMaxSec) {
+  const safeTrackName = String(trackName || "").trim();
+  if (!safeTrackName) return [];
+  if (!(state?.previewClipEdits instanceof Map) || state.previewClipEdits.size === 0) return [];
+  const eventsByTrack = state?.studioData?.eventsByTrack;
+  if (!eventsByTrack || typeof eventsByTrack !== "object") return [];
+  const normalizedTrackKind = String(trackKind || "").trim().toLowerCase();
+  const out = [];
+  const seen = new Set();
+  for (const [sourceTrackNameRaw, events] of Object.entries(eventsByTrack)) {
+    const sourceTrackName = String(sourceTrackNameRaw || "").trim();
+    if (!sourceTrackName || sourceTrackName === safeTrackName || !Array.isArray(events)) continue;
+    for (const event of events) {
+      const clipId = String(event?.clipId || event?.resourceId || "").trim();
+      if (!clipId) continue;
+      const editCandidates = collectPreviewEditsForClip(state, clipId);
+      if (!editCandidates.length) continue;
+      const edit = editCandidates.find((row) => String(row?.trackName || "").trim() === safeTrackName) || null;
+      if (!edit) continue;
+      const targetTrackName = String(edit.trackName || sourceTrackName).trim();
+      if (targetTrackName !== safeTrackName) continue;
+      const inferredTargetKind = inferStudioTrackKindByName(targetTrackName);
+      if (normalizedTrackKind && inferredTargetKind && inferredTargetKind !== normalizedTrackKind) continue;
+      const resourceId = String(event?.resourceId || "").trim();
+      const key = `${clipId}::${resourceId || "-"}::${sourceTrackName}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const start = clamp(Math.max(0, Number(edit.start || event?.time || 0)), 0, clipClampMaxSec);
+      const end = clamp(
+        Math.max(start + CLIP_EDIT_MIN_DURATION_SEC, Number(edit.end || (Number(event?.time || 0) + Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC)))),
+        start + CLIP_EDIT_MIN_DURATION_SEC,
+        clipClampMaxSec
+      );
+      if (!(end > start + 1e-6)) continue;
+      out.push({
+        start,
+        end,
+        label: String(event?.label || "clip"),
+        notesCount: 0,
+        clipId,
+        resourceId: resourceId || null,
+        linkGroupId: String(event?.linkGroupId || "").trim(),
+        startOffsetSec: Math.max(0, Number(edit.startOffsetSec ?? event?.startOffsetSec ?? 0)),
+        sourceDurationSec: Math.max(
+          CLIP_EDIT_MIN_DURATION_SEC,
+          Number(edit.sourceDurationSec ?? event?.sourceDurationSec ?? (end - start) ?? CLIP_EDIT_MIN_DURATION_SEC)
+        ),
+        thumbnailSrc: String(event?.previewSrc || event?.src || "").trim(),
+        src: String(event?.src || "").trim(),
+        previewSrc: String(event?.previewSrc || "").trim(),
+        trackName: safeTrackName,
+        trackKind: normalizedTrackKind || inferredTargetKind || "",
+      });
+    }
+  }
+  return out;
+}
+
+function inferStudioTrackKindByName(trackName) {
+  const text = String(trackName || "").trim().toLowerCase();
+  if (!text) return "";
+  if (text.startsWith("video")) return "video";
+  if (text.startsWith("image")) return "image";
+  if (text.startsWith("audio")) return "audio";
+  if (text.startsWith("mix")) return "audio";
+  return "";
+}
+
+function deriveLinkedAudioTrackNameFromVideoTrack(videoTrackName, sourceTrackName) {
+  const laneMatch = String(videoTrackName || "").trim().match(/^video\s*(\d+)$/i);
+  if (!laneMatch) return String(sourceTrackName || "").trim();
+  const lane = Math.max(1, Number(laneMatch[1] || 1));
+  const source = String(sourceTrackName || "").trim();
+  if (/^video\s*audio\s*m\d+$/i.test(source)) return `Video Audio M${lane}`;
+  return `Video Audio ${lane}`;
+}
+
+function deriveVideoTrackNameFromLinkedAudio(audioTrackName) {
+  const track = String(audioTrackName || "").trim();
+  const match = track.match(/^video\s*audio(?:\s*m)?\s*(\d+)$/i);
+  if (!match) return "";
+  const lane = Math.max(1, Number(match[1]) || 1);
+  return `Video ${lane}`;
+}
+
+function parseVideoLaneFromTrack(trackName, trackKind = "") {
+  const name = String(trackName || "").trim();
+  const kind = String(trackKind || "").trim().toLowerCase();
+  if (!name) return null;
+  if (kind === "video") {
+    const match = name.match(/^video\s*(\d+)$/i);
+    if (!match) return null;
+    const lane = Number(match[1]);
+    return Number.isFinite(lane) ? Math.max(1, lane) : null;
+  }
+  if (kind === "audio") {
+    const match = name.match(/^video\s*audio(?:\s*m)?\s*(\d+)$/i);
+    if (!match) return null;
+    const lane = Number(match[1]);
+    return Number.isFinite(lane) ? Math.max(1, lane) : null;
+  }
+  return null;
+}
+
+function areVideoAudioTracksLinked(trackA, trackB) {
+  const kindA = String(trackA?.kind || "").trim().toLowerCase();
+  const kindB = String(trackB?.kind || "").trim().toLowerCase();
+  const laneA = parseVideoLaneFromTrack(trackA?.name, kindA);
+  const laneB = parseVideoLaneFromTrack(trackB?.name, kindB);
+  if (laneA == null || laneB == null || laneA !== laneB) return false;
+  return (
+    (kindA === "video" && kindB === "audio") ||
+    (kindA === "audio" && kindB === "video")
+  );
+}
+
+function applyCommittedClipEditToLocalStudio(state, payload) {
+  if (!state?.studioData || !payload || typeof payload !== "object") return false;
+  const clipId = String(payload.clipId || "").trim();
+  const resourceId = String(payload.resourceId || "").trim();
+  const linkGroupId = String(payload.linkGroupId || "").trim();
+  const trackName = String(payload.trackName || "").trim();
+  const trackKind = String(payload.trackKind || "").trim().toLowerCase();
+  const canonicalVideoTrackFromAudio =
+    trackKind === "audio" ? deriveVideoTrackNameFromLinkedAudio(trackName) : "";
+  if (!clipId || !trackName) return false;
+  const eventsByTrack = state.studioData?.eventsByTrack && typeof state.studioData.eventsByTrack === "object"
+    ? state.studioData.eventsByTrack
+    : null;
+  if (!eventsByTrack) return false;
+  const studioTracks = Array.isArray(state.studioData?.tracks) ? state.studioData.tracks : [];
+  const trackKindByName = new Map(studioTracks.map((track) => [String(track?.name || "").trim(), String(track?.kind || "").toLowerCase()]));
+  const matches = [];
+  for (const [name, events] of Object.entries(eventsByTrack)) {
+    if (!Array.isArray(events)) continue;
+    for (let i = 0; i < events.length; i += 1) {
+      const event = events[i];
+      if (!event || typeof event !== "object") continue;
+      const eventClipId = String(event.clipId || "").trim();
+      const eventResourceId = String(event.resourceId || "").trim();
+      const eventLinkGroupId = String(event.linkGroupId || "").trim();
+      const samePrimary = resourceId
+        ? eventClipId === clipId && eventResourceId === resourceId
+        : eventClipId === clipId;
+      const sameLink = Boolean(linkGroupId) &&
+        eventLinkGroupId === linkGroupId &&
+        (!resourceId || !eventResourceId || eventResourceId === resourceId);
+      if (!samePrimary && !sameLink) continue;
+      matches.push({ trackName: name, index: i, event });
+    }
+  }
+  if (!matches.length) return false;
+
+  const base = matches[0]?.event || {};
+  const oldStart = Math.max(0, Number(base.time || 0));
+  const nextStart = Math.max(0, Number(toFiniteNumber(payload.timeSec, oldStart)));
+  const mode = String(payload.mode || "move").toLowerCase();
+  const isMoveMode = mode === "move";
+  const sourceDurationSec = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(base.sourceDurationSec || payload.sourceDurationSec || payload.durationSec || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const currentStartOffsetSec = Math.max(0, Number(base.startOffsetSec || 0));
+  const explicitStartOffsetSec = toFiniteNumber(payload.startOffsetSec, null);
+  let nextStartOffsetSec = currentStartOffsetSec;
+  if (explicitStartOffsetSec != null) {
+    nextStartOffsetSec = Math.max(0, explicitStartOffsetSec);
+  } else if (mode === "trim_start") {
+    nextStartOffsetSec = Math.max(0, currentStartOffsetSec + (nextStart - oldStart));
+  }
+  nextStartOffsetSec = Math.min(nextStartOffsetSec, Math.max(0, sourceDurationSec - CLIP_EDIT_MIN_DURATION_SEC));
+  const maxDurationBySource = Math.max(CLIP_EDIT_MIN_DURATION_SEC, sourceDurationSec - nextStartOffsetSec);
+  const nextDuration = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Math.min(Number(payload.durationSec || base.duration || CLIP_EDIT_MIN_DURATION_SEC), maxDurationBySource)
+  );
+
+  const ensureTrack = (name, kindHint = "") => {
+    const safe = String(name || "").trim();
+    if (!safe) return;
+    if (!Array.isArray(eventsByTrack[safe])) eventsByTrack[safe] = [];
+    if (!trackKindByName.has(safe)) {
+      const inferredKind = kindHint || inferStudioTrackKindByName(safe);
+      trackKindByName.set(safe, inferredKind);
+      studioTracks.push({
+        name: safe,
+        kind: inferredKind || "audio",
+        partition: "step_tracks",
+        source: "",
+        audioAssetKey: "",
+        events: eventsByTrack[safe].length,
+      });
+    }
+  };
+
+  for (const match of matches) {
+    const currentTrackName = String(match.trackName || "").trim();
+    const currentTrackKind = String(trackKindByName.get(currentTrackName) || inferStudioTrackKindByName(currentTrackName)).toLowerCase();
+    const event = match.event;
+    const eventSourceDurationSec = Math.max(
+      CLIP_EDIT_MIN_DURATION_SEC,
+      Number(event.sourceDurationSec || payload.sourceDurationSec || sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+    );
+    let eventStartOffsetSec = nextStartOffsetSec;
+    let eventDurationSec = nextDuration;
+    if (isMoveMode) {
+      // Move must be a pure translation: keep each linked event window as-is.
+      eventStartOffsetSec = Math.max(0, Number(event.startOffsetSec || 0));
+      eventStartOffsetSec = Math.min(
+        eventStartOffsetSec,
+        Math.max(0, eventSourceDurationSec - CLIP_EDIT_MIN_DURATION_SEC)
+      );
+      const eventMaxDurationBySource = Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        eventSourceDurationSec - eventStartOffsetSec
+      );
+      eventDurationSec = Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Math.min(
+          Number(event.duration || CLIP_EDIT_MIN_DURATION_SEC),
+          eventMaxDurationBySource
+        )
+      );
+    }
+    event.time = nextStart;
+    event.duration = eventDurationSec;
+    event.startOffsetSec = eventStartOffsetSec;
+    event.sourceDurationSec = eventSourceDurationSec;
+    if (linkGroupId) event.linkGroupId = linkGroupId;
+
+    let targetTrackName = currentTrackName;
+    if (currentTrackKind === trackKind) {
+      targetTrackName = trackName;
+    } else if (trackKind === "video" && currentTrackKind === "audio" && /^video\s*audio/i.test(currentTrackName)) {
+      targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(trackName, currentTrackName);
+    } else if (trackKind === "audio" && canonicalVideoTrackFromAudio) {
+      if (currentTrackKind === "video") {
+        targetTrackName = canonicalVideoTrackFromAudio;
+      } else if (currentTrackKind === "audio" && /^video\s*audio/i.test(currentTrackName)) {
+        targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(canonicalVideoTrackFromAudio, currentTrackName);
+      }
+    }
+    if (targetTrackName !== currentTrackName) {
+      ensureTrack(targetTrackName, currentTrackKind);
+      const sourceList = eventsByTrack[currentTrackName];
+      if (Array.isArray(sourceList) && sourceList[match.index] === event) {
+        sourceList.splice(match.index, 1);
+      } else if (Array.isArray(sourceList)) {
+        const idx = sourceList.indexOf(event);
+        if (idx >= 0) sourceList.splice(idx, 1);
+      }
+      eventsByTrack[targetTrackName].push(event);
+    }
+  }
+
+  for (const [name, events] of Object.entries(eventsByTrack)) {
+    if (!Array.isArray(events)) continue;
+    events.sort((a, b) => {
+      const ta = Number(a?.time || 0);
+      const tb = Number(b?.time || 0);
+      if (ta !== tb) return ta - tb;
+      return String(a?.clipId || "").localeCompare(String(b?.clipId || ""));
+    });
+    const track = studioTracks.find((row) => String(row?.name || "").trim() === name);
+    if (track) track.events = events.length;
+  }
+  const maxEnd = Object.values(eventsByTrack).reduce((max, events) => {
+    if (!Array.isArray(events)) return max;
+    for (const event of events) {
+      const end = Number(event?.time || 0) + Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+      if (end > max) max = end;
+    }
+    return max;
+  }, 0);
+  state.durationSec = Math.max(1, maxEnd);
+  refreshTimelineViewAfterDurationChange(state);
+  if (Array.isArray(state.studioData?.sections) && state.studioData.sections.length) {
+    const last = state.studioData.sections[state.studioData.sections.length - 1];
+    if (last && typeof last === "object") last.end = Math.max(Number(last.start || 0), state.durationSec);
+  }
+  return true;
+}
+
+function serializePreviewClipEdits(state) {
+  const map = state?.previewClipEdits;
+  if (!(map instanceof Map) || map.size === 0) return null;
+  const out = {};
+  for (const [key, value] of map.entries()) {
+    const id = String(key || "").trim();
+    if (!id || !value || typeof value !== "object") continue;
+    out[id] = {
+      start: Math.max(0, Number(value.start || 0)),
+      end: Math.max(0, Number(value.end || 0)),
+      trackName: String(value.trackName || "").trim(),
+      startOffsetSec: Math.max(0, Number(value.startOffsetSec || 0)),
+      sourceDurationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(value.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)),
+    };
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 function resolveCutTimeSecForHit(state, hit, pointerX) {
@@ -604,6 +1527,7 @@ function resolveCutTimeSecForHit(state, hit, pointerX) {
   const snappedCut = snapTimeSec(state, rawCut, {
     trackName: String(hit?.track_name || "").trim(),
     excludeResourceId: String(hit?.resource_id || "").trim(),
+    excludeClipId: String(hit?.clip_id || "").trim(),
     maxTimeSec: state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec,
   });
   return clamp(snappedCut, clipStart + CLIP_EDIT_MIN_DURATION_SEC, clipEnd - CLIP_EDIT_MIN_DURATION_SEC);
@@ -628,6 +1552,96 @@ function resolveCutPreview(state, x, y) {
   };
 }
 
+function canJoinAdjacentClips(leftClip, rightClip) {
+  if (!leftClip || !rightClip) return false;
+  const leftResource = String(leftClip?.resourceId || "").trim();
+  const rightResource = String(rightClip?.resourceId || "").trim();
+  if (!leftResource || leftResource !== rightResource) return false;
+  const leftTrack = String(leftClip?.trackName || "").trim();
+  const rightTrack = String(rightClip?.trackName || "").trim();
+  if (!leftTrack || leftTrack !== rightTrack) return false;
+  const leftEnd = Math.max(0, Number(leftClip?.end || 0));
+  const rightStart = Math.max(0, Number(rightClip?.start || 0));
+  if (Math.abs(leftEnd - rightStart) > CLIP_JOIN_TIME_EPS_SEC) return false;
+  const leftOffset = Math.max(0, Number(leftClip?.startOffsetSec || 0));
+  const leftDuration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, leftEnd - Math.max(0, Number(leftClip?.start || 0)));
+  const rightOffset = Math.max(0, Number(rightClip?.startOffsetSec || 0));
+  return Math.abs((leftOffset + leftDuration) - rightOffset) <= 0.08;
+}
+
+function collectMultiSelectedMoveMembers(state, anchorHit) {
+  const out = [];
+  if (!(state?.selectedClipKeys instanceof Set) || !state.selectedClipKeys.size) return out;
+  const anchorClipId = String(anchorHit?.clip_id || "").trim();
+  const anchorTrackName = String(anchorHit?.track_name || "").trim();
+  if (!anchorClipId || !anchorTrackName) return out;
+  const anchorKey = makeClipSelectionKey(anchorTrackName, anchorClipId);
+  if (!anchorKey || !state.selectedClipKeys.has(anchorKey)) return out;
+  const seen = new Set();
+  const hits = Array.isArray(state.hitRegions) ? state.hitRegions : [];
+  for (const region of hits) {
+    const payload = region?.payload;
+    if (!payload || String(payload.type || "") !== "clip") continue;
+    const trackKind = String(payload.track_kind || "").toLowerCase();
+    if (trackKind !== "video" && trackKind !== "image") continue;
+    const clipId = String(payload.clip_id || "").trim();
+    const trackName = String(payload.track_name || "").trim();
+    const resourceId = String(payload.resource_id || "").trim();
+    if (!clipId || !trackName || !resourceId) continue;
+    const key = makeClipSelectionKey(trackName, clipId);
+    if (!key || !state.selectedClipKeys.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      key,
+      clipId,
+      trackName,
+      trackKind,
+      resourceId,
+      linkGroupId: String(payload.link_group_id || "").trim(),
+      start: Math.max(0, Number(payload.t0_sec || 0)),
+      end: Math.max(
+        Math.max(0, Number(payload.t0_sec || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
+        Number(payload.t1_sec || (Number(payload.t0_sec || 0) + CLIP_EDIT_MIN_DURATION_SEC))
+      ),
+      startOffsetSec: Math.max(0, Number(payload.start_offset_sec || 0)),
+      sourceDurationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(payload.source_duration_sec || (Number(payload.t1_sec || 0) - Number(payload.t0_sec || 0) || CLIP_EDIT_MIN_DURATION_SEC))
+      ),
+    });
+  }
+  return out;
+}
+
+function resolveGroupMoveDeltaBounds(state, members, maxTimelineSec) {
+  const rows = Array.isArray(members) ? members : [];
+  if (!rows.length) return { minDelta: 0, maxDelta: 0 };
+  const excludedKeys = new Set(rows.map((row) => String(row?.key || "").trim()).filter(Boolean));
+  let minDelta = Number.NEGATIVE_INFINITY;
+  let maxDelta = Number.POSITIVE_INFINITY;
+  const maxTime = Math.max(0, Number(maxTimelineSec || 0));
+  for (const row of rows) {
+    const start = Math.max(0, Number(row?.start || 0));
+    const end = Math.max(start + CLIP_EDIT_MIN_DURATION_SEC, Number(row?.end || start + CLIP_EDIT_MIN_DURATION_SEC));
+    const bounds = resolveMoveDeltaBoundsForClip(state, {
+      trackName: String(row?.trackName || ""),
+      clipStartSec: start,
+      clipEndSec: end,
+      excludeClipKeys: excludedKeys,
+      maxTimelineSec: maxTime,
+    });
+    minDelta = Math.max(minDelta, Number(bounds?.minDelta || 0));
+    maxDelta = Math.min(maxDelta, Number(bounds?.maxDelta || 0));
+  }
+  if (!Number.isFinite(minDelta)) minDelta = 0;
+  if (!Number.isFinite(maxDelta)) maxDelta = 0;
+  if (minDelta > maxDelta) {
+    const locked = (minDelta + maxDelta) * 0.5;
+    return { minDelta: locked, maxDelta: locked };
+  }
+  return { minDelta, maxDelta };
+}
+
 function resolveEffectiveChannelMode(state, track) {
   const trackName = String(track?.name || "").trim();
   const base = String(track?.channelMode || "").toLowerCase();
@@ -637,6 +1651,45 @@ function resolveEffectiveChannelMode(state, track) {
   const value = override || base;
   if (value === "mono" || value === "stereo") return value;
   return base === "mono" ? "mono" : "stereo";
+}
+
+function notifyPreviewCacheUpdated(state) {
+  if (!state) return;
+  if (typeof state.onPreviewCacheUpdate === "function") {
+    try {
+      state.onPreviewCacheUpdate();
+    } catch {}
+    return;
+  }
+  if (state.canvas && state.ctx) {
+    try {
+      draw(state);
+    } catch {}
+  }
+}
+
+function pumpFilmstripQueue() {
+  while (FILMSTRIP_QUEUE_ACTIVE < VIDEO_FILMSTRIP_MAX_CONCURRENCY && FILMSTRIP_QUEUE.length) {
+    const task = FILMSTRIP_QUEUE.shift();
+    if (typeof task !== "function") continue;
+    FILMSTRIP_QUEUE_ACTIVE += 1;
+    Promise.resolve()
+      .then(task)
+      .catch(() => {})
+      .finally(() => {
+        FILMSTRIP_QUEUE_ACTIVE = Math.max(0, FILMSTRIP_QUEUE_ACTIVE - 1);
+        pumpFilmstripQueue();
+      });
+  }
+}
+
+function enqueueFilmstripTask(task) {
+  FILMSTRIP_QUEUE.push(task);
+  pumpFilmstripQueue();
+}
+
+function getFilmstripQueuePressure() {
+  return FILMSTRIP_QUEUE_ACTIVE + FILMSTRIP_QUEUE.length;
 }
 
 function ensureTimelineThumbnailEntry(state, src) {
@@ -658,11 +1711,11 @@ function ensureTimelineThumbnailEntry(state, src) {
   entry.img = img;
   img.onload = () => {
     entry.status = "ready";
-    draw(state);
+    notifyPreviewCacheUpdated(state);
   };
   img.onerror = () => {
     entry.status = "error";
-    draw(state);
+    notifyPreviewCacheUpdated(state);
   };
   img.src = key;
   return entry;
@@ -674,6 +1727,270 @@ function getTimelineThumbnail(state, src) {
   return entry.img;
 }
 
+function getFilmstripCandidatesForSource(cache, src, strategy) {
+  if (!(cache instanceof Map)) return [];
+  const safeSrc = String(src || "").trim();
+  const safeStrategy = String(strategy || "full").trim().toLowerCase();
+  if (!safeSrc) return [];
+  const out = [];
+  for (const value of cache.values()) {
+    if (!value || typeof value !== "object") continue;
+    if (String(value?.src || "") !== safeSrc) continue;
+    if (String(value?.strategy || "").trim().toLowerCase() !== safeStrategy) continue;
+    const frames = Array.isArray(value?.frames) ? value.frames.filter(Boolean) : [];
+    if (!frames.length) continue;
+    out.push({
+      entry: value,
+      status: String(value?.status || "").trim().toLowerCase(),
+      frameCount: Math.max(1, Number(value?.frameCount || frames.length || 1)),
+      targetHeight: Math.max(24, Number(value?.targetHeight || VIDEO_FILMSTRIP_TARGET_HEIGHT_LIGHT)),
+      frames,
+    });
+  }
+  return out;
+}
+
+function pickReusableFilmstripCandidate(candidates, { frameCount = 0, targetHeight = VIDEO_FILMSTRIP_TARGET_HEIGHT } = {}) {
+  const requestedFrameCount = Math.max(0, Number(frameCount || 0));
+  const requestedTargetHeight = Math.max(24, Number(targetHeight || VIDEO_FILMSTRIP_TARGET_HEIGHT));
+  let bestReady = null;
+  let bestReadyScore = Number.POSITIVE_INFINITY;
+  let bestFallback = null;
+  let bestFallbackScore = Number.POSITIVE_INFINITY;
+  for (const candidate of Array.isArray(candidates) ? candidates : []) {
+    const status = String(candidate?.status || "");
+    const isReady = status === "ready" || status === "ready_stale";
+    const frameCountDelta = requestedFrameCount
+      ? Math.abs(Number(candidate?.frameCount || 0) - requestedFrameCount)
+      : 0;
+    const heightDelta = Math.abs(Number(candidate?.targetHeight || 0) - requestedTargetHeight);
+    const score = frameCountDelta * 10 + heightDelta;
+    if (isReady && score < bestReadyScore) {
+      bestReady = candidate;
+      bestReadyScore = score;
+      continue;
+    }
+    if (!isReady && score < bestFallbackScore) {
+      bestFallback = candidate;
+      bestFallbackScore = score;
+    }
+  }
+  return {
+    ready: bestReady,
+    fallback: bestFallback || bestReady,
+  };
+}
+
+function ensureTimelineVideoFilmstrip(state, src, hintDurationSec = 0, options = {}) {
+  if (!state?.clipThumbCache) return null;
+  const key = String(src || "").trim();
+  if (!key) return null;
+  const strategy = String(options?.strategy || "full").trim().toLowerCase() === "edges" ? "edges" : "full";
+  const targetHeight = normalizeFilmstripTargetHeight(options?.targetHeight || VIDEO_FILMSTRIP_TARGET_HEIGHT);
+  const requestedFrameCount = bucketizeFilmstripFrameCount(options?.frameCount || 0);
+  const cacheKey = `filmstrip:${key}:${strategy}:${targetHeight}:${requestedFrameCount || "auto"}`;
+  if (state.clipThumbCache.has(cacheKey)) {
+    const cached = state.clipThumbCache.get(cacheKey);
+    if (cached && typeof cached === "object") cached.lastUsedAt = Date.now();
+    return cached;
+  }
+  const candidates = getFilmstripCandidatesForSource(state.clipThumbCache, key, strategy);
+  const { ready: reusableReady, fallback: reusableFallback } = pickReusableFilmstripCandidate(candidates, {
+    frameCount: requestedFrameCount || (strategy === "edges" ? 2 : 0),
+    targetHeight,
+  });
+  if (reusableReady?.entry) {
+    const readyFrames = Array.isArray(reusableReady.frames) ? reusableReady.frames.length : 0;
+    const minFrames = strategy === "edges" ? 2 : Math.max(2, (requestedFrameCount || readyFrames) - 2);
+    const targetDeltaOk = Math.abs(Number(reusableReady.targetHeight || 0) - targetHeight) <= 12;
+    const frameCountOk = readyFrames >= minFrames;
+    if (targetDeltaOk && frameCountOk) {
+      reusableReady.entry.lastUsedAt = Date.now();
+      state.clipThumbCache.set(cacheKey, reusableReady.entry);
+      return reusableReady.entry;
+    }
+  }
+  const fallbackFrames = Array.isArray(reusableFallback?.frames) ? reusableFallback.frames.filter(Boolean) : [];
+  const entry = {
+    src: key,
+    strategy,
+    status: fallbackFrames.length ? "warming" : "loading",
+    frames: fallbackFrames.length ? fallbackFrames.slice() : [],
+    durationSec: Math.max(0.01, Number(hintDurationSec || 0)),
+    frameCount: requestedFrameCount || (fallbackFrames.length || 0),
+    targetHeight,
+    error: false,
+    lastUsedAt: Date.now(),
+  };
+  state.clipThumbCache.set(cacheKey, entry);
+  if (typeof document === "undefined") {
+    entry.status = fallbackFrames.length ? "ready_stale" : "error";
+    entry.error = !fallbackFrames.length;
+    return entry;
+  }
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  video.src = key;
+  const cleanup = () => {
+    try {
+      video.pause();
+      video.removeAttribute("src");
+      video.load?.();
+    } catch {}
+  };
+  const waitForEvent = (node, eventName, timeoutMs = 3000) =>
+    new Promise((resolve, reject) => {
+      let done = false;
+      const onDone = (ok) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        node.removeEventListener(eventName, onEvent);
+        node.removeEventListener("error", onError);
+        if (ok) resolve();
+        else reject(new Error(`video_${eventName}_error`));
+      };
+      const onEvent = () => onDone(true);
+      const onError = () => onDone(false);
+      const timer = setTimeout(() => onDone(false), timeoutMs);
+      node.addEventListener(eventName, onEvent, { once: true });
+      node.addEventListener("error", onError, { once: true });
+    });
+  const buildFilmstrip = async () => {
+    try {
+      if (!(video.readyState >= 1)) {
+        await waitForEvent(video, "loadedmetadata", 3500);
+      }
+      const durationSec = Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(video.duration || 0) > 0.05 ? Number(video.duration || 0) : Number(hintDurationSec || 0.01)
+      );
+      entry.durationSec = durationSec;
+      const frameCount = requestedFrameCount > 0
+        ? requestedFrameCount
+        : bucketizeFilmstripFrameCount(
+            clamp(Math.round(durationSec * 1.1), VIDEO_FILMSTRIP_MIN_FRAMES, VIDEO_FILMSTRIP_MAX_FRAMES)
+          );
+      const aspect = Math.max(0.2, Math.min(5, Number(video.videoWidth || 16) / Math.max(1, Number(video.videoHeight || 9))));
+      const h = targetHeight;
+      const w = Math.max(40, Math.round(h * aspect));
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("filmstrip_no_canvas");
+      const times = [];
+      if (strategy === "edges") {
+        const maxT = Math.max(0, durationSec - 0.04);
+        times.push(0, maxT);
+      } else if (frameCount <= 1) {
+        times.push(0);
+      } else {
+        const maxT = Math.max(0, durationSec - 0.04);
+        for (let i = 0; i < frameCount; i += 1) {
+          times.push((maxT * i) / Math.max(1, frameCount - 1));
+        }
+      }
+      const frames = [];
+      for (const t of times) {
+        const seekTime = clamp(Number(t || 0), 0, Math.max(0, durationSec - 0.02));
+        try {
+          if (Math.abs(Number(video.currentTime || 0) - seekTime) > 0.008) {
+            video.currentTime = seekTime;
+            await waitForEvent(video, "seeked", 1200);
+          }
+        } catch {}
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(video, 0, 0, w, h);
+        const frameCanvas = document.createElement("canvas");
+        frameCanvas.width = w;
+        frameCanvas.height = h;
+        const frameCtx = frameCanvas.getContext("2d");
+        if (!frameCtx) continue;
+        frameCtx.drawImage(canvas, 0, 0);
+        frames.push(frameCanvas);
+      }
+      entry.frames = frames;
+      entry.frameCount = frameCount;
+      entry.status = frames.length ? "ready" : "error";
+      entry.error = !frames.length;
+      notifyPreviewCacheUpdated(state);
+    } catch {
+      entry.status = fallbackFrames.length ? "ready_stale" : "error";
+      entry.error = !fallbackFrames.length;
+      notifyPreviewCacheUpdated(state);
+    } finally {
+      cleanup();
+    }
+  };
+  enqueueFilmstripTask(buildFilmstrip);
+  return entry;
+}
+
+function normalizeFrameCountHint(value, fallback) {
+  const numeric = Math.round(Number(value || fallback));
+  if (!Number.isFinite(numeric)) return fallback;
+  return bucketizeFilmstripFrameCount(clamp(numeric, VIDEO_FILMSTRIP_MIN_FRAMES, VIDEO_FILMSTRIP_MAX_FRAMES + 8));
+}
+
+function normalizeTargetHeightHint(value, fallback) {
+  const numeric = Number(value || fallback);
+  if (!Number.isFinite(numeric)) return fallback;
+  return normalizeFilmstripTargetHeight(numeric);
+}
+
+export function prewarmTimelineVideoBuffers({
+  clipThumbCache,
+  sources = [],
+  frameCountHint = VIDEO_FILMSTRIP_MAX_FRAMES,
+  targetHeightHint = VIDEO_FILMSTRIP_TARGET_HEIGHT,
+  edgeTargetHeightHint = VIDEO_FILMSTRIP_TARGET_HEIGHT_LIGHT,
+  fullEnabled = true,
+  onUpdate = null,
+}) {
+  if (!(clipThumbCache instanceof Map)) return 0;
+  const unique = [];
+  const seen = new Set();
+  for (const row of Array.isArray(sources) ? sources : []) {
+    const src = String(row?.src || row || "").trim();
+    if (!src || seen.has(src)) continue;
+    seen.add(src);
+    unique.push({
+      src,
+      durationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(row?.durationSec || row?.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+      ),
+    });
+  }
+  if (!unique.length) return 0;
+  const warmState = {
+    clipThumbCache,
+    onPreviewCacheUpdate: typeof onUpdate === "function" ? onUpdate : null,
+  };
+  const fullFrames = normalizeFrameCountHint(frameCountHint, VIDEO_FILMSTRIP_MAX_FRAMES);
+  const fullHeight = normalizeTargetHeightHint(targetHeightHint, VIDEO_FILMSTRIP_TARGET_HEIGHT);
+  const edgeHeight = normalizeTargetHeightHint(edgeTargetHeightHint, VIDEO_FILMSTRIP_TARGET_HEIGHT_LIGHT);
+  const useFull = Boolean(fullEnabled);
+  for (const item of unique) {
+    ensureTimelineVideoFilmstrip(warmState, item.src, item.durationSec, {
+      strategy: "edges",
+      frameCount: 2,
+      targetHeight: edgeHeight,
+    });
+    if (useFull) {
+      ensureTimelineVideoFilmstrip(warmState, item.src, item.durationSec, {
+        strategy: "full",
+        frameCount: fullFrames,
+        targetHeight: fullHeight,
+      });
+    }
+  }
+  return unique.length;
+}
+
 function compactRunId(runId) {
   const value = String(runId || "").trim();
   if (!value) return "n/a";
@@ -681,19 +1998,22 @@ function compactRunId(runId) {
   return `${value.slice(0, 8)}...${value.slice(-4)}`;
 }
 
-function formatSelectionSummary(selection) {
+function formatSelectionSummary(state) {
+  const selection = state?.selection;
   if (!selection || typeof selection !== "object") return "";
   const type = String(selection.type || "item");
   const name = compactText(selection.name || selection.id || "", 24);
   const t0 = Number(selection.t0_sec);
   const t1 = Number(selection.t1_sec);
+  const selectedCount = resolveEffectiveSelectedClipCount(state);
+  const selectedSuffix = selectedCount > 1 ? ` | group ${selectedCount}` : "";
   if (Number.isFinite(t0) && Number.isFinite(t1)) {
-    return ` | sel ${type} ${name} ${t0.toFixed(2)}-${t1.toFixed(2)}s`;
+    return ` | sel ${type} ${name} ${t0.toFixed(2)}-${t1.toFixed(2)}s${selectedSuffix}`;
   }
   if (Number.isFinite(t0)) {
-    return ` | sel ${type} ${name} @${t0.toFixed(2)}s`;
+    return ` | sel ${type} ${name} @${t0.toFixed(2)}s${selectedSuffix}`;
   }
-  return ` | sel ${type} ${name}`;
+  return ` | sel ${type} ${name}${selectedSuffix}`;
 }
 
 function renderOverview(state) {
@@ -702,7 +2022,7 @@ function renderOverview(state) {
   const tempoText = tempo > 0 ? `${tempo.toFixed(1)} bpm` : "n/a";
   const tracksCount = Number(state.studioData?.tracks?.length || 0);
   const mutedCount = state.mutedTracks?.size || 0;
-  const selectionText = formatSelectionSummary(state.selection);
+  const selectionText = formatSelectionSummary(state);
   state.overviewLabel.textContent =
     `run ${runText} | tempo ${tempoText} | duration ${state.durationSec.toFixed(2)}s | tracks ${tracksCount} | muted ${mutedCount}${selectionText}`;
 
@@ -721,7 +2041,73 @@ function renderFooter(state) {
   const timelineWidth = Math.max(1, state.canvas.clientWidth - LEFT_GUTTER);
   const visibleSec = timelineWidth / Math.max(1e-6, state.pxPerSec);
   const trackScale = normalizeTrackRowScale(state.trackRowScale);
-  state.zoomLabel.textContent = `zoom ${state.pxPerSec.toFixed(1)} px/s | window ${visibleSec.toFixed(2)}s | y ${trackScale.toFixed(2)}x`;
+  state.zoomLabel.textContent = `zoom ${state.pxPerSec.toFixed(1)} px/s | window ${visibleSec.toFixed(2)}s | y ${trackScale.toFixed(2)}x${state.skeletonMode ? " | skeleton on" : ""}`;
+  if (state.shortcutsLabel) {
+    const hints = [];
+    const ctrlDown = Boolean(state.keyModifiers?.ctrl);
+    const shiftDown = Boolean(state.keyModifiers?.shift);
+    const altDown = Boolean(state.keyModifiers?.alt);
+    const selectedClipCount = resolveEffectiveSelectedClipCount(state);
+    const hasClipSelection = selectedClipCount > 0;
+    const hasGroupSelection = selectedClipCount > 1;
+    const editMode = String(state.clipEditSession?.mode || "").trim().toLowerCase();
+    if (altDown) {
+      hints.push({ icon: "cut", text: "Alt active" });
+      hints.push({ icon: "cut", text: "Click clip: cut" });
+    } else if (ctrlDown) {
+      hints.push({ icon: "key_ctrl", text: "Ctrl active" });
+      hints.push({ icon: "mouse_wheel", text: "Wheel: row height" });
+    } else if (shiftDown) {
+      hints.push({ icon: "key_shift", text: "Shift active" });
+      hints.push({ icon: "mouse_wheel", text: "Wheel: pan time" });
+    } else {
+      hints.push({ icon: "play", text: "Space: play/pause" });
+      hints.push({ icon: "mouse_wheel", text: "Wheel: zoom time" });
+      hints.push({ icon: "key_shift", text: "+ wheel: pan" });
+      hints.push({ icon: "key_ctrl", text: "+ wheel: row height" });
+    }
+    if (hasClipSelection) {
+      if (hasGroupSelection) {
+        hints.push({ icon: "drag", text: `Group selected (${selectedClipCount})` });
+        hints.push({ icon: "arrows_lr", text: "Drag selected: move group" });
+      } else {
+        hints.push({ icon: "drag", text: "Solo selected: move/trim" });
+      }
+      if (!ctrlDown) {
+        hints.push({ icon: "key_ctrl", text: "Ctrl+click: multi-select" });
+      }
+      hints.push({ icon: "arrows_lr", text: "Arrows: nudge" });
+    } else if (!ctrlDown && !shiftDown && !altDown) {
+      hints.push({ icon: "drag", text: "Click clip: select" });
+    }
+    if (editMode === "move") {
+      hints.push({ icon: "drag", text: "Mode: move" });
+    } else if (editMode === "trim_start" || editMode === "trim_end") {
+      hints.push({ icon: "arrows_lr", text: "Mode: trim" });
+    } else if (editMode === "slip") {
+      hints.push({ icon: "arrows_lr", text: "Mode: slip window" });
+    }
+    if (state.skeletonMode) {
+      hints.push({ icon: "skeleton_mode", text: "Skeleton mode" });
+    }
+    const signature = hints.map((item) => `${item.icon}:${item.text}`).join("|");
+    if (signature !== state.shortcutsSignature) {
+      state.shortcutsSignature = signature;
+      state.shortcutsLabel.textContent = "";
+      for (const item of hints) {
+        const chip = el("span", { class: "lemouf-song2daw-shortcut-chip" });
+        chip.append(
+          createIcon(item.icon, {
+            className: "lemouf-song2daw-shortcut-icon",
+            size: 12,
+            title: item.text,
+          }),
+          el("span", { class: "lemouf-song2daw-shortcut-text", text: item.text })
+        );
+        state.shortcutsLabel.append(chip);
+      }
+    }
+  }
 }
 
 function snapshotTimelineViewState(state) {
@@ -731,6 +2117,7 @@ function snapshotTimelineViewState(state) {
     t0Sec: Math.max(0, Number(state?.t0Sec || 0)),
     scrollY: Math.max(0, Number(state?.scrollY || 0)),
     trackRowScale: normalizeTrackRowScale(state?.trackRowScale),
+    skeletonMode: Boolean(state?.skeletonMode),
   };
 }
 
@@ -739,7 +2126,7 @@ function emitTimelineViewState(state) {
   const snapshot = snapshotTimelineViewState(state);
   const key =
     `${snapshot.autoFit ? "1" : "0"}|${snapshot.pxPerSec.toFixed(4)}|` +
-    `${snapshot.t0Sec.toFixed(4)}|${snapshot.scrollY.toFixed(2)}|${snapshot.trackRowScale.toFixed(4)}`;
+    `${snapshot.t0Sec.toFixed(4)}|${snapshot.scrollY.toFixed(2)}|${snapshot.trackRowScale.toFixed(4)}|${snapshot.skeletonMode ? "1" : "0"}`;
   if (key === state.lastViewStateKey) return;
   state.lastViewStateKey = key;
   try {
@@ -758,10 +2145,12 @@ function resolveScrubSourceUrl(state) {
     const clockUrl = String(clockAudio.currentSrc || clockAudio.src || "").trim();
     if (clockUrl) return clockUrl;
   }
+  const activeTrackUrl = resolveActiveTrackAudioUrlAtPlayhead(state);
+  if (activeTrackUrl) return activeTrackUrl;
   const unmutedEntries = getUnmutedTrackAudioEntries(state);
-  for (const entry of unmutedEntries) {
-    const audio = entry?.audio;
-    if (!audio || entry?.errored) continue;
+  for (const item of unmutedEntries) {
+    const audio = item?.audio;
+    if (!audio) continue;
     const url = String(audio.currentSrc || audio.src || "").trim();
     if (url) return url;
   }
@@ -771,16 +2160,99 @@ function resolveScrubSourceUrl(state) {
   return "";
 }
 
+function resolveActiveTrackAudioUrlAtPlayhead(state) {
+  if (!state?.trackAudioPlayers || !state.trackAudioPlayers.size) return "";
+  const playheadSec = clamp(Number(state.playheadSec || 0), 0, Math.max(0, Number(state.durationSec || 0)));
+  for (const [trackName, trackEntry] of state.trackAudioPlayers.entries()) {
+    if (isTrackMuted(state, trackName)) continue;
+    const active = resolveTrackAudioActiveEventAtTime(state, trackName, playheadSec);
+    if (!active?.event) continue;
+    const player = resolveTrackAudioPlayerForEvent(trackEntry, active.event);
+    const audio = player?.audio;
+    if (!audio) continue;
+    const url = String(audio.currentSrc || audio.src || "").trim();
+    if (url) return url;
+  }
+  return "";
+}
+
 function getUnmutedTrackAudioEntries(state) {
   if (!state.trackAudioPlayers || !state.trackAudioPlayers.size) return [];
   const entries = [];
-  for (const [trackName, entry] of state.trackAudioPlayers.entries()) {
-    const audio = entry?.audio;
-    if (!audio || entry?.errored) continue;
+  for (const [trackName, trackEntry] of state.trackAudioPlayers.entries()) {
     if (isTrackMuted(state, trackName)) continue;
-    entries.push(entry);
+    const playersByAssetKey = trackEntry?.playersByAssetKey instanceof Map
+      ? trackEntry.playersByAssetKey
+      : null;
+    if (!playersByAssetKey || !playersByAssetKey.size) continue;
+    const preferredKeys = [
+      String(trackEntry?.activeAssetKey || "").trim(),
+      String(trackEntry?.defaultAssetKey || "").trim(),
+    ].filter(Boolean);
+    let picked = null;
+    for (const key of preferredKeys) {
+      const candidate = playersByAssetKey.get(key);
+      if (!candidate?.audio) continue;
+      picked = candidate;
+      break;
+    }
+    if (!picked) {
+      for (const candidate of playersByAssetKey.values()) {
+        if (!candidate?.audio) continue;
+        picked = candidate;
+        break;
+      }
+    }
+    if (!picked?.audio) continue;
+    entries.push({
+      trackName,
+      audio: picked.audio,
+      errored: Boolean(picked.errored),
+      assetKey: String(picked.assetKey || ""),
+      trackEntry,
+    });
   }
   return entries;
+}
+
+function primeTrackAudioPlayersForGesture(state) {
+  if (!state?.trackAudioPlayers || !state.trackAudioPlayers.size) return;
+  for (const [trackName, trackEntry] of state.trackAudioPlayers.entries()) {
+    if (isTrackMuted(state, trackName)) continue;
+    const playersByAssetKey = trackEntry?.playersByAssetKey instanceof Map
+      ? trackEntry.playersByAssetKey
+      : null;
+    if (!playersByAssetKey || !playersByAssetKey.size) continue;
+    for (const player of playersByAssetKey.values()) {
+      const audio = player?.audio;
+      if (!audio || player?.errored) continue;
+      try {
+        const prevMuted = Boolean(audio.muted);
+        const prevVolume = Number(audio.volume || 1);
+        const prevTime = Number(audio.currentTime || 0);
+        audio.muted = true;
+        const playResult = audio.play();
+        if (playResult && typeof playResult.then === "function") {
+          playResult
+            .then(() => {
+              try { audio.pause(); } catch {}
+              try { audio.currentTime = prevTime; } catch {}
+              audio.volume = prevVolume;
+              audio.muted = prevMuted;
+            })
+            .catch(() => {
+              audio.volume = prevVolume;
+              audio.muted = prevMuted;
+            });
+        } else {
+          try { audio.pause(); } catch {}
+          try { audio.currentTime = prevTime; } catch {}
+          audio.volume = prevVolume;
+          audio.muted = prevMuted;
+        }
+      } catch {}
+    }
+  }
 }
 
 function isMixTrackMuted(state) {
@@ -818,11 +2290,12 @@ async function ensureScrubAudioReady(state) {
   if (!sourceUrl) {
     stopScrubGrains(state);
     state.scrubSourceUrl = "";
+    state.scrubBufferSwapPending = false;
     state.scrubDecodeUrl = "";
     state.scrubDecodePromise = null;
-    state.scrubAudioBuffer = null;
-    state.scrubAudioBufferReverse = null;
-    return false;
+    // Keep the last decoded scrub buffer as a visual fallback during short source transitions.
+    // Playback readiness still stays false because active source won't match empty scrubSourceUrl.
+    return Boolean(state.scrubAudioBuffer);
   }
   const ContextCtor = getScrubAudioContextCtor();
   if (!ContextCtor) return false;
@@ -842,10 +2315,15 @@ async function ensureScrubAudioReady(state) {
   if (state.scrubSourceUrl !== sourceUrl) {
     stopScrubGrains(state);
     state.scrubSourceUrl = sourceUrl;
-    state.scrubAudioBuffer = null;
-    state.scrubAudioBufferReverse = null;
+    state.scrubBufferSwapPending = true;
   }
-  if (state.scrubAudioBuffer) return true;
+  if (
+    state.scrubAudioBuffer &&
+    !state.scrubBufferSwapPending &&
+    String(state.scrubActiveSourceUrl || "").trim() === sourceUrl
+  ) {
+    return true;
+  }
   if (!state.scrubDecodePromise || state.scrubDecodeUrl !== sourceUrl) {
     const decodeUrl = sourceUrl;
     state.scrubDecodeUrl = decodeUrl;
@@ -857,6 +2335,8 @@ async function ensureScrubAudioReady(state) {
       if (state.scrubSourceUrl !== decodeUrl) return null;
       state.scrubAudioBuffer = decoded;
       state.scrubAudioBufferReverse = null;
+      state.scrubActiveSourceUrl = decodeUrl;
+      state.scrubBufferSwapPending = false;
       return decoded;
     })()
       .catch(() => null)
@@ -868,7 +2348,14 @@ async function ensureScrubAudioReady(state) {
       });
   }
   const decoded = await state.scrubDecodePromise;
-  return Boolean(decoded && state.scrubSourceUrl === sourceUrl);
+  if (!decoded && state.scrubSourceUrl === sourceUrl) {
+    state.scrubBufferSwapPending = false;
+  }
+  return Boolean(
+    state.scrubAudioBuffer &&
+    !state.scrubBufferSwapPending &&
+    String(state.scrubActiveSourceUrl || "").trim() === sourceUrl
+  );
 }
 
 function stopScrubGrains(state) {
@@ -1035,7 +2522,11 @@ function scheduleMidiScrubGrain(state, timeSec, velocitySecPerSec) {
 }
 
 function scheduleScrubGrain(state, timeSec, velocitySecPerSec) {
-  if (!state.scrubAudioBuffer) {
+  const scrubAudioReady =
+    Boolean(state.scrubAudioBuffer) &&
+    !Boolean(state.scrubBufferSwapPending) &&
+    String(state.scrubActiveSourceUrl || "").trim() === String(state.scrubSourceUrl || "").trim();
+  if (!scrubAudioReady) {
     scheduleMidiScrubGrain(state, timeSec, velocitySecPerSec);
     return;
   }
@@ -1097,6 +2588,12 @@ function scheduleScrubGrain(state, timeSec, velocitySecPerSec) {
 function normalizeSectionVizMode(value) {
   const mode = String(value || "").toLowerCase();
   return SECTION_VIZ_MODES.includes(mode) ? mode : "bands";
+}
+
+function normalizeSkeletonMode(value) {
+  if (value === true || value === 1) return true;
+  const text = String(value || "").trim().toLowerCase();
+  return text === "1" || text === "true" || text === "on" || text === "yes";
 }
 
 function mapTimelineSecToSignalSourceSec(state, sourceDurationSec, timelineSec) {
@@ -1383,6 +2880,11 @@ function drawSectionWaveform(state, ctx, y, height, visibleStartSec) {
   ctx.rect(LEFT_GUTTER, y, width - LEFT_GUTTER, height);
   ctx.clip();
 
+  if (drawSectionCompositionPreview(state, ctx, y, height)) {
+    ctx.restore();
+    return;
+  }
+
   const buffer = state.scrubAudioBuffer;
   const samples = buffer ? buffer.getChannelData(0) : null;
   if (samples && samples.length >= 2) {
@@ -1395,6 +2897,303 @@ function drawSectionWaveform(state, ctx, y, height, visibleStartSec) {
     drawSectionMidiFallback(state, ctx, y, height, visibleStartSec);
   }
   ctx.restore();
+}
+
+function collectSectionVisualClips(state) {
+  const studioData = state?.studioData;
+  const tracks = Array.isArray(studioData?.tracks) ? studioData.tracks : [];
+  const eventsByTrack = studioData?.eventsByTrack && typeof studioData.eventsByTrack === "object"
+    ? studioData.eventsByTrack
+    : {};
+  const orderByName = new Map();
+  tracks.forEach((track, idx) => {
+    const name = String(track?.name || "").trim();
+    if (!name) return;
+    orderByName.set(name, idx);
+  });
+  const clips = [];
+  for (const track of tracks) {
+    const trackName = String(track?.name || "").trim();
+    if (!trackName) continue;
+    const kind = String(track?.kind || "").toLowerCase();
+    if (kind !== "video" && kind !== "image") continue;
+    const events = Array.isArray(eventsByTrack[trackName]) ? eventsByTrack[trackName] : [];
+    for (const event of events) {
+      const src = String(event?.previewSrc || event?.src || "").trim();
+      if (!src) continue;
+      const start = Math.max(0, Number(event?.time || 0));
+      const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+      const end = start + duration;
+      clips.push({
+        kind,
+        src,
+        start,
+        end,
+        duration,
+        startOffsetSec: Math.max(0, Number(event?.startOffsetSec || 0)),
+        sourceDurationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.sourceDurationSec || duration)),
+        order: Number(orderByName.get(trackName) || 0),
+      });
+    }
+  }
+  clips.sort((a, b) => {
+    if (a.start !== b.start) return a.start - b.start;
+    if (a.order !== b.order) return b.order - a.order;
+    return a.src.localeCompare(b.src);
+  });
+  return clips;
+}
+
+function collectSectionAudioVisualEvents(state, visibleStartSec, visibleEndSec) {
+  const studioData = state?.studioData;
+  const tracks = Array.isArray(studioData?.tracks) ? studioData.tracks : [];
+  const eventsByTrack = studioData?.eventsByTrack && typeof studioData.eventsByTrack === "object"
+    ? studioData.eventsByTrack
+    : {};
+  const out = [];
+  for (const track of tracks) {
+    const kind = String(track?.kind || "").toLowerCase();
+    if (kind !== "audio") continue;
+    const trackName = String(track?.name || "").trim();
+    if (!trackName) continue;
+    if (isTrackMuted(state, trackName)) continue;
+    const channelMode = resolveEffectiveChannelMode(state, track);
+    const events = Array.isArray(eventsByTrack[trackName]) ? eventsByTrack[trackName] : [];
+    for (const event of events) {
+      const start = Math.max(0, Number(event?.time || 0));
+      const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+      const end = start + duration;
+      if (end <= visibleStartSec || start >= visibleEndSec) continue;
+      out.push({
+        trackName,
+        clipId: String(event?.clipId || "").trim(),
+        start,
+        end,
+        duration,
+        startOffsetSec: Math.max(0, Number(event?.startOffsetSec || 0)),
+        sourceDurationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.sourceDurationSec || duration)),
+        channelMode,
+      });
+    }
+  }
+  return out;
+}
+
+function buildSectionCompositionAudioEnvelope(state, audioEvents, visibleStartSec, visibleEndSec, bins) {
+  const count = Math.max(1, Math.floor(bins));
+  const left = new Float32Array(count);
+  const right = new Float32Array(count);
+  const spanSec = Math.max(1e-6, visibleEndSec - visibleStartSec);
+  for (const event of audioEvents) {
+    const start = Math.max(0, Number(event?.start || 0));
+    const end = Math.max(start + CLIP_EDIT_MIN_DURATION_SEC, Number(event?.end || start + CLIP_EDIT_MIN_DURATION_SEC));
+    if (end <= visibleStartSec || start >= visibleEndSec) continue;
+    const sourceDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.sourceDurationSec || (end - start) || CLIP_EDIT_MIN_DURATION_SEC));
+    const startOffsetSec = Math.max(0, Number(event?.startOffsetSec || 0));
+    const i0 = clamp(Math.floor(((Math.max(start, visibleStartSec) - visibleStartSec) / spanSec) * count), 0, count - 1);
+    const i1 = clamp(Math.ceil(((Math.min(end, visibleEndSec) - visibleStartSec) / spanSec) * count), 0, count - 1);
+    const hash = normalizedTrackHash(`${event.trackName}:${event.clipId || "clip"}`);
+    for (let i = i0; i <= i1; i += 1) {
+      const t0 = visibleStartSec + (i / count) * spanSec;
+      const t1 = visibleStartSec + ((i + 1) / count) * spanSec;
+      const overlapStart = Math.max(start, t0);
+      const overlapEnd = Math.min(end, t1);
+      if (overlapEnd <= overlapStart) continue;
+      const localSec = startOffsetSec + ((overlapStart + overlapEnd) * 0.5 - start);
+      const localRatio = clamp(localSec / Math.max(1e-6, sourceDurationSec), 0, 1);
+      const body = 0.28 + 0.48 * Math.abs(Math.sin((localRatio * 10 + hash) * Math.PI));
+      const trans = 0.12 + 0.2 * Math.abs(Math.sin((localRatio * 34 + hash * 0.7) * Math.PI));
+      const amp = clamp(body + trans, 0, 1);
+      if (String(event?.channelMode || "").toLowerCase() === "mono") {
+        left[i] = Math.max(left[i], amp);
+        right[i] = Math.max(right[i], amp);
+      } else {
+        const l = clamp(amp * (0.84 + 0.16 * Math.sin((localRatio * 8 + hash) * Math.PI * 2)), 0, 1);
+        const r = clamp(amp * (0.84 + 0.16 * Math.cos((localRatio * 7 + hash * 1.3) * Math.PI * 2)), 0, 1);
+        left[i] = Math.max(left[i], l);
+        right[i] = Math.max(right[i], r);
+      }
+    }
+  }
+  return { left, right };
+}
+
+function drawSectionCompositionAudioOverlay(state, ctx, y, height, visibleStartSec, visibleEndSec) {
+  if (height < 8) return false;
+  const width = Number(state?.canvas?.clientWidth || 0);
+  if (width <= LEFT_GUTTER + 1) return false;
+  const timelineWidth = width - LEFT_GUTTER;
+  const bins = clamp(Math.floor(timelineWidth / 2.5), 32, 540);
+  const events = collectSectionAudioVisualEvents(state, visibleStartSec, visibleEndSec);
+  ctx.fillStyle = "rgba(235, 224, 209, 0.98)";
+  ctx.fillRect(LEFT_GUTTER, y, timelineWidth, height);
+  if (!events.length) {
+    ctx.strokeStyle = "rgba(120, 100, 82, 0.22)";
+    ctx.beginPath();
+    ctx.moveTo(LEFT_GUTTER, y + height * 0.5 + 0.5);
+    ctx.lineTo(width, y + height * 0.5 + 0.5);
+    ctx.stroke();
+    return true;
+  }
+
+  const envelope = buildSectionCompositionAudioEnvelope(state, events, visibleStartSec, visibleEndSec, bins);
+  const laneGap = Math.max(1, Math.floor(height * 0.08));
+  const laneHeight = Math.max(3, Math.floor((height - laneGap) * 0.5));
+  const leftY = y;
+  const rightY = y + laneHeight + laneGap;
+  const vizMode = normalizeSectionVizMode(state?.sectionVizMode);
+  const drawLane = (values, laneY, strokeStyle, accentStyle) => {
+    const midY = laneY + laneHeight * 0.5;
+    const ampPx = Math.max(1, laneHeight * 0.46);
+    const stepX = timelineWidth / bins;
+    ctx.strokeStyle = "rgba(120, 100, 82, 0.16)";
+    ctx.beginPath();
+    ctx.moveTo(LEFT_GUTTER, midY + 0.5);
+    ctx.lineTo(width, midY + 0.5);
+    ctx.stroke();
+    if (vizMode === "filled") {
+      ctx.save();
+      ctx.fillStyle = "rgba(63, 43, 27, 0.30)";
+      ctx.beginPath();
+      for (let i = 0; i < bins; i += 1) {
+        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
+        const a = values[i];
+        const yTop = midY - a * ampPx;
+        if (i === 0) ctx.moveTo(x, yTop);
+        else ctx.lineTo(x, yTop);
+      }
+      for (let i = bins - 1; i >= 0; i -= 1) {
+        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
+        const a = values[i];
+        const yBottom = midY + a * ampPx;
+        ctx.lineTo(x, yBottom);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (let i = 0; i < bins; i += 1) {
+        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
+        const a = values[i];
+        const yTop = midY - a * ampPx;
+        if (i === 0) ctx.moveTo(x, yTop);
+        else ctx.lineTo(x, yTop);
+      }
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    if (vizMode === "bands") {
+      for (let i = 0; i < bins; i += 1) {
+        const a = values[i];
+        if (a <= 0.001) continue;
+        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
+        const yTop = midY - a * ampPx;
+        const yBottom = midY + a * ampPx;
+        ctx.strokeStyle = strokeStyle;
+        ctx.beginPath();
+        ctx.moveTo(x, midY);
+        ctx.lineTo(x, yBottom);
+        ctx.stroke();
+        ctx.strokeStyle = accentStyle;
+        ctx.beginPath();
+        ctx.moveTo(x, midY);
+        ctx.lineTo(x, yTop);
+        ctx.stroke();
+      }
+      return;
+    }
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = 1;
+    for (let i = 0; i < bins; i += 1) {
+      const a = values[i];
+      if (a <= 0.001) continue;
+      const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, midY - a * ampPx);
+      ctx.lineTo(x, midY + a * ampPx);
+      ctx.stroke();
+    }
+  };
+
+  const stepX = timelineWidth / bins;
+  let runStart = -1;
+  for (let i = 0; i < bins; i += 1) {
+    const silent = envelope.left[i] <= 0.005 && envelope.right[i] <= 0.005;
+    if (silent && runStart < 0) runStart = i;
+    if ((!silent || i === bins - 1) && runStart >= 0) {
+      const endIdx = silent && i === bins - 1 ? i + 1 : i;
+      const x0 = LEFT_GUTTER + runStart * stepX;
+      const x1 = LEFT_GUTTER + endIdx * stepX;
+      if (x1 > x0 + 0.5) {
+        ctx.fillStyle = "rgba(208, 190, 170, 0.28)";
+        ctx.fillRect(x0, y, x1 - x0, height);
+      }
+      runStart = -1;
+    }
+  }
+
+  drawLane(envelope.left, leftY, "rgba(52, 130, 116, 0.68)", "rgba(216, 174, 92, 0.56)");
+  drawLane(envelope.right, rightY, "rgba(68, 96, 156, 0.62)", "rgba(198, 104, 147, 0.54)");
+
+  ctx.fillStyle = "rgba(77, 61, 47, 0.72)";
+  ctx.font = "8px monospace";
+  ctx.fillText("L", LEFT_GUTTER + 3, leftY + 8);
+  ctx.fillText("R", LEFT_GUTTER + 3, rightY + 8);
+  return true;
+}
+
+function drawSectionCompositionPreview(state, ctx, y, height) {
+  const width = Number(state?.canvas?.clientWidth || 0);
+  if (width <= LEFT_GUTTER + 2) return false;
+  const clips = collectSectionVisualClips(state);
+  if (!clips.length) return false;
+  const toX = (timeSec) => LEFT_GUTTER + (timeSec - state.t0Sec) * state.pxPerSec;
+  const timelineWidth = width - LEFT_GUTTER;
+  const visibleStartSec = Math.max(0, Number(state?.t0Sec || 0));
+  const visibleEndSec = visibleStartSec + timelineWidth / Math.max(1e-6, Number(state?.pxPerSec || 1));
+  const splitHeight = Math.max(6, Math.floor((Math.max(2, height) - 1) * 0.5));
+  const previewBandHeight = splitHeight;
+  const audioBandHeight = Math.max(0, height - previewBandHeight - 1);
+  const previewY = y;
+  const previewH = previewBandHeight;
+  const audioY = y + previewBandHeight + 1;
+  const audioH = Math.max(0, height - previewBandHeight - 1);
+  ctx.fillStyle = "rgba(231, 219, 203, 0.98)";
+  ctx.fillRect(LEFT_GUTTER, y, timelineWidth, height);
+  ctx.fillStyle = "rgba(224, 211, 194, 0.76)";
+  ctx.fillRect(LEFT_GUTTER, previewY, timelineWidth, previewH);
+  for (const clip of clips) {
+    const x0 = toX(clip.start);
+    const x1 = toX(clip.end);
+    const left = clamp(x0, LEFT_GUTTER, width);
+    const right = clamp(x1, LEFT_GUTTER, width);
+    const clipWidth = Math.max(0, right - left);
+    if (clipWidth < 1) continue;
+    if (clip.kind === "video") {
+      const previewPlan = resolveVideoPreviewPlan(state, clipWidth, previewH);
+      const filmstrip = ensureTimelineVideoFilmstrip(state, clip.src, clip.sourceDurationSec, previewPlan);
+      const hasFrames = previewPlan.strategy === "edges"
+        ? drawClipEdgeFrames(ctx, filmstrip?.frames || [], left, clipWidth, previewY, previewH)
+        : drawClipFilmstripTiles(ctx, filmstrip?.frames || [], left, clipWidth, previewY, previewH, {
+            sourceDurationSec: clip.sourceDurationSec,
+            clipDurationSec: clip.duration,
+            clipStartOffsetSec: clip.startOffsetSec,
+          });
+      if (!hasFrames) {
+        drawClipThumbnailTiles(state, ctx, clip.src, left, clipWidth, previewY, previewH);
+      }
+    } else {
+      drawClipThumbnailCover(state, ctx, clip.src, left, clipWidth, previewY, previewH);
+    }
+    ctx.strokeStyle = "rgba(95, 72, 53, 0.45)";
+    ctx.strokeRect(left + 0.5, previewY + 0.5, Math.max(1, clipWidth - 1), Math.max(1, previewH - 1));
+  }
+  if (audioH > 0) {
+    drawSectionCompositionAudioOverlay(state, ctx, audioY, audioH, visibleStartSec, visibleEndSec);
+  }
+  return true;
 }
 
 function chooseRulerStepSec(pxPerSec) {
@@ -1425,17 +3224,17 @@ function drawTimeRuler(state, ctx, toX, visibleStartSec, visibleEndSec, width, h
   ctx.fillStyle = "#e2d2bf";
   ctx.fillRect(0, 0, LEFT_GUTTER, RULER_HEIGHT);
 
-  ctx.strokeStyle = "rgba(96, 74, 55, 0.18)";
+  ctx.strokeStyle = "rgba(96, 74, 55, 0.14)";
   for (let t = firstMinor; t <= visibleEndSec + minorStepSec; t += minorStepSec) {
     const x = toX(t);
     if (x < LEFT_GUTTER || x > width) continue;
     ctx.beginPath();
     ctx.moveTo(x + 0.5, RULER_HEIGHT - 9);
-    ctx.lineTo(x + 0.5, height);
+    ctx.lineTo(x + 0.5, RULER_HEIGHT - 1);
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(78, 58, 41, 0.42)";
+  ctx.strokeStyle = "rgba(78, 58, 41, 0.26)";
   ctx.fillStyle = "#4b392b";
   ctx.font = "10px monospace";
   for (let t = firstMajor; t <= visibleEndSec + stepSec; t += stepSec) {
@@ -1623,30 +3422,239 @@ function drawClipThumbnailCover(state, ctx, src, x0, widthPx, y, h) {
   return true;
 }
 
+function buildUniformTileLayout(x0, widthPx, desiredTileW, gap, maxTiles = 8) {
+  const startX = Math.floor(Number(x0 || 0)) + 1;
+  const usableWidth = Math.max(1, Math.floor(Number(widthPx || 0)) - 2);
+  const targetW = Math.max(8, Number(desiredTileW || 8));
+  const safeGap = Math.max(0, Math.round(Number(gap || 0)));
+  const maxTilesByWidth = Math.max(1, Math.floor((usableWidth + safeGap) / (targetW + safeGap)));
+  const tileCount = clamp(maxTilesByWidth, 1, Math.max(1, Math.floor(Number(maxTiles || 8))));
+  const totalGap = safeGap * Math.max(0, tileCount - 1);
+  const tilePixels = Math.max(tileCount, usableWidth - totalGap);
+  const baseTileW = Math.max(1, Math.floor(tilePixels / tileCount));
+  let remainder = Math.max(0, tilePixels - baseTileW * tileCount);
+  const tiles = [];
+  let cursor = startX;
+  for (let tileIndex = 0; tileIndex < tileCount; tileIndex += 1) {
+    const extra = remainder > 0 ? 1 : 0;
+    if (remainder > 0) remainder -= 1;
+    const width = baseTileW + extra;
+    tiles.push({
+      x: cursor,
+      w: width,
+      index: tileIndex,
+    });
+    cursor += width + safeGap;
+  }
+  return {
+    tiles,
+    tileCount,
+    startX,
+    endX: Math.max(startX, cursor - safeGap),
+  };
+}
+
 function drawClipThumbnailTiles(state, ctx, src, x0, widthPx, y, h) {
   const img = getTimelineThumbnail(state, src);
   if (!img) return false;
   const imgW = Math.max(1, Number(img.naturalWidth || img.width || 1));
   const imgH = Math.max(1, Number(img.naturalHeight || img.height || 1));
-  const tileW = clamp(h * 0.72, 26, 84);
-  const tileH = Math.max(10, h - 2);
-  const scale = Math.max(tileW / imgW, tileH / imgH);
-  const drawW = imgW * scale;
-  const drawH = imgH * scale;
-  const innerY = y + (h - tileH) * 0.5;
+  const tileH = Math.max(10, Math.floor(h - 2));
+  const aspect = imgW / Math.max(1, imgH);
+  const desiredTileW = clamp(tileH * aspect, 24, Math.max(26, Math.min(188, widthPx - 2)));
+  const layout = buildUniformTileLayout(x0, widthPx, desiredTileW, VIDEO_FILMSTRIP_TILE_GAP, 8);
+  const innerY = Math.floor(y + (h - tileH) * 0.5);
   ctx.save();
   ctx.beginPath();
   ctx.rect(x0, y, widthPx, h);
   ctx.clip();
-  for (let x = x0 + 1; x < x0 + widthPx - 1; x += tileW + 3) {
-    const drawX = x + (tileW - drawW) * 0.5;
+  for (const tile of layout.tiles) {
+    const drawScale = Math.min(tile.w / imgW, tileH / imgH);
+    const drawW = Math.max(1, Math.floor(imgW * drawScale));
+    const drawH = Math.max(1, Math.floor(imgH * drawScale));
+    const drawX = tile.x + (tile.w - drawW) * 0.5;
     const drawY = innerY + (tileH - drawH) * 0.5;
     ctx.drawImage(img, drawX, drawY, drawW, drawH);
     ctx.strokeStyle = "rgba(72, 56, 42, 0.45)";
-    ctx.strokeRect(x + 0.5, innerY + 0.5, Math.max(1, tileW - 1), Math.max(1, tileH - 1));
+    ctx.strokeRect(tile.x + 0.5, innerY + 0.5, Math.max(1, tile.w - 1), Math.max(1, tileH - 1));
   }
   ctx.restore();
   return true;
+}
+
+function drawFrameInTileContain(ctx, frame, tileX, tileY, tileW, tileH) {
+  if (!frame) return;
+  const srcW = Math.max(1, Number(frame.width || 1));
+  const srcH = Math.max(1, Number(frame.height || 1));
+  const scale = Math.max(tileW / srcW, tileH / srcH);
+  const drawW = Math.max(1, srcW * scale);
+  const drawH = Math.max(1, srcH * scale);
+  const drawX = tileX + (tileW - drawW) * 0.5;
+  const drawY = tileY + (tileH - drawH) * 0.5;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(tileX, tileY, tileW, tileH);
+  ctx.clip();
+  ctx.fillStyle = "rgba(47, 35, 24, 0.72)";
+  ctx.fillRect(tileX, tileY, tileW, tileH);
+  ctx.drawImage(frame, drawX, drawY, drawW, drawH);
+  ctx.restore();
+}
+
+function drawClipFilmstripTiles(ctx, frames, x0, widthPx, y, h, options = {}) {
+  const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
+  if (!list.length) return false;
+  const sourceDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(options?.sourceDurationSec || 0.01));
+  const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(options?.clipDurationSec || sourceDurationSec));
+  const clipStartOffsetSec = Math.max(0, Number(options?.clipStartOffsetSec || 0));
+  const tileH = Math.max(10, Math.floor(h - 2));
+  const reference = list[0];
+  const refW = Math.max(1, Number(reference?.width || 1));
+  const refH = Math.max(1, Number(reference?.height || 1));
+  const aspect = refW / Math.max(1, refH);
+  const desiredTileW = clamp(tileH * aspect, 24, Math.max(28, Math.min(220, widthPx * 0.52)));
+  const layout = buildUniformTileLayout(x0, widthPx, desiredTileW, VIDEO_FILMSTRIP_TILE_GAP, 26);
+  const tileCount = layout.tileCount;
+  const innerY = Math.floor(y + (h - tileH) * 0.5);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y, widthPx, h);
+  ctx.clip();
+  for (const tile of layout.tiles) {
+    const ratio = tileCount <= 1 ? 0 : (tile.index / Math.max(1, tileCount - 1));
+    const localTimeSec = clipStartOffsetSec + clipDurationSec * ratio;
+    const frameRatio = Math.max(0, Math.min(1, localTimeSec / sourceDurationSec));
+    let frameIndex = Math.max(0, Math.min(list.length - 1, Math.round(frameRatio * (list.length - 1))));
+    const frame = list[frameIndex] || list[0];
+    if (frame) {
+      drawFrameInTileContain(ctx, frame, tile.x, innerY, tile.w, tileH);
+    } else {
+      ctx.fillStyle = "rgba(47, 35, 24, 0.72)";
+      ctx.fillRect(tile.x, innerY, tile.w, tileH);
+    }
+    ctx.strokeStyle = "rgba(72, 56, 42, 0.45)";
+    ctx.strokeRect(tile.x + 0.5, innerY + 0.5, Math.max(1, tile.w - 1), Math.max(1, tileH - 1));
+  }
+  ctx.restore();
+  return true;
+}
+
+function drawClipEdgeFrames(ctx, frames, x0, widthPx, y, h) {
+  const list = Array.isArray(frames) ? frames.filter(Boolean) : [];
+  if (!list.length) return false;
+  const first = list[0];
+  const last = list.length > 1 ? list[list.length - 1] : list[0];
+  const tileH = Math.max(10, h - 2);
+  const refW = Math.max(1, Number(first?.width || 1));
+  const refH = Math.max(1, Number(first?.height || 1));
+  const aspect = refW / Math.max(1, refH);
+  const tileW = clamp(tileH * aspect, 24, Math.max(28, Math.min(180, widthPx * 0.44)));
+  const innerY = y + (h - tileH) * 0.5;
+  const drawFrame = (frame, slotX) => {
+    drawFrameInTileContain(ctx, frame, slotX, innerY, tileW, tileH);
+    ctx.strokeStyle = "rgba(72, 56, 42, 0.45)";
+    ctx.strokeRect(slotX + 0.5, innerY + 0.5, Math.max(1, tileW - 1), Math.max(1, tileH - 1));
+  };
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y, widthPx, h);
+  ctx.clip();
+  const leftX = x0 + 1;
+  const rightX = Math.max(leftX, x0 + widthPx - tileW - 1);
+  drawFrame(first, leftX);
+  if (rightX > leftX + 2) drawFrame(last, rightX);
+  const midX0 = leftX + tileW + 2;
+  const midX1 = rightX - 2;
+  if (midX1 > midX0) {
+    const midGrad = ctx.createLinearGradient(midX0, 0, midX1, 0);
+    midGrad.addColorStop(0, "rgba(35, 25, 16, 0.30)");
+    midGrad.addColorStop(0.5, "rgba(35, 25, 16, 0.14)");
+    midGrad.addColorStop(1, "rgba(35, 25, 16, 0.30)");
+    ctx.fillStyle = midGrad;
+    ctx.fillRect(midX0, innerY, midX1 - midX0, tileH);
+  }
+  ctx.restore();
+  return true;
+}
+
+function resolveVideoPreviewPlan(state, widthPx) {
+  const mode = normalizeVideoPreviewMode(state?.videoPreviewMode);
+  const qualityHint = normalizeVideoPreviewQualityHint(state?.previewQualityHint);
+  const queuePressure = getFilmstripQueuePressure();
+  const interactive = Boolean(
+    state?.clipEditSession ||
+    state?.panningX ||
+    state?.scrubbing ||
+    state?.resizingSection ||
+    state?.isPlaying
+  );
+  const pressureHigh = queuePressure >= 6;
+  const pressureMedium = queuePressure >= 2;
+  if (mode === "light") {
+    return {
+      strategy: "full",
+      frameCount: 2,
+      targetHeight: VIDEO_FILMSTRIP_TARGET_HEIGHT_LIGHT,
+    };
+  }
+  if (mode === "full") {
+    return {
+      strategy: "full",
+      frameCount: bucketizeFilmstripFrameCount(
+        clamp(Math.round(widthPx / 120), VIDEO_FILMSTRIP_MIN_FRAMES, VIDEO_FILMSTRIP_MAX_FRAMES + 2)
+      ),
+      targetHeight: VIDEO_FILMSTRIP_TARGET_HEIGHT,
+    };
+  }
+  if (qualityHint === "low") {
+    return {
+      strategy: "full",
+      frameCount: bucketizeFilmstripFrameCount(3),
+      targetHeight: 44,
+    };
+  }
+  if (qualityHint === "medium") {
+    if (interactive || pressureHigh) {
+      return {
+        strategy: "full",
+        frameCount: bucketizeFilmstripFrameCount(3),
+        targetHeight: 46,
+      };
+    }
+    return {
+      strategy: "full",
+      frameCount: bucketizeFilmstripFrameCount(clamp(Math.round(widthPx / 190), 3, 6)),
+      targetHeight: 48,
+    };
+  }
+  if (qualityHint === "high" && !interactive && !pressureHigh) {
+    return {
+      strategy: "full",
+      frameCount: bucketizeFilmstripFrameCount(clamp(Math.round(widthPx / 120), 4, VIDEO_FILMSTRIP_MAX_FRAMES + 2)),
+      targetHeight: VIDEO_FILMSTRIP_TARGET_HEIGHT,
+    };
+  }
+  // auto
+  if (interactive || widthPx < 260 || pressureHigh) {
+    return {
+      strategy: "full",
+      frameCount: bucketizeFilmstripFrameCount(3),
+      targetHeight: 46,
+    };
+  }
+  return {
+    strategy: "full",
+    frameCount: bucketizeFilmstripFrameCount(
+      clamp(
+        Math.round(widthPx / (pressureMedium ? 170 : 140)),
+        VIDEO_FILMSTRIP_MIN_FRAMES,
+        pressureMedium
+          ? Math.max(VIDEO_FILMSTRIP_MIN_FRAMES + 1, VIDEO_FILMSTRIP_MAX_FRAMES - 4)
+          : Math.max(VIDEO_FILMSTRIP_MIN_FRAMES + 2, VIDEO_FILMSTRIP_MAX_FRAMES - 1)
+      )
+    ),
+    targetHeight: pressureMedium ? 50 : 56,
+  };
 }
 
 function drawImageClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
@@ -1682,53 +3690,103 @@ function drawImageClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
 
 function drawVideoClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
   const thumbnailSrc = String(clip?.thumbnailSrc || clip?.previewSrc || clip?.src || "").trim();
-  const hasThumb = drawClipThumbnailTiles(state, ctx, thumbnailSrc, x0, widthPx, y, h);
-  const hash = normalizedTrackHash(`${trackName}:${clip?.label || "video"}`);
   const clipStart = Number(clip?.start || 0);
   const clipEnd = Math.max(clipStart + 0.01, Number(clip?.end || clipStart + 0.01));
   const clipDurationSec = Math.max(0.01, clipEnd - clipStart);
-  const frameCount = clamp(Math.floor(widthPx / 10), 6, 80);
-  const frameW = widthPx / frameCount;
-  const stripeY = y + Math.max(1, Math.floor(h * 0.18));
-  const stripeH = Math.max(4, Math.floor(h * 0.64));
-  ctx.fillStyle = hasThumb ? "rgba(34, 26, 18, 0.2)" : "rgba(34, 26, 18, 0.3)";
-  ctx.fillRect(x0, stripeY, widthPx, stripeH);
-  ctx.strokeStyle = "rgba(65, 45, 27, 0.42)";
-  for (let i = 1; i < frameCount; i += 1) {
-    const fx = x0 + i * frameW + 0.5;
-    ctx.beginPath();
-    ctx.moveTo(fx, stripeY);
-    ctx.lineTo(fx, stripeY + stripeH);
-    ctx.stroke();
+  const sourceDurationSec = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(clip?.sourceDurationSec || clip?.end - clip?.start || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const clipStartOffsetSec = Math.max(0, Number(clip?.startOffsetSec || 0));
+  const hasSourceWindowControl = Math.max(0, sourceDurationSec - clipDurationSec) > 0.0005;
+  const safeInsetX = resolveClipHandleSafeInset(widthPx, 2);
+  const safeInsetTop = 3;
+  const safeInsetBottom = (hasSourceWindowControl ? (CLIP_WINDOW_BAR_HEIGHT + CLIP_WINDOW_BAR_BOTTOM_MARGIN + 3) : 3);
+  const contentTop = y + safeInsetTop;
+  const contentBottom = Math.max(contentTop + 4, y + h - safeInsetBottom);
+  const contentH = Math.max(4, contentBottom - contentTop);
+  let stripeX = Math.floor(x0 + safeInsetX);
+  let stripeW = Math.floor(widthPx - safeInsetX * 2);
+  if (stripeW < 6) {
+    stripeX = Math.floor(x0 + 1);
+    stripeW = Math.max(2, Math.floor(widthPx - 2));
   }
+  const frameCount = clamp(Math.floor(stripeW / 42), 3, 18);
+  const stripeH = Math.max(4, Math.floor(contentH * 0.74));
+  const stripeY = Math.floor(contentTop + Math.max(0, (contentH - stripeH) * 0.5));
+  const previewPlan = resolveVideoPreviewPlan(state, widthPx);
+  const filmstrip = ensureTimelineVideoFilmstrip(state, thumbnailSrc, sourceDurationSec, previewPlan);
+  const hasFramePreview = previewPlan.strategy === "edges"
+    ? drawClipEdgeFrames(ctx, filmstrip?.frames || [], stripeX, stripeW, stripeY, stripeH)
+    : drawClipFilmstripTiles(ctx, filmstrip?.frames || [], stripeX, stripeW, stripeY, stripeH, {
+      sourceDurationSec,
+      clipDurationSec,
+      clipStartOffsetSec,
+    });
+  const hasThumb = hasFramePreview || drawClipThumbnailTiles(state, ctx, thumbnailSrc, stripeX, stripeW, stripeY, stripeH);
+  const hash = normalizedTrackHash(`${trackName}:${clip?.label || "video"}`);
+  ctx.fillStyle = hasThumb ? "rgba(34, 26, 18, 0.2)" : "rgba(34, 26, 18, 0.3)";
+  ctx.fillRect(stripeX, stripeY, stripeW, stripeH);
   const keyframes = clamp(Math.floor(widthPx / 90), 1, 7);
+  const frameW = Math.max(6, stripeW / Math.max(1, frameCount));
   for (let i = 0; i <= keyframes; i += 1) {
     const t = i / Math.max(1, keyframes);
-    const kx = x0 + t * widthPx;
+    const kx = stripeX + t * stripeW;
     const level = 0.45 + Math.abs(Math.sin((t * 9 + hash) * Math.PI * 2)) * 0.45;
     const kh = Math.max(3, stripeH * level);
     const ky = stripeY + stripeH - kh;
     ctx.fillStyle = "rgba(86, 60, 38, 0.62)";
     ctx.fillRect(kx + 1, ky, Math.max(2, frameW * 0.28), kh);
   }
+  const drawCornerBadge = (text, corner, options = {}) => {
+    const label = String(text || "").trim();
+    if (!label) return;
+    const padX = Number(options?.padX || 4);
+    const hBox = Number(options?.height || 11);
+    const font = String(options?.font || "9px monospace");
+    ctx.font = font;
+    const wBox = Math.ceil(ctx.measureText(label).width) + padX * 2;
+    const safeX0 = x0 + safeInsetX;
+    const safeX1 = x0 + widthPx - safeInsetX - wBox;
+    const topY = contentTop;
+    const bottomY = Math.max(contentTop, contentBottom - hBox);
+    let boxX = safeX0;
+    let boxY = topY;
+    if (corner === "top-right") boxX = safeX1;
+    else if (corner === "bottom-left") boxY = bottomY;
+    else if (corner === "bottom-right") {
+      boxX = safeX1;
+      boxY = bottomY;
+    }
+    boxX = clamp(boxX, safeX0, Math.max(safeX0, safeX1));
+    boxY = clamp(boxY, topY, Math.max(topY, bottomY));
+    ctx.fillStyle = "rgba(26, 19, 13, 0.68)";
+    ctx.fillRect(boxX, boxY, wBox, hBox);
+    ctx.strokeStyle = "rgba(223, 203, 176, 0.72)";
+    ctx.strokeRect(boxX + 0.5, boxY + 0.5, Math.max(1, wBox - 1), Math.max(1, hBox - 1));
+    ctx.fillStyle = "rgba(243, 232, 217, 0.92)";
+    ctx.fillText(label, boxX + padX, boxY + 8.5);
+  };
   const nominalFrameStep = clipDurationSec / Math.max(1, frameCount);
   const fpsHint = nominalFrameStep > 0 ? (1 / nominalFrameStep) : 0;
-  if (fpsHint > 0) {
-    const label = `${Math.round(fpsHint)}fps`;
-    ctx.fillStyle = "rgba(26, 19, 13, 0.62)";
-    ctx.font = "9px monospace";
-    const labelW = Math.ceil(ctx.measureText(label).width) + 8;
-    const boxX = Math.max(x0 + 2, x0 + widthPx - labelW - 2);
-    const boxY = y + 2;
-    ctx.fillRect(boxX, boxY, labelW, 11);
-    ctx.fillStyle = "rgba(243, 232, 217, 0.9)";
-    ctx.fillText(label, boxX + 4, boxY + 9);
+  const labelSafeWidth = Math.max(0, widthPx - safeInsetX * 2);
+  if (labelSafeWidth >= 94 && contentH >= 22) {
+    drawCornerBadge(compactText(String(clip?.label || "video"), 26), "top-left");
+    drawCornerBadge(`clip ${clipDurationSec.toFixed(2)}s / src ${sourceDurationSec.toFixed(2)}s`, "top-right");
+    drawCornerBadge(`off ${clipStartOffsetSec.toFixed(2)}s`, "bottom-left");
+    if (fpsHint > 0) {
+      drawCornerBadge(`${Math.round(fpsHint)}fps`, "bottom-right");
+    }
   }
 }
 
-function drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, rowHeight) {
-  const innerY = rowTop + 7;
-  const innerH = Math.max(8, rowHeight - 14);
+function drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, rowHeight, options = {}) {
+  const clipTopInset = Math.max(0, Number(options?.clipTopInset || 5));
+  const clipBottomInset = Math.max(0, Number(options?.clipBottomInset || 5));
+  const clipBoxY = rowTop + clipTopInset;
+  const clipBoxH = Math.max(8, rowHeight - clipTopInset - clipBottomInset);
+  const innerY = clipBoxY + 2;
+  const innerH = Math.max(6, clipBoxH - 4);
   const clipStart = Number(clip?.start || 0);
   const clipEnd = Math.max(clipStart + 0.01, Number(clip?.end || clipStart + 0.01));
   const kind = String(track?.kind || "").toLowerCase();
@@ -1833,13 +3891,98 @@ function drawClipHandles(ctx, x0, rowTop, widthPx, rowHeight, options = {}) {
   };
 }
 
+function drawClipSourceWindowControl(ctx, clip, x0, rowTop, widthPx, rowHeight, options = {}) {
+  const sourceDurationSec = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(clip?.sourceDurationSec || (clip?.end - clip?.start) || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(clip?.end || 0) - Number(clip?.start || 0));
+  const maxOffsetSec = Math.max(0, sourceDurationSec - clipDurationSec);
+  if (maxOffsetSec <= 0.0005) return null;
+  const safeInset = resolveClipHandleSafeInset(widthPx, 7);
+  const railX = x0 + safeInset;
+  const railW = Math.max(0, widthPx - safeInset * 2);
+  if (railW < 24) return null;
+  const railH = CLIP_WINDOW_BAR_HEIGHT;
+  const railY = rowTop + rowHeight - railH - CLIP_WINDOW_BAR_BOTTOM_MARGIN;
+  const normalized = clamp(Math.max(0, Number(clip?.startOffsetSec || 0)) / maxOffsetSec, 0, 1);
+  const knobMinW = 12;
+  const knobW = clamp(railW * (clipDurationSec / sourceDurationSec), knobMinW, railW);
+  const knobX = railX + (railW - knobW) * normalized;
+  const knobX0 = knobX - 2;
+  const knobX1 = knobX + knobW + 2;
+  const railHitX0 = railX - 2;
+  const railHitX1 = railX + railW + 2;
+  const selected = Boolean(options?.selected);
+  const muted = Boolean(options?.muted);
+
+  ctx.fillStyle = muted ? "rgba(70, 56, 43, 0.5)" : "rgba(77, 60, 44, 0.32)";
+  ctx.fillRect(railX, railY, railW, railH);
+  ctx.strokeStyle = muted ? "rgba(54, 39, 26, 0.6)" : "rgba(79, 56, 36, 0.7)";
+  ctx.strokeRect(railX + 0.5, railY + 0.5, Math.max(1, railW - 1), Math.max(1, railH - 1));
+  ctx.fillStyle = selected ? "rgba(244, 235, 220, 0.96)" : "rgba(229, 219, 203, 0.88)";
+  ctx.fillRect(knobX, railY + 0.5, knobW, Math.max(2, railH - 1));
+  ctx.strokeStyle = "rgba(85, 62, 42, 0.78)";
+  ctx.strokeRect(knobX + 0.5, railY + 0.5, Math.max(1, knobW - 1), Math.max(1, railH - 1));
+
+  return {
+    x0: knobX0,
+    y0: railY - 2,
+    x1: knobX1,
+    y1: railY + railH + 2,
+    railX,
+    railY,
+    railW,
+    railH,
+    knobX,
+    knobW,
+    knobX0,
+    knobX1,
+    railHitX0,
+    railHitX1,
+  };
+}
+
+function resolveSlipOffsetFromRailHit(hit, pointerCanvasX, sourceDurationSec, clipDurationSec) {
+  const railX0 = Number(hit?.rail_x0);
+  const railX1 = Number(hit?.rail_x1);
+  const knobW = Math.max(0, Number(hit?.knob_w || 0));
+  if (!Number.isFinite(railX0) || !Number.isFinite(railX1) || railX1 <= railX0) return null;
+  const maxOffsetSec = Math.max(0, Number(sourceDurationSec || 0) - Number(clipDurationSec || 0));
+  if (maxOffsetSec <= 0.0005) return 0;
+  const railW = Math.max(1, railX1 - railX0);
+  const travelW = Math.max(0, railW - knobW);
+  if (travelW <= 0.0005) return 0;
+  const pointerX = clamp(Number(pointerCanvasX || railX0), railX0, railX1);
+  const normalized = clamp((pointerX - railX0 - knobW * 0.5) / travelW, 0, 1);
+  return clamp(normalized * maxOffsetSec, 0, maxOffsetSec);
+}
+
+function resolveClipHandleSafeInset(widthPx, extra = 4) {
+  const handleW = widthPx < 36 ? 5 : 8;
+  return Math.max(6, handleW + Math.max(0, Number(extra || 0)));
+}
+
 function drawClipEditOverlay(state, ctx, rowTop, rowBottom, clip, x0, widthPx) {
   const session = state?.clipEditSession;
   if (!session) return;
   if (String(session.clipId || "") !== String(getClipId(clip) || "")) return;
   const xStart = x0;
   const xEnd = x0 + widthPx;
+  const safeInset = resolveClipHandleSafeInset(widthPx, 5);
+  const xStartSafe = xStart + safeInset;
+  const xEndSafe = xEnd - safeInset;
+  const safeWidth = Math.max(0, xEndSafe - xStartSafe);
+  if (safeWidth < 22) return;
+  const mode = String(session.mode || "move").toLowerCase();
+  const modeLabel = mode === "trim_start"
+    ? "TRIM IN"
+    : (mode === "trim_end" ? "TRIM OUT" : (mode === "slip" ? "SLIP" : "MOVE"));
   ctx.save();
+  ctx.fillStyle = "rgba(102, 80, 59, 0.14)";
+  ctx.fillRect(xStart + 1, rowTop + 2, Math.max(1, widthPx - 2), Math.max(6, rowBottom - rowTop - 4));
+
+  // Ghost edge guides for active edit.
   ctx.setLineDash([5, 4]);
   ctx.strokeStyle = "rgba(58, 42, 27, 0.85)";
   ctx.beginPath();
@@ -1851,21 +3994,76 @@ function drawClipEditOverlay(state, ctx, rowTop, rowBottom, clip, x0, widthPx) {
   ctx.lineTo(xEnd + 0.5, rowBottom - 2);
   ctx.stroke();
   ctx.setLineDash([]);
-  ctx.fillStyle = "rgba(72, 55, 40, 0.9)";
+
+  // Active mode badge centered near top.
+  ctx.fillStyle = "rgba(68, 50, 35, 0.92)";
+  ctx.font = "9px monospace";
+  const modePadX = 6;
+  const modeH = 12;
+  const modeW = Math.ceil(ctx.measureText(modeLabel).width) + modePadX * 2;
+  const modeX = clamp(xStart + (widthPx - modeW) * 0.5, xStartSafe + 1, Math.max(xStartSafe + 1, xEndSafe - modeW - 1));
+  const modeY = rowTop + 2;
+  ctx.fillRect(modeX, modeY, modeW, modeH);
+  ctx.strokeStyle = "rgba(225, 204, 177, 0.7)";
+  ctx.strokeRect(modeX + 0.5, modeY + 0.5, Math.max(1, modeW - 1), Math.max(1, modeH - 1));
+  ctx.fillStyle = "#f8efe2";
+  ctx.fillText(modeLabel, modeX + modePadX, modeY + 9);
+
+  ctx.fillStyle = "rgba(72, 55, 40, 0.94)";
   ctx.font = "9px monospace";
   const startSec = Number(clip?.start || 0);
   const endSec = Number(clip?.end || 0);
-  ctx.fillText(`S ${startSec.toFixed(2)}s`, xStart + 4, rowTop + 11);
+  ctx.beginPath();
+  ctx.rect(xStartSafe, rowTop + 2, safeWidth, Math.max(10, rowBottom - rowTop - 4));
+  ctx.clip();
+  ctx.fillText(`S ${startSec.toFixed(2)}s`, xStartSafe + 2, rowTop + 24);
   const duration = Math.max(0, endSec - startSec);
-  const durationText = `D ${duration.toFixed(2)}s`;
+  const sourceDuration = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(clip?.sourceDurationSec || duration || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const startOffsetSec = Math.max(0, Number(clip?.startOffsetSec || 0));
+  const maxOffsetSec = Math.max(0, sourceDuration - duration);
+  const durationText = `D ${duration.toFixed(2)}s / src ${sourceDuration.toFixed(2)}s / off ${startOffsetSec.toFixed(2)}s`;
   const textWidth = Math.ceil(ctx.measureText(durationText).width);
-  const textX = Math.max(LEFT_GUTTER + 2, xEnd - textWidth - 6);
-  ctx.fillText(durationText, textX, rowTop + 11);
+  const textX = Math.max(xStartSafe + 2, xEndSafe - textWidth - 2);
+  if (textX + textWidth <= xEndSafe) {
+    ctx.fillText(durationText, textX, rowTop + 24);
+  }
+  const endText = `E ${endSec.toFixed(2)}s`;
+  const endTextW = Math.ceil(ctx.measureText(endText).width);
+  const endTextX = Math.max(xStartSafe + 2, xEndSafe - endTextW - 2);
+  const endTextY = Math.max(rowTop + 34, rowBottom - 6);
+  if (endTextX + endTextW <= xEndSafe) {
+    ctx.fillText(endText, endTextX, endTextY);
+  }
+
+  // Boundary hints (source/window limits) during trim/slip.
+  if (mode === "trim_start" || mode === "trim_end" || mode === "slip") {
+    const atMinOffset = startOffsetSec <= 0.001;
+    const atMaxOffset = startOffsetSec >= Math.max(0, maxOffsetSec - 0.001);
+    if (atMinOffset || atMaxOffset) {
+      const hint = atMinOffset ? "at source in" : "at source out";
+      const hintW = Math.ceil(ctx.measureText(hint).width) + 8;
+      const hintX = clamp(xStart + 3, xStartSafe + 1, Math.max(xStartSafe + 1, xEndSafe - hintW - 1));
+      const hintY = Math.max(rowTop + 14, rowBottom - 18);
+      ctx.fillStyle = "rgba(84, 60, 38, 0.88)";
+      ctx.fillRect(hintX, hintY, hintW, 11);
+      ctx.strokeStyle = "rgba(223, 198, 166, 0.68)";
+      ctx.strokeRect(hintX + 0.5, hintY + 0.5, Math.max(1, hintW - 1), 10);
+      ctx.fillStyle = "#f8efe2";
+      ctx.fillText(hint, hintX + 4, hintY + 8.5);
+    }
+  }
   ctx.restore();
 }
 
 function isTrackMuted(state, trackName) {
   return Boolean(state.mutedTracks && state.mutedTracks.has(String(trackName || "")));
+}
+
+function isTrackLocked(state, trackName) {
+  return Boolean(state?.lockedTracks && state.lockedTracks.has(String(trackName || "")));
 }
 
 function hasUnmutedMidiTracks(state) {
@@ -1902,10 +4100,17 @@ function setTrackMuted(state, trackName, muted) {
 function syncTrackAudioMuteVolumes(state) {
   if (!state.trackAudioPlayers || !state.trackAudioPlayers.size) return;
   for (const [trackName, entry] of state.trackAudioPlayers.entries()) {
-    if (!entry?.audio) continue;
-    try {
-      entry.audio.volume = isTrackMuted(state, trackName) ? 0 : 1;
-    } catch {}
+    const playersByAssetKey = entry?.playersByAssetKey instanceof Map
+      ? entry.playersByAssetKey
+      : null;
+    if (!playersByAssetKey || !playersByAssetKey.size) continue;
+    const muted = isTrackMuted(state, trackName);
+    for (const player of playersByAssetKey.values()) {
+      if (!player?.audio) continue;
+      try {
+        player.audio.volume = muted ? 0 : 1;
+      } catch {}
+    }
   }
 }
 
@@ -1917,19 +4122,8 @@ function hasTrackAudioPlayback(state, options = {}) {
 }
 
 function getPlaybackClockAudio(state) {
-  const unmutedEntries = getUnmutedTrackAudioEntries(state);
-  if (unmutedEntries.length) {
-    for (const entry of unmutedEntries) {
-      const audio = entry?.audio;
-      if (!audio) continue;
-      if (!audio.paused) return audio;
-    }
-    for (const entry of unmutedEntries) {
-      const audio = entry?.audio;
-      if (!audio) continue;
-      return audio;
-    }
-  }
+  // Track clip playback is event-driven (per clip/time window), so it cannot be used as a linear global clock.
+  // Keep the deterministic clock source on the dedicated mix track only.
   if (state.audio && state.audioSource && !state.audioErrored && !isMixTrackMuted(state)) return state.audio;
   return null;
 }
@@ -1937,20 +4131,203 @@ function getPlaybackClockAudio(state) {
 function clearTrackAudioPlayers(state) {
   if (!state.trackAudioPlayers || !state.trackAudioPlayers.size) return;
   for (const entry of state.trackAudioPlayers.values()) {
-    const audio = entry?.audio;
-    if (!audio) continue;
-    if (entry.handlers) {
+    const playersByAssetKey = entry?.playersByAssetKey instanceof Map
+      ? entry.playersByAssetKey
+      : null;
+    if (!playersByAssetKey || !playersByAssetKey.size) continue;
+    for (const player of playersByAssetKey.values()) {
+      const audio = player?.audio;
+      if (!audio) continue;
+      if (player.handlers) {
+        try {
+          if (player.handlers.onError) audio.removeEventListener("error", player.handlers.onError);
+          if (player.handlers.onReady) {
+            audio.removeEventListener("loadedmetadata", player.handlers.onReady);
+            audio.removeEventListener("canplay", player.handlers.onReady);
+          }
+        } catch {}
+      }
       try {
-        if (entry.handlers.onError) audio.removeEventListener("error", entry.handlers.onError);
+        audio.pause();
+        audio.src = "";
+        audio.load();
       } catch {}
     }
-    try {
-      audio.pause();
-      audio.src = "";
-      audio.load();
-    } catch {}
+    playersByAssetKey.clear();
   }
   state.trackAudioPlayers.clear();
+}
+
+function resolveTrackAudioActiveEventAtTime(state, trackName, timeSec) {
+  const name = String(trackName || "").trim();
+  if (!name) return null;
+  const events = Array.isArray(state?.studioData?.eventsByTrack?.[name])
+    ? state.studioData.eventsByTrack[name]
+    : [];
+  if (!events.length) return null;
+  const t = Math.max(0, Number(timeSec || 0));
+  const eps = 1 / 120;
+  let selected = null;
+  for (const event of events) {
+    if (!event || typeof event !== "object") continue;
+    const start = Math.max(0, Number(event?.time || 0));
+    const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+    const end = start + duration;
+    if (t + eps < start) continue;
+    if (t > end - eps) continue;
+    if (!selected) {
+      selected = { event, start, end, duration };
+      continue;
+    }
+    if (start > selected.start + eps) {
+      selected = { event, start, end, duration };
+      continue;
+    }
+    if (Math.abs(start - selected.start) <= eps && end > selected.end + eps) {
+      selected = { event, start, end, duration };
+    }
+  }
+  return selected;
+}
+
+function resolveTrackAudioLocalTime(active, playheadSec) {
+  if (!active || !active.event) return 0;
+  const start = Math.max(0, Number(active.start || 0));
+  const sourceDurationSec = Math.max(
+    CLIP_EDIT_MIN_DURATION_SEC,
+    Number(active.event?.sourceDurationSec || active.duration || CLIP_EDIT_MIN_DURATION_SEC)
+  );
+  const startOffsetSec = Math.max(0, Number(active.event?.startOffsetSec || 0));
+  const maxLocal = Math.max(0, sourceDurationSec - 0.01);
+  const local = startOffsetSec + Math.max(0, Number(playheadSec || 0) - start);
+  return clamp(local, 0, maxLocal);
+}
+
+function resolveTrackAudioPlayerForEvent(trackEntry, activeEvent) {
+  const playersByAssetKey = trackEntry?.playersByAssetKey instanceof Map
+    ? trackEntry.playersByAssetKey
+    : null;
+  if (!playersByAssetKey || !playersByAssetKey.size) return null;
+  const eventAssetKey = String(activeEvent?.assetKey || "").trim();
+  if (eventAssetKey && playersByAssetKey.has(eventAssetKey)) {
+    return playersByAssetKey.get(eventAssetKey);
+  }
+  const defaultAssetKey = String(trackEntry?.defaultAssetKey || "").trim();
+  if (defaultAssetKey && playersByAssetKey.has(defaultAssetKey)) {
+    return playersByAssetKey.get(defaultAssetKey);
+  }
+  for (const candidate of playersByAssetKey.values()) {
+    if (candidate?.audio && !candidate?.errored) return candidate;
+  }
+  for (const candidate of playersByAssetKey.values()) {
+    if (candidate?.audio) return candidate;
+  }
+  return null;
+}
+
+function pauseAllTrackAudioPlayers(trackEntry, { exceptAssetKey = "" } = {}) {
+  const keepAssetKey = String(exceptAssetKey || "").trim();
+  const playersByAssetKey = trackEntry?.playersByAssetKey instanceof Map
+    ? trackEntry.playersByAssetKey
+    : null;
+  if (!playersByAssetKey || !playersByAssetKey.size) return;
+  for (const player of playersByAssetKey.values()) {
+    const assetKey = String(player?.assetKey || "").trim();
+    if (keepAssetKey && assetKey === keepAssetKey) continue;
+    const audio = player?.audio;
+    if (!audio) continue;
+    if (!audio.paused) {
+      try { audio.pause(); } catch {}
+    }
+  }
+}
+
+function applyTrackPlayerSeek(player, localTime) {
+  const audio = player?.audio;
+  if (!audio) return false;
+  const target = Math.max(0, Number(localTime || 0));
+  try {
+    audio.currentTime = target;
+    player.pendingSeekSec = null;
+    return true;
+  } catch {
+    player.pendingSeekSec = target;
+    return false;
+  }
+}
+
+function syncTrackAudioPlayersToPlayhead(state, { play = false, forceSeek = false } = {}) {
+  if (!state?.trackAudioPlayers || !state.trackAudioPlayers.size) return;
+  const shouldPlay = Boolean(play);
+  const t = clamp(Number(state.playheadSec || 0), 0, Math.max(0, Number(state.durationSec || 0)));
+  for (const [trackName, entry] of state.trackAudioPlayers.entries()) {
+    const playersByAssetKey = entry?.playersByAssetKey instanceof Map
+      ? entry.playersByAssetKey
+      : null;
+    if (!playersByAssetKey || !playersByAssetKey.size) continue;
+    const muted = isTrackMuted(state, trackName);
+    const active = resolveTrackAudioActiveEventAtTime(state, trackName, t);
+    const activeClipId = String(active?.event?.clipId || "").trim();
+    const shouldClipPlay = Boolean(shouldPlay && !muted && active);
+
+    if (!active) {
+      entry.activeClipId = "";
+      entry.activeAssetKey = "";
+      pauseAllTrackAudioPlayers(entry);
+      continue;
+    }
+
+    const selectedPlayer = resolveTrackAudioPlayerForEvent(entry, active.event);
+    const audio = selectedPlayer?.audio;
+    if (!audio || selectedPlayer?.errored) {
+      entry.activeClipId = activeClipId;
+      entry.activeAssetKey = String(selectedPlayer?.assetKey || "");
+      pauseAllTrackAudioPlayers(entry, { exceptAssetKey: entry.activeAssetKey });
+      continue;
+    }
+    const selectedAssetKey = String(selectedPlayer?.assetKey || "").trim();
+    const localTime = resolveTrackAudioLocalTime(active, t);
+    const currentLocal = Number(audio.currentTime || 0);
+    const drift = Math.abs(currentLocal - localTime);
+    const clipChanged =
+      String(entry.activeClipId || "") !== activeClipId ||
+      String(entry.activeAssetKey || "") !== selectedAssetKey;
+    const seekThreshold = forceSeek ? 0.005 : (clipChanged ? 0.012 : 0.065);
+
+    if (forceSeek || clipChanged || drift > seekThreshold) {
+      applyTrackPlayerSeek(selectedPlayer, localTime);
+    }
+    entry.activeClipId = activeClipId;
+    entry.activeAssetKey = selectedAssetKey;
+    pauseAllTrackAudioPlayers(entry, { exceptAssetKey: selectedAssetKey });
+
+    if (!shouldClipPlay) {
+      selectedPlayer.pendingPlay = false;
+      if (!audio.paused) {
+        try { audio.pause(); } catch {}
+      }
+      continue;
+    }
+
+    if (selectedPlayer.pendingSeekSec != null) {
+      selectedPlayer.pendingPlay = true;
+      continue;
+    }
+
+    selectedPlayer.pendingPlay = false;
+    if (audio.paused) {
+      try {
+        const result = audio.play();
+        if (result && typeof result.catch === "function") {
+          result.catch(() => {
+            selectedPlayer.lastPlayBlockedAt = Date.now();
+          });
+        }
+      } catch {
+        selectedPlayer.lastPlayBlockedAt = Date.now();
+      }
+    }
+  }
 }
 
 function setupTrackAudioPlayers(state, onResolveAudioUrl) {
@@ -1958,28 +4335,79 @@ function setupTrackAudioPlayers(state, onResolveAudioUrl) {
   if (typeof Audio !== "function") return;
   if (typeof onResolveAudioUrl !== "function") return;
   const tracks = Array.isArray(state.studioData?.tracks) ? state.studioData.tracks : [];
+  const eventsByTrack = state.studioData?.eventsByTrack || {};
   for (const track of tracks) {
     const trackName = String(track?.name || "");
     const kind = String(track?.kind || "").toLowerCase();
-    const assetKey = String(track?.audioAssetKey || "").trim();
+    const defaultAssetKey = String(track?.audioAssetKey || "").trim();
     const playAudio = track?.playAudio !== false;
     if (!trackName || kind !== "audio") continue;
     if (!playAudio) continue;
-    if (!assetKey || assetKey === "mix") continue;
-    const url = String(onResolveAudioUrl(assetKey) || "").trim();
-    if (!url) continue;
-    const audio = new Audio();
-    const entry = { audio, errored: false, handlers: null };
-    const onError = () => {
-      entry.errored = true;
+    const trackEvents = Array.isArray(eventsByTrack[trackName]) ? eventsByTrack[trackName] : [];
+    const assetKeyCandidates = new Set();
+    if (defaultAssetKey && defaultAssetKey !== "mix") assetKeyCandidates.add(defaultAssetKey);
+    for (const event of trackEvents) {
+      const eventAssetKey = String(event?.assetKey || "").trim();
+      if (!eventAssetKey || eventAssetKey === "mix") continue;
+      assetKeyCandidates.add(eventAssetKey);
+    }
+    if (!assetKeyCandidates.size) continue;
+    const playersByAssetKey = new Map();
+    for (const assetKey of assetKeyCandidates.values()) {
+      const url = String(onResolveAudioUrl(assetKey) || "").trim();
+      if (!url) continue;
+      const audio = new Audio();
+      const player = {
+        assetKey,
+        audio,
+        errored: false,
+        handlers: null,
+        pendingSeekSec: null,
+        pendingPlay: false,
+      };
+      const onError = () => {
+        player.errored = true;
+      };
+      const onReady = () => {
+        if (player.errored) return;
+        if (player.pendingSeekSec != null) {
+          const applied = applyTrackPlayerSeek(player, player.pendingSeekSec);
+          if (!applied) return;
+        }
+        if (player.pendingPlay && audio.paused) {
+          try {
+            const result = audio.play();
+            if (result && typeof result.catch === "function") {
+              result.catch(() => {
+                player.lastPlayBlockedAt = Date.now();
+              });
+            }
+          } catch {
+            player.lastPlayBlockedAt = Date.now();
+          }
+        }
+      };
+      player.handlers = { onError, onReady };
+      audio.preload = "metadata";
+      audio.addEventListener("error", onError);
+      audio.addEventListener("loadedmetadata", onReady);
+      audio.addEventListener("canplay", onReady);
+      audio.src = url;
+      try {
+        audio.load();
+      } catch {}
+      playersByAssetKey.set(assetKey, player);
+    }
+    if (!playersByAssetKey.size) continue;
+    const entry = {
+      playersByAssetKey,
+      defaultAssetKey:
+        (defaultAssetKey && playersByAssetKey.has(defaultAssetKey))
+          ? defaultAssetKey
+          : String(playersByAssetKey.keys().next().value || ""),
+      activeClipId: "",
+      activeAssetKey: "",
     };
-    entry.handlers = { onError };
-    audio.preload = "auto";
-    audio.addEventListener("error", onError);
-    audio.src = url;
-    try {
-      audio.load();
-    } catch {}
     state.trackAudioPlayers.set(trackName, entry);
   }
   syncTrackAudioMuteVolumes(state);
@@ -2449,11 +4877,14 @@ function draw(state) {
     const trackKind = String(track?.kind || "").toLowerCase();
     const partition = resolveTrackPartition(track);
     const muted = isTrackMuted(state, trackName);
+    const locked = isTrackLocked(state, trackName);
     const rowTop = row.rowTop;
     const rowBottom = row.rowBottom;
     const rowHeight = Math.max(8, Number(row.rowHeight || (rowBottom - rowTop) || ROW_HEIGHT));
     const activeEdit = state.clipEditSession;
-    const activePreview = activeEdit ? state.previewClipEdits.get(activeEdit.clipId) : null;
+    const activePreview = activeEdit
+      ? getPreviewClipEdit(state, activeEdit.clipId, activeEdit.trackName)
+      : null;
     const activeEditTrack = String(activePreview?.trackName || activeEdit?.trackName || "").trim();
     if (row.gapBefore > 0) {
       const gapTop = rowTop - row.gapBefore;
@@ -2497,6 +4928,10 @@ function draw(state) {
       ctx.fillStyle = "rgba(118, 150, 198, 0.12)";
       ctx.fillRect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
     }
+    if (locked) {
+      ctx.fillStyle = "rgba(96, 117, 148, 0.12)";
+      ctx.fillRect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
+    }
     ctx.fillStyle = i % 2 === 0 ? "#e8d9c7" : "#e3d3c1";
     ctx.fillRect(0, rowTop, LEFT_GUTTER, rowHeight - 1);
     if (state.dropTarget && String(state.dropTarget.trackName || "") === trackName) {
@@ -2506,7 +4941,7 @@ function draw(state) {
       const ghostX = clamp(dropX, LEFT_GUTTER, Math.max(LEFT_GUTTER, width - ghostWidth));
       const ghostTop = rowTop + 6;
       const ghostHeight = Math.max(12, rowHeight - 12);
-      const ghostLabel = `drop ${ghostDuration.toFixed(2)}s`;
+      const ghostLabel = `${compactText(trackName, 14)} @ ${formatTimelineTimeLabel(Number(state.dropTarget.timeSec || 0), chooseRulerStepSec(state.pxPerSec))}`;
 
       ctx.fillStyle = "rgba(121, 97, 70, 0.2)";
       ctx.fillRect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
@@ -2549,69 +4984,92 @@ function draw(state) {
       ctx.stroke();
       ctx.lineWidth = 1;
     }
+
+    const events = Array.isArray(studioData?.eventsByTrack?.[track?.name]) ? studioData.eventsByTrack[track.name] : [];
+    const explicitResourceClips = events.some((event) => {
+      const resourceId = String(event?.resourceId || "").trim();
+      const clipId = String(event?.clipId || "").trim();
+      const src = String(event?.previewSrc || event?.src || "").trim();
+      if (trackKind === "video" || trackKind === "image") {
+        return Boolean(resourceId || src);
+      }
+      // Composition studio can project audio events from resource instances (linked video audio, etc.).
+      // Treat those as explicit clips too so clip-id based live preview/edit sync applies deterministically.
+      if (trackKind === "audio") {
+        return Boolean(resourceId || clipId);
+      }
+      return false;
+    });
+    const hasSource = String(track?.source || "").trim().length > 0;
+    const isCompositionEmptyLane =
+      !explicitResourceClips &&
+      events.length === 0 &&
+      !hasSource &&
+      (trackKind === "video" || trackKind === "image" || trackKind === "audio" || trackKind === "dropzone");
+
     const muteBtnW = 16;
     const muteBtnH = 14;
     const muteBtnX = LEFT_GUTTER - muteBtnW - 6;
     const muteBtnY = rowTop + 5;
-    ctx.fillStyle = muted ? "rgba(154, 69, 63, 0.9)" : "rgba(103, 88, 73, 0.85)";
-    ctx.fillRect(muteBtnX, muteBtnY, muteBtnW, muteBtnH);
-    ctx.strokeStyle = muted ? "rgba(82, 34, 30, 0.9)" : "rgba(62, 52, 42, 0.7)";
-    ctx.strokeRect(muteBtnX + 0.5, muteBtnY + 0.5, muteBtnW - 1, muteBtnH - 1);
-    ctx.fillStyle = "#f8efe2";
-    ctx.font = "9px monospace";
-    ctx.fillText("M", muteBtnX + 5, muteBtnY + 10);
-    state.hitRegions.push({
-      x0: muteBtnX,
-      y0: muteBtnY,
-      x1: muteBtnX + muteBtnW,
-      y1: muteBtnY + muteBtnH,
-      payload: { type: "track_mute", track_name: trackName },
-    });
-    if (trackKind === "audio") {
-      const channelMode = resolveEffectiveChannelMode(state, track);
-      const chanBtnW = 16;
-      const chanBtnH = 14;
-      const chanBtnX = muteBtnX;
-      const chanBtnY = muteBtnY + muteBtnH + 3;
-      ctx.fillStyle = channelMode === "mono" ? "rgba(76, 108, 150, 0.88)" : "rgba(91, 118, 86, 0.88)";
-      ctx.fillRect(chanBtnX, chanBtnY, chanBtnW, chanBtnH);
-      ctx.strokeStyle = "rgba(53, 43, 34, 0.72)";
-      ctx.strokeRect(chanBtnX + 0.5, chanBtnY + 0.5, chanBtnW - 1, chanBtnH - 1);
+    if (!isCompositionEmptyLane) {
+      ctx.fillStyle = muted ? "rgba(154, 69, 63, 0.9)" : "rgba(103, 88, 73, 0.85)";
+      ctx.fillRect(muteBtnX, muteBtnY, muteBtnW, muteBtnH);
+      ctx.strokeStyle = muted ? "rgba(82, 34, 30, 0.9)" : "rgba(62, 52, 42, 0.7)";
+      ctx.strokeRect(muteBtnX + 0.5, muteBtnY + 0.5, muteBtnW - 1, muteBtnH - 1);
       ctx.fillStyle = "#f8efe2";
       ctx.font = "9px monospace";
-      ctx.fillText(channelMode === "mono" ? "1" : "2", chanBtnX + 5, chanBtnY + 10);
+      ctx.fillText("M", muteBtnX + 5, muteBtnY + 10);
       state.hitRegions.push({
-        x0: chanBtnX,
-        y0: chanBtnY,
-        x1: chanBtnX + chanBtnW,
-        y1: chanBtnY + chanBtnH,
-        payload: { type: "track_channel_toggle", track_name: trackName },
+        x0: muteBtnX,
+        y0: muteBtnY,
+        x1: muteBtnX + muteBtnW,
+        y1: muteBtnY + muteBtnH,
+        payload: { type: "track_mute", track_name: trackName },
       });
+      if (trackKind === "audio") {
+        const channelMode = resolveEffectiveChannelMode(state, track);
+        const chanBtnW = 16;
+        const chanBtnH = 14;
+        const chanBtnX = muteBtnX;
+        const chanBtnY = muteBtnY + muteBtnH + 3;
+        ctx.fillStyle = channelMode === "mono" ? "rgba(76, 108, 150, 0.88)" : "rgba(91, 118, 86, 0.88)";
+        ctx.fillRect(chanBtnX, chanBtnY, chanBtnW, chanBtnH);
+        ctx.strokeStyle = "rgba(53, 43, 34, 0.72)";
+        ctx.strokeRect(chanBtnX + 0.5, chanBtnY + 0.5, chanBtnW - 1, chanBtnH - 1);
+        ctx.fillStyle = "#f8efe2";
+        ctx.font = "9px monospace";
+        ctx.fillText(channelMode === "mono" ? "1" : "2", chanBtnX + 5, chanBtnY + 10);
+        state.hitRegions.push({
+          x0: chanBtnX,
+          y0: chanBtnY,
+          x1: chanBtnX + chanBtnW,
+          y1: chanBtnY + chanBtnH,
+          payload: { type: "track_channel_toggle", track_name: trackName },
+        });
+      }
     }
 
-    ctx.fillStyle = muted ? "rgba(63, 51, 40, 0.54)" : "#3f3328";
-    ctx.font = "10px monospace";
-    ctx.fillText(compactText(trackName, 18), 8, rowTop + 14);
-    ctx.fillStyle = muted ? "rgba(109, 90, 72, 0.55)" : "#6d5a48";
-    const channelMode = resolveEffectiveChannelMode(state, track);
-    const modeText = channelMode === "stereo" ? "stereo L/R" : (channelMode === "mono" ? "mono" : "");
-    const infoText = modeText
-      ? `${track?.kind || "track"} ${modeText} · ${track?.events || 0}`
-      : `${track?.kind || "track"} · ${track?.events || 0}`;
-    ctx.fillText(infoText, 8, rowTop + 28);
+    if (!isCompositionEmptyLane) {
+      ctx.fillStyle = muted ? "rgba(63, 51, 40, 0.54)" : "#3f3328";
+      ctx.font = "10px monospace";
+      ctx.fillText(compactText(trackName, 18), 8, rowTop + 14);
+      ctx.fillStyle = muted ? "rgba(109, 90, 72, 0.55)" : "#6d5a48";
+      const channelMode = resolveEffectiveChannelMode(state, track);
+      const modeText = channelMode === "stereo" ? "stereo L/R" : (channelMode === "mono" ? "mono" : "");
+      const infoTextBase = modeText
+        ? `${track?.kind || "track"} ${modeText} · ${track?.events || 0}`
+        : `${track?.kind || "track"} · ${track?.events || 0}`;
+      const infoText = locked ? `${infoTextBase} · LOCK` : infoTextBase;
+      ctx.fillText(infoText, 8, rowTop + 28);
+    }
 
-    const events = Array.isArray(studioData?.eventsByTrack?.[track?.name]) ? studioData.eventsByTrack[track.name] : [];
-    const explicitResourceClips =
-      (trackKind === "video" || trackKind === "image") &&
-      events.some((event) => {
-        const resourceId = String(event?.resourceId || "").trim();
-        const src = String(event?.previewSrc || event?.src || "").trim();
-        return Boolean(resourceId || src);
-      });
+    const clipClampMaxSec = state.allowDurationExtend
+      ? TIMELINE_EDIT_MAX_DURATION_SEC
+      : state.durationSec;
     let clips = explicitResourceClips
-      ? buildExplicitResourceClips(events, state.durationSec, trackKind)
+      ? buildExplicitResourceClips(events, clipClampMaxSec, trackKind)
       : buildTrackClips(events, state.durationSec, secPerBar);
-    const hasSource = String(track?.source || "").trim().length > 0;
+    if (isCompositionEmptyLane) clips = [];
     // Stems/mix are full-length assets; when events are sparse, keep clip geometry aligned to full timeline.
     const preserveEventDuration = Boolean(track?.preserveEventDuration);
     if (
@@ -2674,11 +5132,11 @@ function draw(state) {
         clips = [{ start: alignedStart, end: state.durationSec, label: "midi", notesCount: noteEvents.length }];
       }
     }
-    clips = clips
+    const projectedClips = clips
       .map((clip, clipIndex) => {
-        const clippedStart = clamp(Number(clip?.start || 0), 0, state.durationSec);
+        const clippedStart = clamp(Number(clip?.start || 0), 0, clipClampMaxSec);
         const rawEnd = Math.max(clippedStart + CLIP_EDIT_MIN_DURATION_SEC, Number(clip?.end || clippedStart + CLIP_EDIT_MIN_DURATION_SEC));
-        const clippedEnd = clamp(rawEnd, clippedStart + CLIP_EDIT_MIN_DURATION_SEC, state.durationSec);
+        const clippedEnd = clamp(rawEnd, clippedStart + CLIP_EDIT_MIN_DURATION_SEC, clipClampMaxSec);
         const clipId = getClipId(clip, `${trackName}_${clipIndex}_${clippedStart.toFixed(4)}`);
         const resourceId = String(clip?.resourceId || "").trim();
         return {
@@ -2692,46 +5150,183 @@ function draw(state) {
         };
       })
       .map((clip) => applyPreviewClipGeometry(state, clip, trackName))
-      .filter((clip) => clip && clip.end > clip.start + 0.0005)
+      .filter((clip) => clip && clip.end > clip.start + 0.0005);
+    const injectedPreviewClips = collectPreviewInjectedClipsForTrack(state, trackName, trackKind, clipClampMaxSec)
+      .filter((clip) => clip && clip.end > clip.start + 0.0005);
+    clips = projectedClips
+      .concat(injectedPreviewClips)
       .sort((a, b) => Number(a.start || 0) - Number(b.start || 0));
     ctx.save();
     ctx.beginPath();
     ctx.rect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
     ctx.clip();
+    if (isCompositionEmptyLane && clips.length === 0) {
+      const padX = 10;
+      const laneX = LEFT_GUTTER + padX;
+      const laneY = rowTop + 6;
+      const laneW = Math.max(18, timelineWidth - padX * 2);
+      const laneH = Math.max(18, rowHeight - 12);
+      ctx.strokeStyle = muted ? "rgba(107, 92, 74, 0.22)" : "rgba(107, 92, 74, 0.38)";
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(laneX + 0.5, laneY + 0.5, laneW - 1, laneH - 1);
+      ctx.setLineDash([]);
+      ctx.fillStyle = muted ? "rgba(86, 71, 56, 0.42)" : "rgba(86, 71, 56, 0.72)";
+      ctx.font = "11px monospace";
+      const laneLabel = "Drop ressource here";
+      const labelWidth = Math.ceil(ctx.measureText(laneLabel).width);
+      const labelX = laneX + Math.max(8, Math.round((laneW - labelWidth) * 0.5));
+      const labelY = laneY + Math.round(laneH * 0.5) + 4;
+      ctx.fillText(laneLabel, labelX, labelY);
+    }
+    const primarySelectionKey = resolvePrimaryClipSelectionKey(state);
+    const selectedClipCount = resolveEffectiveSelectedClipCount(state);
+    const hasSelectionFocus = selectedClipCount > 0;
+    const selectedClipKeySet = state.selectedClipKeys instanceof Set ? state.selectedClipKeys : null;
+    let previousTrackClip = null;
+    let clipPaintIndex = 0;
     for (const clip of clips) {
       if (clip.end < visibleStartSec || clip.start > visibleEndSec) continue;
       const x0 = toX(clip.start);
       const x1 = toX(clip.end);
       const widthPx = Math.max(2, x1 - x0);
+      const previousTrack = i > 0 ? trackLayout.rows[i - 1]?.track : null;
+      const nextTrack = i + 1 < trackLayout.rows.length ? trackLayout.rows[i + 1]?.track : null;
+      const linkedWithPrev = areVideoAudioTracksLinked(track, previousTrack);
+      const linkedWithNext = areVideoAudioTracksLinked(track, nextTrack);
+      const clipTopInset = linkedWithPrev ? 0 : 5;
+      const clipBottomInset = linkedWithNext ? 0 : 5;
+      const clipBoxY = rowTop + clipTopInset;
+      const clipBoxH = Math.max(4, rowHeight - clipTopInset - clipBottomInset);
+      const clipBoxBottom = clipBoxY + clipBoxH;
       const clipId = getClipId(clip, `${trackName}_${clip.start.toFixed(4)}`);
-      const selectedClip = String(state.selection?.clip_id || "") === clipId;
-      const selectedTrack = String(state.selection?.track_name || "") === trackName;
-      const isSelected = selectedClip && selectedTrack;
-      ctx.fillStyle = stableTrackColor(trackName || String(i));
-      ctx.globalAlpha = muted ? 0.2 : (isSelected ? 0.82 : 0.72);
-      ctx.fillRect(x0, rowTop + 5, widthPx, rowHeight - 10);
-      ctx.globalAlpha = muted ? 0.55 : 1;
-      ctx.strokeStyle = isSelected ? "rgba(36, 26, 18, 0.88)" : "rgba(48, 36, 26, 0.6)";
-      ctx.strokeRect(x0 + 0.5, rowTop + 5.5, Math.max(1, widthPx - 1), rowHeight - 11);
-      if (!muted) drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, rowHeight);
-      drawClipEditOverlay(state, ctx, rowTop, rowBottom, clip, x0, widthPx);
-      ctx.fillStyle = muted ? "rgba(32, 22, 14, 0.54)" : "#20160e";
-      ctx.font = "9px monospace";
-      ctx.fillText(compactText(clip.label, 24), x0 + 4, rowTop + 18);
+      const clipSelectionKey = makeClipSelectionKey(trackName, clipId);
+      const isInSelectedSet = Boolean(clipSelectionKey && selectedClipKeySet?.has(clipSelectionKey));
+      const isPrimarySelected = Boolean(primarySelectionKey && clipSelectionKey === primarySelectionKey);
+      const isSelected = isPrimarySelected || isInSelectedSet;
+      const isGroupedSelected = isSelected && selectedClipCount > 1;
+      const skeletonMode = Boolean(state.skeletonMode);
+      if (skeletonMode) {
+        const shade = clipPaintIndex % 2 === 0 ? "rgba(138, 151, 168, 0.22)" : "rgba(120, 136, 154, 0.2)";
+        const shadeSelected = isPrimarySelected ? "rgba(100, 128, 160, 0.36)" : "rgba(112, 140, 172, 0.3)";
+        ctx.fillStyle = isSelected ? shadeSelected : shade;
+        ctx.globalAlpha = muted ? 0.24 : 1;
+        ctx.fillRect(x0, clipBoxY, widthPx, clipBoxH);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = isSelected
+          ? (isPrimarySelected ? "rgba(55, 78, 106, 0.96)" : "rgba(70, 92, 120, 0.88)")
+          : "rgba(86, 96, 108, 0.86)";
+        ctx.lineWidth = isSelected ? 1.6 : 1.1;
+        ctx.strokeRect(x0 + 0.5, clipBoxY + 0.5, Math.max(1, widthPx - 1), Math.max(1, clipBoxH - 1));
+        if (widthPx >= 18 && clipBoxH >= 12) {
+          ctx.save();
+          ctx.strokeStyle = "rgba(88, 101, 116, 0.42)";
+          ctx.lineWidth = 1;
+          ctx.setLineDash([5, 3]);
+          const centerY = clipBoxY + Math.floor(clipBoxH * 0.5) + 0.5;
+          ctx.beginPath();
+          ctx.moveTo(x0 + 3, centerY);
+          ctx.lineTo(x0 + widthPx - 3, centerY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
+        ctx.lineWidth = 1;
+      } else {
+        ctx.fillStyle = resolveAlternatingClipFill(trackKind, trackName || String(i), clipPaintIndex);
+        const baseAlpha = muted ? 0.2 : (isSelected ? 0.86 : (hasSelectionFocus ? 0.58 : 0.72));
+        ctx.globalAlpha = baseAlpha;
+        ctx.fillRect(x0, clipBoxY, widthPx, clipBoxH);
+        ctx.globalAlpha = muted ? 0.55 : 1;
+        ctx.strokeStyle = resolveAlternatingClipStroke(trackKind, trackName || String(i), clipPaintIndex, isSelected);
+        ctx.strokeRect(x0 + 0.5, clipBoxY + 0.5, Math.max(1, widthPx - 1), Math.max(1, clipBoxH - 1));
+      }
+      if (isSelected && !muted) {
+        const accent = isGroupedSelected ? "rgba(96, 130, 192, 0.94)" : "rgba(54, 98, 176, 0.98)";
+        ctx.save();
+        ctx.strokeStyle = accent;
+        ctx.lineWidth = isPrimarySelected ? 2.2 : 1.6;
+        if (isGroupedSelected && !isPrimarySelected) {
+          ctx.setLineDash([4, 3]);
+        } else {
+          ctx.setLineDash([]);
+        }
+        ctx.strokeRect(x0 + 1, clipBoxY + 1, Math.max(1, widthPx - 2), Math.max(1, clipBoxH - 2));
+        ctx.setLineDash([]);
+        if (widthPx >= 72 && clipBoxH >= 20) {
+          const badgeText = isGroupedSelected
+            ? (isPrimarySelected ? `FOCUS ${selectedClipCount}` : `GROUP ${selectedClipCount}`)
+            : "SOLO";
+          ctx.font = "8px monospace";
+          const badgePadX = 4;
+          const badgePadY = 2;
+          const badgeW = Math.ceil(ctx.measureText(badgeText).width) + badgePadX * 2;
+          const badgeH = 11;
+          const badgeX = Math.max(x0 + 2, x0 + widthPx - badgeW - 3);
+          const badgeY = clipBoxY + 3;
+          ctx.fillStyle = isGroupedSelected ? "rgba(214, 223, 244, 0.94)" : "rgba(198, 216, 246, 0.96)";
+          ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+          ctx.strokeStyle = "rgba(56, 84, 136, 0.72)";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(badgeX + 0.5, badgeY + 0.5, badgeW - 1, badgeH - 1);
+          ctx.fillStyle = "rgba(44, 58, 88, 0.96)";
+          ctx.fillText(badgeText, badgeX + badgePadX, badgeY + badgeH - badgePadY - 1);
+        }
+        ctx.restore();
+      }
+      if (!muted && !skeletonMode) {
+        drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, rowHeight, {
+          clipTopInset,
+          clipBottomInset,
+        });
+      }
+      if (!skeletonMode) {
+        drawClipEditOverlay(state, ctx, clipBoxY, clipBoxBottom, clip, x0, widthPx);
+        ctx.fillStyle = muted ? "rgba(32, 22, 14, 0.54)" : "#20160e";
+        ctx.font = "9px monospace";
+        const labelSafeInset = resolveClipHandleSafeInset(widthPx, 4);
+        const labelWidthPx = Math.max(0, widthPx - labelSafeInset * 2 - 2);
+        if (labelWidthPx > 8) {
+          const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(clip?.end || 0) - Number(clip?.start || 0));
+          const clipSourceDurationSec = Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(clip?.sourceDurationSec || clipDurationSec)
+          );
+          const approxChars = Math.max(4, Math.floor(labelWidthPx / 5.6));
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x0 + labelSafeInset, clipBoxY + 1, labelWidthPx, Math.max(8, clipBoxH - 2));
+          ctx.clip();
+          ctx.fillText(compactText(clip.label, approxChars), x0 + labelSafeInset, clipBoxY + 13);
+          if (trackKind === "video" && clipBoxH >= 34 && labelWidthPx >= 52) {
+            const durationText = `${clipDurationSec.toFixed(2)}s / src ${clipSourceDurationSec.toFixed(2)}s`;
+            const detailsChars = Math.max(6, Math.floor(labelWidthPx / 5.2));
+            ctx.globalAlpha = muted ? 0.55 : 0.92;
+            ctx.fillText(compactText(durationText, detailsChars), x0 + labelSafeInset, clipBoxY + 25);
+            ctx.globalAlpha = 1;
+          }
+          ctx.restore();
+        }
+      }
       const supportsClipEdit = Boolean(
         clip.resourceId && (trackKind === "video" || trackKind === "image")
       );
+      const windowRect = supportsClipEdit && trackKind === "video"
+        ? drawClipSourceWindowControl(ctx, clip, x0, clipBoxY, widthPx, clipBoxH, {
+            muted,
+            selected: isSelected,
+          })
+        : null;
       const handleRect = supportsClipEdit
-        ? drawClipHandles(ctx, x0, rowTop, widthPx, rowHeight, {
+        ? drawClipHandles(ctx, x0, clipBoxY, widthPx, clipBoxH, {
             muted,
             selected: isSelected,
           })
         : null;
       state.hitRegions.push({
         x0: Math.max(LEFT_GUTTER, x0),
-        y0: rowTop + 5,
+        y0: clipBoxY,
         x1: Math.min(width, x0 + widthPx),
-        y1: rowBottom - 5,
+        y1: clipBoxBottom,
         payload: {
           type: "clip",
           id: clipId,
@@ -2745,9 +5340,16 @@ function draw(state) {
           row_top: rowTop,
           row_bottom: rowBottom,
           duration_sec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, clip.end - clip.start),
+          link_group_id: String(clip?.linkGroupId || ""),
+          start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+          source_duration_sec: Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+          ),
           notes_count: clip.notesCount || 0,
           origin_step_index: resolveTrackStepIndex(track),
           asset: String(track?.source || ""),
+          clip_selection_key: clipSelectionKey,
         },
       });
       if (handleRect && supportsClipEdit) {
@@ -2764,6 +5366,12 @@ function draw(state) {
             track_kind: trackKind,
             t0_sec: clip.start,
             t1_sec: clip.end,
+            start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+            source_duration_sec: Math.max(
+              CLIP_EDIT_MIN_DURATION_SEC,
+              Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+            ),
+            link_group_id: String(clip?.linkGroupId || ""),
           },
         });
         state.hitRegions.push({
@@ -2779,9 +5387,118 @@ function draw(state) {
             track_kind: trackKind,
             t0_sec: clip.start,
             t1_sec: clip.end,
+            start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+            source_duration_sec: Math.max(
+              CLIP_EDIT_MIN_DURATION_SEC,
+              Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+            ),
+            link_group_id: String(clip?.linkGroupId || ""),
           },
         });
       }
+      if (windowRect && supportsClipEdit) {
+        state.hitRegions.push({
+          x0: Math.max(LEFT_GUTTER, windowRect.railHitX0),
+          y0: windowRect.y0,
+          x1: Math.min(width, windowRect.railHitX1),
+          y1: windowRect.y1,
+          payload: {
+            type: "clip_window_rail",
+            clip_id: clipId,
+            resource_id: clip.resourceId,
+            track_name: trackName,
+            track_kind: trackKind,
+            t0_sec: clip.start,
+            t1_sec: clip.end,
+            start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+            source_duration_sec: Math.max(
+              CLIP_EDIT_MIN_DURATION_SEC,
+              Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+            ),
+            link_group_id: String(clip?.linkGroupId || ""),
+            rail_x0: Number(windowRect.railX),
+            rail_x1: Number(windowRect.railX + windowRect.railW),
+            knob_w: Number(windowRect.knobW),
+          },
+        });
+        state.hitRegions.push({
+          x0: Math.max(LEFT_GUTTER, windowRect.knobX0),
+          y0: windowRect.y0,
+          x1: Math.min(width, windowRect.knobX1),
+          y1: windowRect.y1,
+          payload: {
+            type: "clip_window",
+            clip_id: clipId,
+            resource_id: clip.resourceId,
+            track_name: trackName,
+            track_kind: trackKind,
+            t0_sec: clip.start,
+            t1_sec: clip.end,
+            start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+            source_duration_sec: Math.max(
+              CLIP_EDIT_MIN_DURATION_SEC,
+              Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+            ),
+            link_group_id: String(clip?.linkGroupId || ""),
+          },
+        });
+      }
+
+      if (
+        trackKind === "video" &&
+        previousTrackClip &&
+        canJoinAdjacentClips(previousTrackClip, {
+          ...clip,
+          clipId,
+          trackName,
+          trackKind,
+        })
+      ) {
+        const joinTimeSec = (Number(previousTrackClip.end || 0) + Number(clip.start || 0)) * 0.5;
+        const joinX = toX(joinTimeSec);
+        const joinPad = 7;
+        const y0 = clipBoxY + 6;
+        const y1 = clipBoxBottom - 6;
+        if (joinX >= LEFT_GUTTER - joinPad && joinX <= width + joinPad && y1 > y0 + 2) {
+          state.hitRegions.push({
+            x0: Math.max(LEFT_GUTTER, joinX - joinPad),
+            y0,
+            x1: Math.min(width, joinX + joinPad),
+            y1,
+            payload: {
+              type: "clip_join",
+              track_name: trackName,
+              track_kind: trackKind,
+              left_clip_id: String(previousTrackClip.clipId || ""),
+              left_resource_id: String(previousTrackClip.resourceId || ""),
+              left_t0_sec: Number(previousTrackClip.start || 0),
+              left_t1_sec: Number(previousTrackClip.end || 0),
+              left_start_offset_sec: Math.max(0, Number(previousTrackClip.startOffsetSec || 0)),
+              left_source_duration_sec: Math.max(
+                CLIP_EDIT_MIN_DURATION_SEC,
+                Number(previousTrackClip.sourceDurationSec || (previousTrackClip.end - previousTrackClip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+              ),
+              right_clip_id: String(clipId || ""),
+              right_resource_id: String(clip.resourceId || ""),
+              right_t0_sec: Number(clip.start || 0),
+              right_t1_sec: Number(clip.end || 0),
+              right_start_offset_sec: Math.max(0, Number(clip?.startOffsetSec || 0)),
+              right_source_duration_sec: Math.max(
+                CLIP_EDIT_MIN_DURATION_SEC,
+                Number(clip?.sourceDurationSec || (clip.end - clip.start) || CLIP_EDIT_MIN_DURATION_SEC)
+              ),
+              join_time_sec: joinTimeSec,
+            },
+          });
+        }
+      }
+      previousTrackClip = {
+        ...clip,
+        clipId,
+        trackName,
+        trackKind,
+      };
+      clipPaintIndex += 1;
     }
     ctx.globalAlpha = 1;
     ctx.restore();
@@ -2823,6 +5540,29 @@ function draw(state) {
     }
   }
 
+  if (state.dropHint && typeof state.dropHint === "object") {
+    const hintText = String(state.dropHint.text || "").trim();
+    if (hintText) {
+      const hintXRaw = Number(state.dropHint.x || LEFT_GUTTER);
+      const hintYRaw = Number(state.dropHint.y || RULER_HEIGHT);
+      const hintPadX = 6;
+      const hintH = 14;
+      ctx.save();
+      ctx.font = "9px monospace";
+      const hintW = Math.ceil(ctx.measureText(hintText).width) + hintPadX * 2;
+      const hintX = clamp(hintXRaw + 10, LEFT_GUTTER + 2, Math.max(LEFT_GUTTER + 2, width - hintW - 2));
+      const hintY = clamp(hintYRaw + 10, RULER_HEIGHT + 2, Math.max(RULER_HEIGHT + 2, height - hintH - 2));
+      ctx.fillStyle = "rgba(113, 66, 58, 0.94)";
+      ctx.fillRect(hintX, hintY, hintW, hintH);
+      ctx.strokeStyle = "rgba(232, 193, 175, 0.76)";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(hintX + 0.5, hintY + 0.5, Math.max(1, hintW - 1), hintH - 1);
+      ctx.fillStyle = "#f8efe2";
+      ctx.fillText(hintText, hintX + hintPadX, hintY + 10);
+      ctx.restore();
+    }
+  }
+
   const playheadX = toX(state.playheadSec);
   if (playheadX >= LEFT_GUTTER - 2 && playheadX <= width + 2) {
     ctx.strokeStyle = "rgba(26, 21, 16, 0.88)";
@@ -2834,8 +5574,12 @@ function draw(state) {
   }
 
   const hasMidiSynth = Boolean(state.midiTrackNodes && state.midiTrackNodes.size);
+  const scrubAudioReady =
+    Boolean(state.scrubAudioBuffer) &&
+    !Boolean(state.scrubBufferSwapPending) &&
+    String(state.scrubActiveSourceUrl || "").trim() === String(state.scrubSourceUrl || "").trim();
   const modeLabel = state.scrubbing
-    ? state.scrubAudioBuffer
+    ? scrubAudioReady
       ? "scrub"
       : "scrub loading"
     : state.audioSource
@@ -2860,12 +5604,25 @@ function draw(state) {
   state.statusLabel.textContent = `${state.isPlaying ? "Playing" : "Stopped"} · ${state.playheadSec.toFixed(2)}s · ${modeLabel}`;
   renderFooter(state);
   if (typeof state.onPlaybackUpdate === "function") {
+    const hasUnmutedMidi = hasUnmutedMidiTracks(state);
+    const hasTrackAudio = hasTrackAudioPlayback(state, { unmutedOnly: true });
+    const hasMixAudio =
+      Boolean(state.audioSource) &&
+      !state.audioErrored &&
+      !isMixTrackMuted(state);
     try {
       state.onPlaybackUpdate({
         playheadSec: state.playheadSec,
         durationSec: state.durationSec,
         isPlaying: state.isPlaying,
         modeLabel,
+        isScrubbing: Boolean(state.scrubbing),
+        mutedTracks: Array.from(state.mutedTracks || []),
+        hasTrackAudioPlayback: hasTrackAudio,
+        hasMixAudioPlayback: hasMixAudio,
+        hasUnmutedMidi,
+        hasAudibleTimelineAudio: Boolean(hasTrackAudio || hasMixAudio || hasUnmutedMidi),
+        previewClipEdits: serializePreviewClipEdits(state),
       });
     } catch {}
   }
@@ -2879,15 +5636,7 @@ function seek(state, timeSec) {
       state.audio.currentTime = state.playheadSec;
     } catch {}
   }
-  if (state.trackAudioPlayers && state.trackAudioPlayers.size) {
-    for (const entry of state.trackAudioPlayers.values()) {
-      const audio = entry?.audio;
-      if (!audio) continue;
-      try {
-        audio.currentTime = state.playheadSec;
-      } catch {}
-    }
-  }
+  syncTrackAudioPlayersToPlayhead(state, { play: false, forceSeek: true });
   draw(state);
 }
 
@@ -2898,22 +5647,9 @@ function startPlayback(state) {
   state.lastFrameTs = null;
   void startMidiPlayback(state);
   if (hasTrackAudioPlayback(state, { unmutedOnly: true })) {
+    primeTrackAudioPlayersForGesture(state);
     syncTrackAudioMuteVolumes(state);
-    for (const entry of state.trackAudioPlayers.values()) {
-      const audio = entry?.audio;
-      if (!audio || entry?.errored) continue;
-      try {
-        audio.currentTime = state.playheadSec;
-        const result = audio.play();
-        if (result && typeof result.catch === "function") {
-          result.catch(() => {
-            entry.errored = true;
-          });
-        }
-      } catch {
-        entry.errored = true;
-      }
-    }
+    syncTrackAudioPlayersToPlayhead(state, { play: true, forceSeek: true });
     if (state.audio && state.audioSource) {
       try {
         state.audio.pause();
@@ -2954,6 +5690,9 @@ function startPlayback(state) {
       }
     }
     state.lastFrameTs = ts;
+    if (hasTrackAudioPlayback(state)) {
+      syncTrackAudioPlayersToPlayhead(state, { play: state.isPlaying, forceSeek: false });
+    }
     draw(state);
     if (state.isPlaying) state.rafId = requestAnimationFrame(tick);
   };
@@ -2971,30 +5710,14 @@ function stopPlayback(state, resetPlayhead = false) {
       state.audio.pause();
     } catch {}
   }
-  if (state.trackAudioPlayers && state.trackAudioPlayers.size) {
-    for (const entry of state.trackAudioPlayers.values()) {
-      const audio = entry?.audio;
-      if (!audio) continue;
-      try {
-        audio.pause();
-      } catch {}
-    }
-  }
+  syncTrackAudioPlayersToPlayhead(state, { play: false, forceSeek: false });
   if (resetPlayhead) state.playheadSec = 0;
   if (resetPlayhead && state.audio && state.audioSource) {
     try {
       state.audio.currentTime = 0;
     } catch {}
   }
-  if (resetPlayhead && state.trackAudioPlayers && state.trackAudioPlayers.size) {
-    for (const entry of state.trackAudioPlayers.values()) {
-      const audio = entry?.audio;
-      if (!audio) continue;
-      try {
-        audio.currentTime = 0;
-      } catch {}
-    }
-  }
+  if (resetPlayhead) syncTrackAudioPlayersToPlayhead(state, { play: false, forceSeek: true });
   draw(state);
 }
 
@@ -3006,16 +5729,204 @@ function hitTest(state, x, y) {
   return null;
 }
 
+function resolveTrackContextFromPoint(state, x, y, hit = null) {
+  const payload = hit && typeof hit === "object" ? hit : hitTest(state, x, y);
+  const payloadTrackName = String(payload?.track_name || "").trim();
+  const payloadTrackKind = String(payload?.track_kind || "").trim().toLowerCase();
+  if (payloadTrackName) {
+    const selectedClipIds = collectSelectedClipIdsForTrack(state, payloadTrackName);
+    return {
+      trackName: payloadTrackName,
+      trackKind: payloadTrackKind,
+      selectedClipIds,
+      selectedClipCount: selectedClipIds.length,
+      focusClipId: String(payload?.clip_id || "").trim(),
+      focusResourceId: String(payload?.resource_id || "").trim(),
+      focusLinkGroupId: String(payload?.link_group_id || "").trim(),
+      locked: isTrackLocked(state, payloadTrackName),
+    };
+  }
+  const rows = Array.isArray(state?.trackRows) ? state.trackRows : [];
+  const row = rows.find((entry) => y >= Number(entry?.rowTop || 0) && y <= Number(entry?.rowBottom || 0));
+  if (!row || !row.track) return null;
+  const rowTrackName = String(row.track?.name || "").trim();
+  if (!rowTrackName) return null;
+  const selectedClipIds = collectSelectedClipIdsForTrack(state, rowTrackName);
+  return {
+    trackName: rowTrackName,
+    trackKind: String(row.track?.kind || "").trim().toLowerCase(),
+    selectedClipIds,
+    selectedClipCount: selectedClipIds.length,
+    focusClipId: "",
+    focusResourceId: "",
+    focusLinkGroupId: "",
+    locked: isTrackLocked(state, rowTrackName),
+  };
+}
+
+function closeTrackContextMenu(state) {
+  const menuState = state?.trackContextMenu;
+  if (!menuState) return;
+  try {
+    document.removeEventListener("pointerdown", menuState.onPointerDownCapture, true);
+    document.removeEventListener("keydown", menuState.onKeyDownCapture, true);
+    window.removeEventListener("blur", menuState.onWindowBlur);
+  } catch {}
+  try {
+    menuState.root?.remove?.();
+  } catch {}
+  state.trackContextMenu = null;
+}
+
+function openTrackContextMenu(state, clientX, clientY, context) {
+  closeTrackContextMenu(state);
+  const trackName = String(context?.trackName || "").trim();
+  if (!trackName) return;
+  const trackKind = String(context?.trackKind || "").trim().toLowerCase();
+  const selectedClipIds = Array.isArray(context?.selectedClipIds) ? context.selectedClipIds : [];
+  const selectedClipCount = Math.max(0, Number(context?.selectedClipCount || selectedClipIds.length || 0));
+  const focusClipId = String(context?.focusClipId || "").trim();
+  const focusResourceId = String(context?.focusResourceId || "").trim();
+  const focusLinkGroupId = String(context?.focusLinkGroupId || "").trim();
+  const locked = Boolean(context?.locked);
+  const selectableClipCount = selectedClipCount > 0 ? selectedClipCount : (focusClipId ? 1 : 0);
+  const root = el("div", {
+    class: "lemouf-song2daw-track-context-menu",
+    role: "menu",
+    "aria-label": "Track context menu",
+  });
+  const title = el("div", {
+    class: "lemouf-song2daw-track-context-menu-title",
+    text: compactText(trackName, 30),
+  });
+  const createMenuItem = ({ action, text, disabled = false, disabledReason = "" }) => {
+    const button = el("button", {
+      class: "lemouf-song2daw-track-context-menu-item",
+      type: "button",
+      text,
+      role: "menuitem",
+      disabled: Boolean(disabled),
+      title: disabled && disabledReason ? String(disabledReason) : "",
+    });
+    if (disabled) button.classList.add("is-disabled");
+    button.addEventListener("click", () => {
+      if (disabled) return;
+      closeTrackContextMenu(state);
+      const accepted = typeof state.onTrackContextAction === "function"
+        ? Boolean(
+          state.onTrackContextAction({
+            action,
+            trackName,
+            trackKind,
+            selectedClipIds,
+            focusClipId,
+            focusResourceId,
+            focusLinkGroupId,
+            locked: isTrackLocked(state, trackName),
+          })
+        )
+        : false;
+      if (accepted && action === "toggle_lock_lane") {
+        if (!state.lockedTracks) state.lockedTracks = new Set();
+        if (state.lockedTracks.has(trackName)) state.lockedTracks.delete(trackName);
+        else state.lockedTracks.add(trackName);
+      }
+      if (accepted && action === "delete_selected_clips") {
+        clearClipSelectionSet(state);
+      }
+      if (accepted && action === "duplicate_selected_clips") {
+        clearClipSelectionSet(state);
+      }
+      if (accepted && action === "clear_composition") {
+        clearClipSelectionSet(state);
+      }
+      draw(state);
+      if (accepted) renderOverview(state);
+    });
+    return button;
+  };
+  const deleteLabel = selectableClipCount > 0
+    ? `Delete selected clips (${selectableClipCount})`
+    : "Delete selected clips";
+  const deleteBtn = createMenuItem({
+    action: "delete_selected_clips",
+    text: deleteLabel,
+    disabled: locked || selectableClipCount <= 0,
+    disabledReason: locked
+      ? "Lane is locked"
+      : "Select a clip (or right click directly on a clip) to enable this action",
+  });
+  const duplicateSelectedLabel = selectableClipCount > 0
+    ? `Duplicate selected clips (${selectableClipCount})`
+    : "Duplicate selected clips";
+  const duplicateSelectedBtn = createMenuItem({
+    action: "duplicate_selected_clips",
+    text: duplicateSelectedLabel,
+    disabled: locked || selectableClipCount <= 0,
+    disabledReason: locked
+      ? "Lane is locked"
+      : "Select a clip (or right click directly on a clip) to enable this action",
+  });
+  const duplicateBtn = createMenuItem({
+    action: "duplicate_lane",
+    text: "Duplicate lane",
+  });
+  const lockBtn = createMenuItem({
+    action: "toggle_lock_lane",
+    text: locked ? "Unlock lane" : "Lock lane",
+  });
+  const clearBtn = createMenuItem({
+    action: "clear_composition",
+    text: "Clear composition",
+  });
+  root.append(title, deleteBtn, duplicateSelectedBtn, duplicateBtn, lockBtn, clearBtn);
+  document.body.appendChild(root);
+
+  const padding = 8;
+  const menuW = Math.max(1, root.offsetWidth || 220);
+  const menuH = Math.max(1, root.offsetHeight || 74);
+  const maxX = Math.max(padding, window.innerWidth - menuW - padding);
+  const maxY = Math.max(padding, window.innerHeight - menuH - padding);
+  const left = clamp(Number(clientX || 0), padding, maxX);
+  const top = clamp(Number(clientY || 0), padding, maxY);
+  root.style.left = `${left}px`;
+  root.style.top = `${top}px`;
+
+  const onPointerDownCapture = (event) => {
+    if (root.contains(event.target)) return;
+    closeTrackContextMenu(state);
+  };
+  const onKeyDownCapture = (event) => {
+    if (String(event?.key || "") === "Escape") {
+      event.preventDefault();
+      closeTrackContextMenu(state);
+    }
+  };
+  const onWindowBlur = () => {
+    closeTrackContextMenu(state);
+  };
+  document.addEventListener("pointerdown", onPointerDownCapture, true);
+  document.addEventListener("keydown", onKeyDownCapture, true);
+  window.addEventListener("blur", onWindowBlur);
+  state.trackContextMenu = {
+    root,
+    onPointerDownCapture,
+    onKeyDownCapture,
+    onWindowBlur,
+  };
+}
+
 function fitToViewport(state, { drawAfter = true } = {}) {
   const timelineWidth = Math.max(1, state.canvas.clientWidth - LEFT_GUTTER);
-  state.pxPerSec = clamp(timelineWidth / state.durationSec, getMinPxPerSec(state), MAX_PX_PER_SEC);
+  const maxTimeSec = Math.max(1e-6, getTimelineMaxTimeSec(state, { includePreview: true }));
+  state.pxPerSec = clamp(timelineWidth / maxTimeSec, getMinPxPerSec(state), MAX_PX_PER_SEC);
   state.t0Sec = 0;
   if (drawAfter) draw(state);
 }
 
 function getMinPxPerSec(state) {
   const timelineWidth = Math.max(1, Number(state?.canvas?.clientWidth || 0) - LEFT_GUTTER);
-  const durationSec = Math.max(1e-6, Number(state?.durationSec || 0));
+  const durationSec = Math.max(1e-6, getTimelineMaxTimeSec(state, { includePreview: true }));
   const dynamicMin = (timelineWidth * MIN_SONG_WIDTH_RATIO) / durationSec;
   return Math.max(MIN_PX_PER_SEC_HARD, dynamicMin);
 }
@@ -3023,13 +5934,24 @@ function getMinPxPerSec(state) {
 function clampTimelineOffsetSec(state, valueSec) {
   const timelineWidth = Math.max(1, state.canvas.clientWidth - LEFT_GUTTER);
   const visibleSec = timelineWidth / Math.max(1e-6, state.pxPerSec);
-  const maxT0 = Math.max(0, state.durationSec - visibleSec);
+  const maxT0 = Math.max(0, getTimelineMaxTimeSec(state, { includePreview: true }) - visibleSec);
   return clamp(Number(valueSec || 0), 0, maxT0);
+}
+
+function refreshTimelineViewAfterDurationChange(state) {
+  if (!state) return;
+  if (state.autoFit) {
+    fitToViewport(state, { drawAfter: false });
+    return;
+  }
+  state.pxPerSec = clamp(Number(state.pxPerSec || 0), getMinPxPerSec(state), MAX_PX_PER_SEC);
+  state.t0Sec = clampTimelineOffsetSec(state, state.t0Sec);
 }
 
 export function clearSong2DawTimeline(body) {
   const state = TIMELINE_STATE.get(body);
   if (!state) return;
+  closeTrackContextMenu(state);
   body.classList.remove("lemouf-song2daw-studio-body-compact");
   if (state.canvas) state.canvas.style.cursor = "";
   stopPlayback(state);
@@ -3040,8 +5962,10 @@ export function clearSong2DawTimeline(body) {
   state.mutePaintVisited = new Set();
   state.clipEditSession = null;
   state.cutPreview = null;
+  state.joinPreview = null;
+  if (state.selectedClipKeys instanceof Set) state.selectedClipKeys.clear();
   if (state.previewClipEdits) state.previewClipEdits.clear();
-  if (state.clipThumbCache) state.clipThumbCache.clear();
+  if (state.clipThumbCache && state.ownsClipThumbCache) state.clipThumbCache.clear();
   if (state.keydownHandler) {
     window.removeEventListener("keydown", state.keydownHandler);
   }
@@ -3068,6 +5992,8 @@ export function clearSong2DawTimeline(body) {
     } catch {}
   }
   state.scrubSourceUrl = "";
+  state.scrubActiveSourceUrl = "";
+  state.scrubBufferSwapPending = false;
   state.scrubDecodeUrl = "";
   state.scrubDecodePromise = null;
   state.scrubAudioBuffer = null;
@@ -3091,6 +6017,9 @@ export function renderSong2DawTimeline({
   body,
   layoutMode = "full",
   allowDurationExtend = false,
+  dropTargetMode = "relaxed",
+  previewQualityHint = "auto",
+  externalClipThumbCache = null,
   initialViewState = null,
   onViewStateChange = null,
   onJumpToStep,
@@ -3099,6 +6028,10 @@ export function renderSong2DawTimeline({
   onDropResource,
   onClipEdit,
   onClipCut,
+  onClipJoin,
+  onTrackContextAction,
+  onUndo,
+  onRedo,
   onPlaybackUpdate,
 }) {
   clearSong2DawTimeline(body);
@@ -3144,14 +6077,19 @@ export function renderSong2DawTimeline({
   canvasWrap.appendChild(canvas);
   layout.append(canvasWrap);
   const footer = el("div", { class: "lemouf-song2daw-studio-footer" });
+  const shortcutsGroup = el("div", { class: "lemouf-song2daw-studio-footer-group lemouf-song2daw-studio-footer-shortcuts-wrap" });
+  const shortcutsLabel = el("span", { class: "lemouf-song2daw-studio-footer-shortcuts", text: "" });
+  shortcutsGroup.append(shortcutsLabel);
   const footerActions = el("div", { class: "lemouf-song2daw-studio-footer-actions" });
   const zoomGroup = el("div", { class: "lemouf-song2daw-studio-footer-group" });
   const zoomLabel = el("span", { class: "lemouf-song2daw-studio-footer-zoom", text: "zoom n/a" });
   const zoomResetBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+  const skeletonModeBtn = el("button", { class: "lemouf-loop-btn debug icon", type: "button" });
   setButtonIcon(zoomResetBtn, { icon: "zoom_reset", title: "Reset temporal zoom" });
-  zoomGroup.append(zoomLabel, zoomResetBtn);
+  setButtonIcon(skeletonModeBtn, { icon: "skeleton_mode", title: "Enable skeleton mode (debug)" });
+  zoomGroup.append(zoomLabel, zoomResetBtn, skeletonModeBtn);
   footerActions.append(zoomGroup);
-  footer.append(footerActions);
+  footer.append(shortcutsGroup, footerActions);
   body.append(toolbar, layout, footer);
 
   const dpr = window.devicePixelRatio || 1;
@@ -3175,6 +6113,12 @@ export function renderSong2DawTimeline({
     return "";
   };
   const initialStudioDurationSec = Math.max(0, Number(studioData?.durationSec || 0));
+  const initialLockedTracks = new Set(
+    (Array.isArray(studioData?.tracks) ? studioData.tracks : [])
+      .filter((track) => Boolean(track?.locked))
+      .map((track) => String(track?.name || "").trim())
+      .filter(Boolean)
+  );
   const state = {
     runData,
     studioData,
@@ -3186,12 +6130,20 @@ export function renderSong2DawTimeline({
     snapBtn,
     statusLabel,
     zoomLabel,
+    shortcutsLabel,
+    shortcutsSignature: "",
     zoomResetBtn,
+    skeletonModeBtn,
     onJumpToStep,
     onOpenRunDir,
     onDropResource,
     onClipEdit,
     onClipCut,
+    onClipJoin,
+    onTrackContextAction,
+    onUndo,
+    onRedo,
+    onResolveAudioUrl: typeof onResolveAudioUrl === "function" ? onResolveAudioUrl : null,
     onPlaybackUpdate,
     onViewStateChange: typeof onViewStateChange === "function" ? onViewStateChange : null,
     lastViewStateKey: "",
@@ -3206,11 +6158,13 @@ export function renderSong2DawTimeline({
     lastFrameTs: null,
     hitRegions: [],
     selection: null,
+    selectedClipKeys: new Set(),
     resizeObserver: null,
     autoFit: true,
     sectionHeight: normalizeSectionHeight(localStorage.getItem(SECTION_HEIGHT_STORAGE_KEY)),
     compactMode,
     allowDurationExtend: Boolean(allowDurationExtend),
+    dropTargetMode: String(dropTargetMode || "relaxed").trim().toLowerCase() === "strict" ? "strict" : "relaxed",
     resizingSection: false,
     resizeSectionPointerId: null,
     resizeSectionStartClientY: 0,
@@ -3230,18 +6184,24 @@ export function renderSong2DawTimeline({
     scrubAudioBuffer: null,
     scrubAudioBufferReverse: null,
     scrubSourceUrl: "",
+    scrubActiveSourceUrl: "",
+    scrubBufferSwapPending: false,
     scrubDecodePromise: null,
     scrubDecodeUrl: "",
     pendingTrackPointer: null,
     mutedTracks: new Set(),
+    lockedTracks: initialLockedTracks,
     trackChannelModeOverrides: new Map(),
     mutePaintActive: false,
     mutePaintPointerId: null,
     mutePaintTargetMuted: false,
     mutePaintVisited: new Set(),
     sectionVizMode: normalizeSectionVizMode(localStorage.getItem(SECTION_VIZ_STORAGE_KEY)),
+    skeletonMode: normalizeSkeletonMode(localStorage.getItem(SKELETON_MODE_STORAGE_KEY)),
     snapEnabled: normalizeSnapEnabled(localStorage.getItem(TIMELINE_SNAP_STORAGE_KEY)),
     trackRowScale: normalizeTrackRowScale(localStorage.getItem(TRACK_ROW_SCALE_STORAGE_KEY)),
+    videoPreviewMode: normalizeVideoPreviewMode(localStorage.getItem(VIDEO_PREVIEW_MODE_STORAGE_KEY)),
+    previewQualityHint: normalizeVideoPreviewQualityHint(previewQualityHint),
     audio: typeof Audio === "function" ? new Audio() : null,
     audioSource: "",
     audioReady: false,
@@ -3255,11 +6215,16 @@ export function renderSong2DawTimeline({
     keydownHandler: null,
     trackRows: [],
     dropTarget: null,
+    dropHint: null,
     previewClipEdits: new Map(),
     clipEditSession: null,
-    clipThumbCache: new Map(),
+    joinPreview: null,
+    clipThumbCache: externalClipThumbCache instanceof Map ? externalClipThumbCache : new Map(),
+    ownsClipThumbCache: !(externalClipThumbCache instanceof Map),
     cutPreview: null,
     keyupHandler: null,
+    keyModifiers: { ctrl: false, shift: false, alt: false },
+    trackContextMenu: null,
   };
 
   const hasInitialViewState =
@@ -3272,6 +6237,9 @@ export function renderSong2DawTimeline({
     state.pxPerSec = Math.max(0.0001, Number(initialViewState.pxPerSec));
     state.t0Sec = Math.max(0, Number(initialViewState.t0Sec || 0));
     state.scrollY = Math.max(0, Number(initialViewState.scrollY || 0));
+    if (typeof initialViewState.skeletonMode !== "undefined") {
+      state.skeletonMode = normalizeSkeletonMode(initialViewState.skeletonMode);
+    }
     if (Number.isFinite(Number(initialViewState.trackRowScale))) {
       state.trackRowScale = normalizeTrackRowScale(Number(initialViewState.trackRowScale));
     }
@@ -3296,6 +6264,7 @@ export function renderSong2DawTimeline({
     const changed = setTrackMuted(state, trackName, muted);
     if (!changed) return false;
     syncTrackAudioMuteVolumes(state);
+    syncTrackAudioPlayersToPlayhead(state, { play: state.isPlaying, forceSeek: false });
     syncMidiTrackMuteGains(state);
     if (state.isPlaying && hasUnmutedMidiTracks(state)) {
       void startMidiPlayback(state).then(() => {
@@ -3311,6 +6280,7 @@ export function renderSong2DawTimeline({
   const applyMuteBatch = (mutator) => {
     const changed = Boolean(typeof mutator === "function" ? mutator() : false);
     syncTrackAudioMuteVolumes(state);
+    syncTrackAudioPlayersToPlayhead(state, { play: state.isPlaying, forceSeek: false });
     syncMidiTrackMuteGains(state);
     if (state.isPlaying && hasUnmutedMidiTracks(state)) {
       void startMidiPlayback(state).then(() => {
@@ -3515,16 +6485,23 @@ export function renderSong2DawTimeline({
     } catch {}
   };
 
-  const beginClipEdit = (event, hit) => {
+  const beginClipEdit = (event, hit, pointerCanvasX = null) => {
     const clipId = String(hit?.clip_id || hit?.id || "").trim();
     const resourceId = String(hit?.resource_id || "").trim();
     const trackName = String(hit?.track_name || "").trim();
+    const linkGroupId = String(hit?.link_group_id || "").trim();
     if (!clipId || !resourceId || !trackName) return false;
-    const mode = String(hit?.type || "") === "clip_trim_start"
+    const hitType = String(hit?.type || "");
+    const mode = hitType === "clip_trim_start"
       ? "trim_start"
-      : (String(hit?.type || "") === "clip_trim_end" ? "trim_end" : "move");
+      : (hitType === "clip_trim_end"
+        ? "trim_end"
+        : ((hitType === "clip_window" || hitType === "clip_window_rail") ? "slip" : "move"));
     const trackKind = String(hit?.track_kind || "").toLowerCase();
     if (trackKind !== "video" && trackKind !== "image") return false;
+    if (isTrackLocked(state, trackName)) return false;
+    const clipAlreadySelected = isClipSelectedInSet(state, trackName, clipId);
+    if (mode === "move" && !clipAlreadySelected) clearClipSelectionSet(state);
     const maxDurationSec = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
     const start = clamp(Number(hit?.t0_sec || 0), 0, maxDurationSec);
     const end = clamp(
@@ -3532,6 +6509,27 @@ export function renderSong2DawTimeline({
       start + CLIP_EDIT_MIN_DURATION_SEC,
       maxDurationSec
     );
+    let groupMembers = [];
+    let groupMoveBounds = null;
+    if (mode === "move" && hitType === "clip") {
+      groupMembers = collectMultiSelectedMoveMembers(state, hit)
+        .map((member) => ({
+          ...member,
+          previewTargets: collectLinkedClipTargets(state, {
+            clipId: member.clipId,
+            resourceId: member.resourceId,
+            linkGroupId: member.linkGroupId,
+            fallbackTrackName: member.trackName,
+            fallbackTrackKind: member.trackKind,
+          }),
+        }));
+      if (groupMembers.length > 1) {
+        const maxTimelineSec = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
+        groupMoveBounds = resolveGroupMoveDeltaBounds(state, groupMembers, maxTimelineSec);
+      } else {
+        groupMembers = [];
+      }
+    }
     state.clipEditSession = {
       pointerId: event.pointerId,
       mode,
@@ -3541,10 +6539,68 @@ export function renderSong2DawTimeline({
       trackKind,
       start,
       end,
+      sourceDurationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(hit?.source_duration_sec || (end - start) || CLIP_EDIT_MIN_DURATION_SEC)
+      ),
+      startOffsetSec: Math.max(0, Number(hit?.start_offset_sec || 0)),
       pointerStartX: event.clientX,
       pointerStartY: event.clientY,
+      pointerOffsetSec: 0,
+      linkGroupId,
+      groupMembers,
+      groupMoveBounds,
+      groupDeltaSec: 0,
+      liveStartSec: start,
+      liveEndSec: end,
+      liveTrackName: trackName,
+      liveStartOffsetSec: Math.max(0, Number(hit?.start_offset_sec || 0)),
+      previewTargets: collectLinkedClipTargets(state, {
+        clipId,
+        resourceId,
+        linkGroupId,
+        fallbackTrackName: trackName,
+        fallbackTrackKind: trackKind,
+      }),
     };
-    state.previewClipEdits.set(clipId, { start, end, trackName });
+    {
+      const pointerX = Number.isFinite(Number(pointerCanvasX))
+        ? Number(pointerCanvasX)
+        : (() => {
+            const rect = canvas.getBoundingClientRect();
+            return event.clientX - rect.left;
+          })();
+      const clipStartX = LEFT_GUTTER + (start - state.t0Sec) * state.pxPerSec;
+      const offsetSec = (pointerX - clipStartX) / Math.max(1e-6, state.pxPerSec);
+      state.clipEditSession.pointerOffsetSec = clamp(
+        Number.isFinite(offsetSec) ? offsetSec : 0,
+        0,
+        Math.max(CLIP_EDIT_MIN_DURATION_SEC, end - start)
+      );
+    }
+    if (mode === "slip" && hitType === "clip_window_rail") {
+      const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, end - start);
+      const jumpedOffsetSec = resolveSlipOffsetFromRailHit(
+        hit,
+        Number(pointerCanvasX),
+        Number(state.clipEditSession.sourceDurationSec || clipDurationSec),
+        clipDurationSec
+      );
+      if (jumpedOffsetSec != null) {
+        state.clipEditSession.startOffsetSec = Math.max(0, Number(jumpedOffsetSec || 0));
+      }
+    }
+    state.autoFit = false;
+    writePreviewClipEdits(state, state.clipEditSession, {
+      start,
+      end,
+      trackName,
+      startOffsetSec: Math.max(0, Number(state.clipEditSession.startOffsetSec || 0)),
+      sourceDurationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(state.clipEditSession.sourceDurationSec || (end - start) || CLIP_EDIT_MIN_DURATION_SEC)
+      ),
+    });
     state.selection = {
       ...(hit || {}),
       type: "clip",
@@ -3573,65 +6629,237 @@ export function renderSong2DawTimeline({
     let nextTrackName = session.trackName;
     let nextStart = session.start;
     let nextEnd = session.end;
+    let nextStartOffsetSec = Math.max(0, Number(session.startOffsetSec || 0));
+    const sourceDurationSec = Math.max(
+      CLIP_EDIT_MIN_DURATION_SEC,
+      Number(session.sourceDurationSec || (session.end - session.start) || CLIP_EDIT_MIN_DURATION_SEC)
+    );
+    const sessionStartOffsetSec = Math.max(0, Number(session.startOffsetSec || 0));
     if (session.mode === "move") {
+      const moveDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, session.end - session.start);
       const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, session.end - session.start);
       const maxStart = state.allowDurationExtend
         ? Math.max(0, TIMELINE_EDIT_MAX_DURATION_SEC - duration)
         : Math.max(0, state.durationSec - duration);
-      const rawStart = clamp(session.start + deltaSec, 0, maxStart);
       const rect = canvas.getBoundingClientRect();
-      const x = event.clientX - rect.left;
+      const pointerCanvasX = event.clientX - rect.left;
+      const rawStartFromPointer = state.t0Sec + (pointerCanvasX - LEFT_GUTTER) / Math.max(1e-6, state.pxPerSec) - Math.max(0, Number(session.pointerOffsetSec || 0));
+      const rawStart = clamp(rawStartFromPointer, 0, maxStart);
+      const boundarySnapSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
+      const x = pointerCanvasX;
       const y = event.clientY - rect.top;
-      const target = resolveDropTargetFromPoint(state, x, y, session.trackKind);
-      if (target?.trackName) nextTrackName = String(target.trackName || nextTrackName);
-      nextStart = snapTimeSec(state, rawStart, {
-        trackName: nextTrackName,
-        excludeResourceId: session.resourceId,
-      });
-      nextStart = clamp(nextStart, 0, maxStart);
-      nextEnd = nextStart + duration;
-      const laneTrackName = resolveNonOverlappingTrackName(state, {
-        preferredTrackName: nextTrackName,
-        trackKind: session.trackKind,
-        startSec: nextStart,
-        endSec: nextEnd,
-        excludeResourceId: session.resourceId,
-      });
-      if (laneTrackName && laneTrackName !== nextTrackName) {
-        nextTrackName = laneTrackName;
-        nextStart = snapTimeSec(state, nextStart, {
+      const groupMembers = Array.isArray(session.groupMembers) ? session.groupMembers : [];
+      if (groupMembers.length > 1) {
+        let snappedAnchorStart = snapTimeSec(state, rawStart, {
+          trackName: session.trackName,
+          excludeClipId: session.clipId,
+        });
+        if (isNearTimelineOrigin(state, rawStart, x)) snappedAnchorStart = 0;
+        if (rawStart >= maxStart - boundarySnapSec) snappedAnchorStart = maxStart;
+        let delta = snappedAnchorStart - session.start;
+        const maxTimelineSec = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
+        const bounds = session.groupMoveBounds || resolveGroupMoveDeltaBounds(state, groupMembers, maxTimelineSec);
+        const minDelta = Number.isFinite(Number(bounds?.minDelta)) ? Number(bounds.minDelta) : 0;
+        const maxDelta = Number.isFinite(Number(bounds?.maxDelta)) ? Number(bounds.maxDelta) : 0;
+        delta = clamp(delta, minDelta, maxDelta);
+        session.groupDeltaSec = delta;
+        const maxTimelineForMembers = state.allowDurationExtend
+          ? TIMELINE_EDIT_MAX_DURATION_SEC
+          : Math.max(0, Number(state.durationSec || 0));
+        const nearZeroSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
+        for (const member of groupMembers) {
+          const memberBaseStart = Math.max(0, Number(member?.start || 0));
+          const memberDuration = Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(member?.end || 0) - memberBaseStart
+          );
+          const maxMemberStart = Math.max(0, maxTimelineForMembers - memberDuration);
+          let memberStart = clamp(memberBaseStart + delta, 0, maxMemberStart);
+          if (memberStart <= nearZeroSec) memberStart = 0;
+          const memberEnd = memberStart + memberDuration;
+          const memberSession = {
+            ...session,
+            clipId: String(member?.clipId || ""),
+            resourceId: String(member?.resourceId || ""),
+            trackName: String(member?.trackName || ""),
+            trackKind: String(member?.trackKind || ""),
+            linkGroupId: String(member?.linkGroupId || ""),
+            start: Math.max(0, Number(member?.start || 0)),
+            end: Math.max(
+              Math.max(0, Number(member?.start || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
+              Number(member?.end || 0)
+            ),
+            startOffsetSec: Math.max(0, Number(member?.startOffsetSec || 0)),
+            sourceDurationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(member?.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)),
+            previewTargets: Array.isArray(member?.previewTargets) ? member.previewTargets : [],
+          };
+          writePreviewClipEdits(state, memberSession, {
+            start: memberStart,
+            end: memberEnd,
+            trackName: memberSession.trackName,
+            startOffsetSec: memberSession.startOffsetSec,
+            sourceDurationSec: memberSession.sourceDurationSec,
+          });
+        }
+        nextTrackName = session.trackName;
+        nextStart = Math.max(0, session.start + delta);
+        nextEnd = Math.max(nextStart + CLIP_EDIT_MIN_DURATION_SEC, session.end + delta);
+      } else {
+        const target = resolveDropTargetFromPoint(state, x, y, session.trackKind);
+        if (target?.trackName) nextTrackName = String(target.trackName || nextTrackName);
+        nextStart = snapTimeSec(state, rawStart, {
           trackName: nextTrackName,
-          excludeResourceId: session.resourceId,
+          excludeClipId: session.clipId,
         });
         nextStart = clamp(nextStart, 0, maxStart);
+        if (isNearTimelineOrigin(state, rawStart, x)) nextStart = 0;
+        if (rawStart >= maxStart - boundarySnapSec) nextStart = maxStart;
         nextEnd = nextStart + duration;
+        const laneTrackName = resolveNonOverlappingTrackName(state, {
+          preferredTrackName: nextTrackName,
+          trackKind: session.trackKind,
+          startSec: nextStart,
+          endSec: nextEnd,
+          excludeClipId: session.clipId,
+        });
+        if (laneTrackName && laneTrackName !== nextTrackName) {
+          nextTrackName = laneTrackName;
+          nextStart = snapTimeSec(state, nextStart, {
+            trackName: nextTrackName,
+            excludeClipId: session.clipId,
+          });
+          nextStart = clamp(nextStart, 0, maxStart);
+          if (isNearTimelineOrigin(state, rawStart, x)) nextStart = 0;
+          if (rawStart >= maxStart - boundarySnapSec) nextStart = maxStart;
+          nextEnd = nextStart + duration;
+        }
+        const maxTimelineSec = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
+        const moveBounds = resolveMoveDeltaBoundsForClip(state, {
+          trackName: nextTrackName,
+          clipStartSec: session.start,
+          clipEndSec: session.end,
+          excludeClipId: session.clipId,
+          maxTimelineSec,
+        });
+        const boundedMinStartRaw = session.start + Number(moveBounds?.minDelta || 0);
+        const boundedMaxStart = session.start + Number(moveBounds?.maxDelta || 0);
+        const nearZeroSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
+        // Avoid microscopic positive minima near timeline origin (precision artifacts),
+        // which produce a visible "shrink then restore" effect during move preview.
+        const boundedMinStart = boundedMinStartRaw <= nearZeroSec + CLIP_EDIT_TIME_EPS_SEC
+          ? 0
+          : boundedMinStartRaw;
+        nextStart = clamp(nextStart, boundedMinStart, boundedMaxStart);
+        // Strong magnetic snap at timeline origin for move operations.
+        if (
+          isNearTimelineOrigin(state, rawStart, x) &&
+          boundedMinStart <= nearZeroSec + CLIP_EDIT_TIME_EPS_SEC
+        ) {
+          nextStart = 0;
+        }
+        // If pointer reached left timeline edge and there is no real left bound,
+        // force exact origin snap to avoid zoom-dependent drift.
+        if (
+          pointerCanvasX <= LEFT_GUTTER + CLIP_EDIT_SNAP_PX &&
+          boundedMinStart <= nearZeroSec + CLIP_EDIT_TIME_EPS_SEC
+        ) {
+          nextStart = 0;
+        }
+        if (rawStart <= nearZeroSec && boundedMinStart <= nearZeroSec + CLIP_EDIT_TIME_EPS_SEC) {
+          nextStart = 0;
+        }
+        if (Math.abs(nextStart) <= CLIP_EDIT_TIME_EPS_SEC) nextStart = 0;
+        nextEnd = nextStart + moveDurationSec;
+        // Move is a pure translation: never trim duration implicitly.
       }
     } else if (session.mode === "trim_start") {
-      const rawStart = clamp(session.start + deltaSec, 0, session.end - CLIP_EDIT_MIN_DURATION_SEC);
+      const minStartByOffset = Math.max(0, session.start - sessionStartOffsetSec);
+      const rawStart = clamp(
+        session.start + deltaSec,
+        minStartByOffset,
+        session.end - CLIP_EDIT_MIN_DURATION_SEC
+      );
+      const trackBounds = collectTrackNeighborBounds(state, {
+        trackName: session.trackName,
+        clipStartSec: session.start,
+        clipEndSec: session.end,
+        excludeClipId: session.clipId,
+      });
+      const boundedMinStart = Math.max(minStartByOffset, Number(trackBounds?.leftBoundSec || 0));
       const boundarySnapSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
       nextStart = snapTimeSec(state, rawStart, {
         trackName: session.trackName,
-        excludeResourceId: session.resourceId,
+        excludeClipId: session.clipId,
       });
-      if (rawStart <= boundarySnapSec) nextStart = 0;
-      nextStart = clamp(nextStart, 0, session.end - CLIP_EDIT_MIN_DURATION_SEC);
+      if (rawStart <= boundarySnapSec && boundedMinStart <= boundarySnapSec) nextStart = boundedMinStart;
+      nextStart = clamp(nextStart, boundedMinStart, session.end - CLIP_EDIT_MIN_DURATION_SEC);
+      const deltaStartSec = nextStart - session.start;
+      nextStartOffsetSec = Math.max(0, sessionStartOffsetSec + deltaStartSec);
+      const maxDurationBySource = Math.max(CLIP_EDIT_MIN_DURATION_SEC, sourceDurationSec - nextStartOffsetSec);
+      const nextDuration = session.end - nextStart;
+      if (nextDuration > maxDurationBySource) {
+        nextStart = session.end - maxDurationBySource;
+        nextStart = clamp(nextStart, boundedMinStart, session.end - CLIP_EDIT_MIN_DURATION_SEC);
+      }
     } else if (session.mode === "trim_end") {
       const maxEnd = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
+      const maxEndBySource = session.start + Math.max(CLIP_EDIT_MIN_DURATION_SEC, sourceDurationSec - sessionStartOffsetSec);
+      const trackBounds = collectTrackNeighborBounds(state, {
+        trackName: session.trackName,
+        clipStartSec: session.start,
+        clipEndSec: session.end,
+        excludeClipId: session.clipId,
+      });
+      const maxTrimEnd = Math.min(maxEnd, maxEndBySource, Number(trackBounds?.rightBoundSec || Number.POSITIVE_INFINITY));
       const rawEnd = clamp(session.end + deltaSec, session.start + CLIP_EDIT_MIN_DURATION_SEC, maxEnd);
       const boundarySnapSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
       nextEnd = snapTimeSec(state, rawEnd, {
         trackName: session.trackName,
-        excludeResourceId: session.resourceId,
+        excludeClipId: session.clipId,
         maxTimeSec: maxEnd,
       });
       if (!state.allowDurationExtend && rawEnd >= state.durationSec - boundarySnapSec) nextEnd = state.durationSec;
-      nextEnd = clamp(nextEnd, session.start + CLIP_EDIT_MIN_DURATION_SEC, maxEnd);
+      if (rawEnd >= maxTrimEnd - boundarySnapSec) nextEnd = maxTrimEnd;
+      nextEnd = clamp(nextEnd, session.start + CLIP_EDIT_MIN_DURATION_SEC, maxTrimEnd);
+    } else if (session.mode === "slip") {
+      const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, session.end - session.start);
+      const maxOffsetSec = Math.max(0, sourceDurationSec - clipDurationSec);
+      const rawOffsetSec = sessionStartOffsetSec + deltaSec;
+      nextStartOffsetSec = clamp(rawOffsetSec, 0, maxOffsetSec);
+      nextStart = session.start;
+      nextEnd = session.end;
     }
-    state.previewClipEdits.set(session.clipId, {
-      start: nextStart,
-      end: nextEnd,
-      trackName: nextTrackName,
-    });
+    if (session.mode === "move") {
+      // Hard invariant for move mode: pure translation only.
+      const moveDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, session.end - session.start);
+      nextStart = Math.max(0, Number(nextStart || 0));
+      nextEnd = nextStart + moveDurationSec;
+      nextStartOffsetSec = sessionStartOffsetSec;
+    }
+    session.liveStartSec = nextStart;
+    session.liveEndSec = nextEnd;
+    session.liveTrackName = nextTrackName;
+    session.liveStartOffsetSec = nextStartOffsetSec;
+    const groupMembers = Array.isArray(session.groupMembers) ? session.groupMembers : [];
+    if (session.mode !== "move" || groupMembers.length <= 1) {
+      writePreviewClipEdits(state, session, {
+        start: nextStart,
+        end: nextEnd,
+        trackName: nextTrackName,
+        startOffsetSec: nextStartOffsetSec,
+        sourceDurationSec,
+      });
+    }
+    state.selection = {
+      ...(state.selection && typeof state.selection === "object" ? state.selection : {}),
+      type: "clip",
+      clip_id: session.clipId,
+      resource_id: session.resourceId,
+      track_name: nextTrackName,
+      t0_sec: nextStart,
+      t1_sec: nextEnd,
+      link_group_id: String(session.linkGroupId || ""),
+    };
     draw(state);
     return true;
   };
@@ -3640,32 +6868,154 @@ export function renderSong2DawTimeline({
     const session = state.clipEditSession;
     if (!session) return false;
     if (session.pointerId !== null && event.pointerId !== session.pointerId) return false;
-    const current = state.previewClipEdits.get(session.clipId) || {
-      start: session.start,
-      end: session.end,
-      trackName: session.trackName,
-    };
     state.clipEditSession = null;
-    state.previewClipEdits.delete(session.clipId);
     canvas.style.cursor = "";
     try {
       canvas.releasePointerCapture?.(event.pointerId);
     } catch {}
+    const groupMembers = Array.isArray(session.groupMembers) ? session.groupMembers : [];
+    const isGroupMove = session.mode === "move" && groupMembers.length > 1;
     if (cancelled) {
+      if (isGroupMove) {
+        for (const member of groupMembers) {
+          clearPreviewClipEditsForSession(state, {
+            ...session,
+            clipId: String(member?.clipId || ""),
+            trackName: String(member?.trackName || ""),
+            previewTargets: Array.isArray(member?.previewTargets) ? member.previewTargets : [],
+          });
+        }
+      } else {
+        clearPreviewClipEditsForSession(state, session);
+      }
       draw(state);
       renderOverview(state);
       return true;
     }
+    if (isGroupMove) {
+      for (const member of groupMembers) {
+        const memberClipId = String(member?.clipId || "").trim();
+        const memberResourceId = String(member?.resourceId || "").trim();
+        const memberTrackName = String(member?.trackName || "").trim();
+        if (!memberClipId || !memberResourceId || !memberTrackName) continue;
+        const current = getPreviewClipEdit(state, memberClipId, memberTrackName) || {
+          start: Math.max(0, Number(member?.start || 0)),
+          end: Math.max(
+            Math.max(0, Number(member?.start || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
+            Number(member?.end || 0)
+          ),
+          trackName: memberTrackName,
+          startOffsetSec: Math.max(0, Number(member?.startOffsetSec || 0)),
+          sourceDurationSec: Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(member?.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+          ),
+        };
+        const previewStartSec = Math.max(
+          0,
+          Number(toFiniteNumber(current.start, toFiniteNumber(member?.start, 0)))
+        );
+        const previewEndSec = Math.max(
+          previewStartSec + CLIP_EDIT_MIN_DURATION_SEC,
+          Number(
+            toFiniteNumber(
+              current.end,
+              toFiniteNumber(member?.end, previewStartSec + CLIP_EDIT_MIN_DURATION_SEC)
+            )
+          )
+        );
+        const payload = {
+          clipId: memberClipId,
+          resourceId: memberResourceId,
+          linkGroupId: String(member?.linkGroupId || ""),
+          trackKind: String(member?.trackKind || ""),
+          trackName: String(current.trackName || memberTrackName),
+          timeSec: previewStartSec,
+          durationSec: Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            previewEndSec - previewStartSec
+          ),
+          startOffsetSec: Math.max(
+            0,
+            Number(current.startOffsetSec ?? member?.startOffsetSec ?? 0)
+          ),
+          mode: "move",
+          sourceDurationSec: Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(current.sourceDurationSec || member?.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+          ),
+        };
+        const accepted = typeof state.onClipEdit === "function"
+          ? Boolean(state.onClipEdit(payload))
+          : false;
+        clearPreviewClipEditsForSession(state, {
+          ...session,
+          clipId: memberClipId,
+          trackName: memberTrackName,
+          previewTargets: Array.isArray(member?.previewTargets) ? member.previewTargets : [],
+        });
+        if (!accepted) continue;
+        applyCommittedClipEditToLocalStudio(state, payload);
+        if (memberClipId === String(session.clipId || "").trim()) {
+          state.selection = {
+            ...(state.selection && typeof state.selection === "object" ? state.selection : {}),
+            type: "clip",
+            clip_id: memberClipId,
+            resource_id: memberResourceId,
+            track_name: String(payload.trackName || memberTrackName),
+            t0_sec: Math.max(0, Number(payload.timeSec || 0)),
+            t1_sec: Math.max(
+              Math.max(0, Number(payload.timeSec || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
+              Math.max(0, Number(payload.timeSec || 0)) + Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(payload.durationSec || CLIP_EDIT_MIN_DURATION_SEC))
+            ),
+            origin_step_index: Number(state.selection?.origin_step_index || 2),
+          };
+        }
+      }
+      draw(state);
+      renderOverview(state);
+      return true;
+    }
+    const current = resolveFinalPreviewClipEdit(state, session) || {
+      start: session.start,
+      end: session.end,
+      trackName: session.trackName,
+    };
+    const liveStartSec = toFiniteNumber(session.liveStartSec, null);
+    const liveEndSec = toFiniteNumber(session.liveEndSec, null);
+    const liveTrackName = String(session.liveTrackName || "").trim();
+    const liveStartOffsetSec = toFiniteNumber(session.liveStartOffsetSec, null);
+    let finalStartSec = Math.max(0, Number(liveStartSec ?? current.start ?? session.start));
+    let finalDurationSec = Math.max(
+      CLIP_EDIT_MIN_DURATION_SEC,
+      Number((liveEndSec ?? current.end ?? session.end) - finalStartSec)
+    );
+    let finalTrackName = String(liveTrackName || current.trackName || session.trackName);
+    let finalStartOffsetSec = Math.max(
+      0,
+      Number(liveStartOffsetSec ?? current.startOffsetSec ?? session.startOffsetSec ?? 0)
+    );
+    if (String(session.mode || "").toLowerCase() === "move") {
+      // For move, prefer the latest preview track (what the user saw while dragging).
+      const previewTrackName = String(current?.trackName || "").trim();
+      if (previewTrackName) finalTrackName = previewTrackName;
+      const moveDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, session.end - session.start);
+      const nearZeroSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
+      if (finalStartSec <= nearZeroSec + CLIP_EDIT_TIME_EPS_SEC) finalStartSec = 0;
+      finalDurationSec = moveDurationSec;
+      finalStartOffsetSec = Math.max(0, Number(session.startOffsetSec || 0));
+    }
+    const finalEndSec = finalStartSec + finalDurationSec;
     state.selection = {
       ...(state.selection && typeof state.selection === "object" ? state.selection : {}),
       type: "clip",
       clip_id: session.clipId,
       resource_id: session.resourceId,
-      track_name: String(current.trackName || session.trackName),
-      t0_sec: Math.max(0, Number(current.start || session.start)),
+      track_name: finalTrackName,
+      t0_sec: finalStartSec,
       t1_sec: Math.max(
-        Math.max(0, Number(current.start || session.start)) + CLIP_EDIT_MIN_DURATION_SEC,
-        Number(current.end || session.end)
+        finalStartSec + CLIP_EDIT_MIN_DURATION_SEC,
+        finalEndSec
       ),
       origin_step_index: Number(state.selection?.origin_step_index || 2),
     };
@@ -3675,15 +7025,38 @@ export function renderSong2DawTimeline({
         state.onClipEdit({
           clipId: session.clipId,
           resourceId: session.resourceId,
+          linkGroupId: String(session.linkGroupId || ""),
           trackKind: session.trackKind,
-          trackName: String(current.trackName || session.trackName),
-          timeSec: Math.max(0, Number(current.start || session.start)),
-          durationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(current.end || session.end) - Number(current.start || session.start)),
+          trackName: finalTrackName,
+          timeSec: finalStartSec,
+          durationSec: finalDurationSec,
+          startOffsetSec: finalStartOffsetSec,
           mode: session.mode,
+          sourceDurationSec: Math.max(
+            CLIP_EDIT_MIN_DURATION_SEC,
+            Number(current.sourceDurationSec || session.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+          ),
         })
       );
     }
+    clearPreviewClipEditsForSession(state, session);
     if (accepted) {
+      applyCommittedClipEditToLocalStudio(state, {
+        clipId: session.clipId,
+        resourceId: session.resourceId,
+        linkGroupId: String(session.linkGroupId || ""),
+        trackKind: session.trackKind,
+        trackName: finalTrackName,
+        timeSec: finalStartSec,
+        durationSec: finalDurationSec,
+        startOffsetSec: finalStartOffsetSec,
+        mode: session.mode,
+        sourceDurationSec: Math.max(
+          CLIP_EDIT_MIN_DURATION_SEC,
+          Number(current.sourceDurationSec || session.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+        ),
+      });
+      draw(state);
       renderOverview(state);
     } else {
       draw(state);
@@ -3783,7 +7156,7 @@ export function renderSong2DawTimeline({
           // Media files can include extra tail silence and should not stretch clip geometry.
           if (initialStudioDurationSec <= 0.05) {
             state.durationSec = mediaDuration;
-            if (state.autoFit) fitToViewport(state, { drawAfter: false });
+            refreshTimelineViewAfterDurationChange(state);
           }
         }
         state.audioReady = true;
@@ -3824,11 +7197,33 @@ export function renderSong2DawTimeline({
     state.dropTarget = null;
     if (drawAfter) draw(state);
   };
+  const clearDropHint = (drawAfter = true) => {
+    if (!state.dropHint) return;
+    state.dropHint = null;
+    if (drawAfter) draw(state);
+  };
+  const setDropHint = (text, x, y) => {
+    const next = {
+      text: String(text || "").trim(),
+      x: Number(x || LEFT_GUTTER),
+      y: Number(y || RULER_HEIGHT),
+    };
+    if (
+      state.dropHint &&
+      state.dropHint.text === next.text &&
+      Math.abs(Number(state.dropHint.x || 0) - next.x) < 1 &&
+      Math.abs(Number(state.dropHint.y || 0) - next.y) < 1
+    ) {
+      return;
+    }
+    state.dropHint = next;
+    draw(state);
+  };
 
-  const resolveAdjustedDropTarget = (target, payload, { allowCreateLane = false } = {}) => {
+  const resolveAdjustedDropTarget = (target, payload, { allowCreateLane = false, pointerCanvasX = null } = {}) => {
     if (!target || !payload) return null;
     const resourceId = String(payload.resourceId || "").trim();
-    const resourceKind = normalizeResourceKind(payload.resourceKind || target.trackKind || "");
+    const resourceKind = normalizeResourceKind(payload.resourceKind || "");
     const durationSec = findResourceDurationHintSec(
       state,
       resourceId,
@@ -3842,18 +7237,19 @@ export function renderSong2DawTimeline({
         trackKind: resourceKind,
         startSec: timeSec,
         endSec: timeSec + durationSec,
-        excludeResourceId: resourceId,
         allowCreateLane,
       }) || trackName;
     }
     timeSec = snapTimeSec(state, timeSec, {
       trackName,
-      excludeResourceId: resourceId,
     });
     const maxStart = state.allowDurationExtend
       ? Math.max(0, TIMELINE_EDIT_MAX_DURATION_SEC - durationSec)
       : Math.max(0, state.durationSec - durationSec);
+    const boundarySnapSec = CLIP_EDIT_SNAP_PX / Math.max(1e-6, state.pxPerSec);
     timeSec = clamp(timeSec, 0, maxStart);
+    if (isNearTimelineOrigin(state, timeSec, pointerCanvasX)) timeSec = 0;
+    if (timeSec >= maxStart - boundarySnapSec) timeSec = maxStart;
     return {
       ...target,
       trackName,
@@ -3870,21 +7266,36 @@ export function renderSong2DawTimeline({
     const payload = readResourceDragPayload(event.dataTransfer);
     if (!payload.resourceId) {
       clearDropTarget(false);
+      clearDropHint(false);
       return;
     }
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const target = resolveDropTargetFromPoint(state, x, y, payload.resourceKind);
     if (!target) {
       clearDropTarget();
+      if (state.dropTargetMode === "strict") {
+        setDropHint("drop on compatible track", x, y);
+      } else {
+        clearDropHint();
+      }
       return;
     }
-    event.preventDefault();
-    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-    const nextTarget = resolveAdjustedDropTarget(target, payload, { allowCreateLane: false });
+    clearDropHint(false);
+    const nextTarget = resolveAdjustedDropTarget(target, payload, {
+      allowCreateLane: false,
+      pointerCanvasX: x,
+    });
     if (!nextTarget) {
       clearDropTarget();
+      if (state.dropTargetMode === "strict") {
+        setDropHint("drop on compatible track", x, y);
+      } else {
+        clearDropHint();
+      }
       return;
     }
     if (!sameDropTarget(state.dropTarget, nextTarget)) {
@@ -3894,7 +7305,7 @@ export function renderSong2DawTimeline({
   });
 
   canvas.addEventListener("dragleave", (event) => {
-    if (!state.dropTarget) return;
+    if (!state.dropTarget && !state.dropHint) return;
     const rect = canvas.getBoundingClientRect();
     const inside =
       event.clientX >= rect.left &&
@@ -3903,6 +7314,7 @@ export function renderSong2DawTimeline({
       event.clientY <= rect.bottom;
     if (inside) return;
     clearDropTarget();
+    clearDropHint(false);
   });
 
   canvas.addEventListener("drop", (event) => {
@@ -3910,36 +7322,114 @@ export function renderSong2DawTimeline({
     const payload = readResourceDragPayload(event.dataTransfer);
     if (!payload.resourceId) {
       clearDropTarget(false);
+      clearDropHint(false);
       return;
     }
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    const target = resolveDropTargetFromPoint(state, x, y, payload.resourceKind);
+    const directTarget = resolveDropTargetFromPoint(state, x, y, payload.resourceKind);
+    const fallbackTarget = state.dropTarget &&
+      String(state.dropTarget?.resourceId || "") === String(payload.resourceId || "") &&
+      isTrackDropCompatible(
+        { kind: String(state.dropTarget?.trackKind || "") },
+        payload.resourceKind
+      ) &&
+      !isTrackLocked(state, String(state.dropTarget?.trackName || "").trim())
+      ? state.dropTarget
+      : null;
+    const target = directTarget || fallbackTarget;
     if (!target) {
       clearDropTarget();
+      if (state.dropTargetMode === "strict") {
+        setDropHint("drop on compatible track", x, y);
+      } else {
+        clearDropHint();
+      }
       return;
     }
     event.preventDefault();
-    const finalTarget = resolveAdjustedDropTarget(target, payload, { allowCreateLane: true });
+    const finalTarget = resolveAdjustedDropTarget(target, payload, {
+      allowCreateLane: true,
+      pointerCanvasX: x,
+    });
     clearDropTarget(false);
+    clearDropHint(false);
     if (!finalTarget) {
       draw(state);
       return;
     }
-    const accepted = Boolean(
-      state.onDropResource({
+    const acceptedResult = state.onDropResource({
         resourceId: payload.resourceId,
         resourceKind: finalTarget.resourceKind,
         trackName: finalTarget.trackName,
         trackKind: finalTarget.trackKind,
         timeSec: finalTarget.timeSec,
-      })
-    );
-    if (!accepted) draw(state);
+      });
+    const accepted = Boolean(acceptedResult);
+    if (accepted) {
+      const hintedDuration = Math.max(0, Number(state.studioData?.durationSec || 0));
+      const computedDuration = Math.max(
+        0,
+        Number(getTimelineMaxTimeSec(state, { includePreview: true }) || 0)
+      );
+      const nextDuration = Math.max(1, hintedDuration, computedDuration);
+      if (nextDuration > state.durationSec + 1e-6) {
+        state.durationSec = nextDuration;
+        refreshTimelineViewAfterDurationChange(state);
+      }
+      if (typeof state.onResolveAudioUrl === "function") {
+        setupTrackAudioPlayers(state, state.onResolveAudioUrl);
+        syncTrackAudioMuteVolumes(state);
+      }
+      if (state.isPlaying) {
+        syncTrackAudioPlayersToPlayhead(state, { play: true, forceSeek: true });
+      }
+    }
+    draw(state);
+    if (accepted) renderOverview(state);
+  });
+
+  canvas.addEventListener("contextmenu", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const hit = hitTest(state, x, y);
+    if (!event.ctrlKey || String(hit?.type || "") !== "clip") return;
+    const trackKind = String(hit?.track_kind || "").toLowerCase();
+    if (trackKind !== "video" && trackKind !== "image") return;
+    event.preventDefault();
+    if (!toggleClipSelectionFromHit(state, hit)) return;
+    state.selection = {
+      ...(hit || {}),
+      type: "clip",
+      clip_id: String(hit?.clip_id || ""),
+      resource_id: String(hit?.resource_id || ""),
+      track_name: String(hit?.track_name || ""),
+      t0_sec: Math.max(0, Number(hit?.t0_sec || 0)),
+      t1_sec: Math.max(
+        Math.max(0, Number(hit?.t0_sec || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
+        Number(hit?.t1_sec || 0)
+      ),
+    };
+    draw(state);
+    renderOverview(state);
+  });
+  canvas.addEventListener("contextmenu", (event) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const hit = hitTest(state, x, y);
+    if (event.ctrlKey && String(hit?.type || "") === "clip") return;
+    const trackContext = resolveTrackContextFromPoint(state, x, y, hit);
+    if (!trackContext) return;
+    event.preventDefault();
+    openTrackContextMenu(state, event.clientX, event.clientY, trackContext);
   });
 
   canvas.addEventListener("pointerdown", (event) => {
+    closeTrackContextMenu(state);
+    clearDropHint(false);
     if (event.button !== 0) return;
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
@@ -3961,16 +7451,41 @@ export function renderSong2DawTimeline({
       return;
     }
     const hit = hitTest(state, x, y);
+    if (
+      event.ctrlKey &&
+      hit?.type === "clip_join" &&
+      typeof state.onClipJoin === "function"
+    ) {
+      if (isTrackLocked(state, String(hit?.track_name || "").trim())) return;
+      const accepted = Boolean(
+        state.onClipJoin({
+          trackName: String(hit?.track_name || "").trim(),
+          trackKind: String(hit?.track_kind || "").trim().toLowerCase(),
+          leftClipId: String(hit?.left_clip_id || "").trim(),
+          leftResourceId: String(hit?.left_resource_id || "").trim(),
+          rightClipId: String(hit?.right_clip_id || "").trim(),
+          rightResourceId: String(hit?.right_resource_id || "").trim(),
+          joinTimeSec: Math.max(0, Number(hit?.join_time_sec || 0)),
+        })
+      );
+      state.cutPreview = null;
+      state.joinPreview = null;
+      clearClipSelectionSet(state);
+      draw(state);
+      if (accepted) renderOverview(state);
+      return;
+    }
     if (hit?.type === "track_mute") {
       beginMutePaint(event, hit.track_name);
       return;
     }
     if (
-      event.ctrlKey &&
+      event.altKey &&
       hit?.type === "clip" &&
       String(hit?.track_kind || "").toLowerCase() === "video" &&
       typeof state.onClipCut === "function"
     ) {
+      if (isTrackLocked(state, String(hit?.track_name || "").trim())) return;
       const cutTimeSec = resolveCutTimeSecForHit(state, hit, x);
       if (cutTimeSec != null) {
         const accepted = Boolean(
@@ -3983,16 +7498,19 @@ export function renderSong2DawTimeline({
           })
         );
         state.cutPreview = null;
-        if (!accepted) draw(state);
+        draw(state);
+        if (accepted) renderOverview(state);
         return;
       }
     }
     if (
       hit?.type === "clip_trim_start" ||
       hit?.type === "clip_trim_end" ||
+      hit?.type === "clip_window" ||
+      hit?.type === "clip_window_rail" ||
       hit?.type === "clip"
     ) {
-      if (beginClipEdit(event, hit)) return;
+      if (beginClipEdit(event, hit, x)) return;
       handleHit(hit);
       return;
     }
@@ -4034,20 +7552,55 @@ export function renderSong2DawTimeline({
         state.pendingTrackPointer = null;
       }
     }
-    if (!state.panningX && !state.scrubbing && !state.resizingSection && !state.pendingTrackPointer && event.ctrlKey) {
+    if (
+      !state.panningX &&
+      !state.scrubbing &&
+      !state.resizingSection &&
+      !state.pendingTrackPointer &&
+      (event.ctrlKey || event.altKey)
+    ) {
       const rect = canvas.getBoundingClientRect();
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
-      const preview = resolveCutPreview(state, x, y);
-      const prevKey = state.cutPreview
-        ? `${state.cutPreview.clipId}:${Number(state.cutPreview.cutTimeSec || 0).toFixed(4)}`
-        : "";
-      const nextKey = preview ? `${preview.clipId}:${Number(preview.cutTimeSec || 0).toFixed(4)}` : "";
-      state.cutPreview = preview;
-      canvas.style.cursor = preview ? SCISSORS_CURSOR : "";
-      if (prevKey !== nextKey) draw(state);
-    } else if (state.cutPreview) {
+      const hover = hitTest(state, x, y);
+      const hoverTrackName = String(hover?.track_name || "").trim();
+      const hoverTrackLocked = hoverTrackName ? isTrackLocked(state, hoverTrackName) : false;
+      const joinModifierDown = Boolean(event.ctrlKey);
+      const cutModifierDown = Boolean(event.altKey);
+      if (
+        !hoverTrackLocked &&
+        joinModifierDown &&
+        hover?.type === "clip_join" &&
+        typeof state.onClipJoin === "function"
+      ) {
+        const prevJoinKey = state.joinPreview
+          ? `${state.joinPreview.left_clip_id}:${state.joinPreview.right_clip_id}:${Number(state.joinPreview.join_time_sec || 0).toFixed(4)}`
+          : "";
+        const nextJoinKey = `${String(hover?.left_clip_id || "")}:${String(hover?.right_clip_id || "")}:${Number(hover?.join_time_sec || 0).toFixed(4)}`;
+        state.joinPreview = hover;
+        if (state.cutPreview) state.cutPreview = null;
+        canvas.style.cursor = JOIN_CURSOR;
+        if (prevJoinKey !== nextJoinKey) draw(state);
+      } else if (!hoverTrackLocked && cutModifierDown) {
+        const preview = resolveCutPreview(state, x, y);
+        const prevKey = state.cutPreview
+          ? `${state.cutPreview.clipId}:${Number(state.cutPreview.cutTimeSec || 0).toFixed(4)}`
+          : "";
+        const nextKey = preview ? `${preview.clipId}:${Number(preview.cutTimeSec || 0).toFixed(4)}` : "";
+        state.cutPreview = preview;
+        if (state.joinPreview) state.joinPreview = null;
+        canvas.style.cursor = preview ? SCISSORS_CURSOR : "";
+        if (prevKey !== nextKey) draw(state);
+      } else {
+        if (state.cutPreview || state.joinPreview) {
+          state.cutPreview = null;
+          state.joinPreview = null;
+          draw(state);
+        }
+      }
+    } else if (state.cutPreview || state.joinPreview) {
       state.cutPreview = null;
+      state.joinPreview = null;
       if (!state.panningX && !state.scrubbing && !state.resizingSection) {
         canvas.style.cursor = "";
       }
@@ -4058,9 +7611,20 @@ export function renderSong2DawTimeline({
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       const hover = hitTest(state, x, y);
-      if (event.ctrlKey && hover?.type === "clip" && String(hover?.track_kind || "").toLowerCase() === "video") {
+      const hoverTrackName = String(hover?.track_name || "").trim();
+      const hoverTrackLocked = hoverTrackName ? isTrackLocked(state, hoverTrackName) : false;
+      if (hoverTrackLocked && hover?.type && hover?.type !== "track_mute" && hover?.type !== "track_channel_toggle") {
+        canvas.style.cursor = "not-allowed";
+      } else if (event.ctrlKey && hover?.type === "clip_join" && typeof state.onClipJoin === "function") {
+        canvas.style.cursor = JOIN_CURSOR;
+      } else if (event.altKey && hover?.type === "clip" && String(hover?.track_kind || "").toLowerCase() === "video") {
         canvas.style.cursor = SCISSORS_CURSOR;
-      } else if (hover?.type === "clip_trim_start" || hover?.type === "clip_trim_end") {
+      } else if (
+        hover?.type === "clip_trim_start" ||
+        hover?.type === "clip_trim_end" ||
+        hover?.type === "clip_window" ||
+        hover?.type === "clip_window_rail"
+      ) {
         canvas.style.cursor = "ew-resize";
       } else if (hover?.type === "clip") {
         canvas.style.cursor = "grab";
@@ -4176,6 +7740,16 @@ export function renderSong2DawTimeline({
       title: state.snapEnabled ? "Snap enabled" : "Snap disabled",
     });
   };
+  const updateSkeletonModeButton = () => {
+    if (!skeletonModeBtn) return;
+    const isOn = Boolean(state.skeletonMode);
+    skeletonModeBtn.classList.toggle("is-active", isOn);
+    skeletonModeBtn.setAttribute("aria-pressed", isOn ? "true" : "false");
+    setButtonIcon(skeletonModeBtn, {
+      icon: "skeleton_mode",
+      title: isOn ? "Disable skeleton mode" : "Enable skeleton mode (debug)",
+    });
+  };
   const updatePlayPauseButton = () => {
     setButtonIcon(playPauseBtn, {
       icon: state.isPlaying ? "pause" : "play",
@@ -4194,33 +7768,41 @@ export function renderSong2DawTimeline({
     const selection = state.selection && typeof state.selection === "object" ? state.selection : null;
     if (!selection || String(selection.type || "") !== "clip") return false;
     const resourceId = String(selection.resource_id || "").trim();
+    const clipId = String(selection.clip_id || "").trim();
     const trackName = String(selection.track_name || "").trim();
     const trackKind = String(selection.track_kind || "").trim().toLowerCase();
+    if (isTrackLocked(state, trackName)) return false;
     if (!resourceId || !trackName || (trackKind !== "video" && trackKind !== "image")) return false;
     const currentStart = Math.max(0, Number(selection.t0_sec || 0));
     const currentEnd = Math.max(currentStart + CLIP_EDIT_MIN_DURATION_SEC, Number(selection.t1_sec || currentStart + CLIP_EDIT_MIN_DURATION_SEC));
     const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, currentEnd - currentStart);
     const baseStepSec = Math.max(1 / Math.max(1e-6, state.pxPerSec), 1 / 240);
     const stepSec = baseStepSec * (coarse ? 10 : 1);
-    let nextStart = clamp(currentStart + direction * stepSec, 0, Math.max(0, state.durationSec - duration));
+    const maxStart = state.allowDurationExtend
+      ? Math.max(0, TIMELINE_EDIT_MAX_DURATION_SEC - duration)
+      : Math.max(0, state.durationSec - duration);
+    let nextStart = clamp(currentStart + direction * stepSec, 0, maxStart);
     nextStart = snapTimeSec(state, nextStart, {
       trackName,
       excludeResourceId: resourceId,
+      excludeClipId: clipId,
     });
-    nextStart = clamp(nextStart, 0, Math.max(0, state.durationSec - duration));
+    nextStart = clamp(nextStart, 0, maxStart);
     let nextTrackName = resolveNonOverlappingTrackName(state, {
       preferredTrackName: trackName,
       trackKind,
       startSec: nextStart,
       endSec: nextStart + duration,
       excludeResourceId: resourceId,
+      excludeClipId: clipId,
     });
     if (nextTrackName && nextTrackName !== trackName) {
       nextStart = snapTimeSec(state, nextStart, {
         trackName: nextTrackName,
         excludeResourceId: resourceId,
+        excludeClipId: clipId,
       });
-      nextStart = clamp(nextStart, 0, Math.max(0, state.durationSec - duration));
+      nextStart = clamp(nextStart, 0, maxStart);
     } else {
       nextTrackName = trackName;
     }
@@ -4236,6 +7818,7 @@ export function renderSong2DawTimeline({
           state.onClipEdit({
             clipId: String(selection.clip_id || ""),
             resourceId,
+            linkGroupId: String(selection.link_group_id || ""),
             trackKind,
             trackName: nextTrackName,
             timeSec: nextStart,
@@ -4244,7 +7827,20 @@ export function renderSong2DawTimeline({
           })
         )
       : false;
-    if (!accepted) {
+    if (accepted) {
+      applyCommittedClipEditToLocalStudio(state, {
+        clipId: String(selection.clip_id || ""),
+        resourceId,
+        linkGroupId: String(selection.link_group_id || ""),
+        trackKind,
+        trackName: nextTrackName,
+        timeSec: nextStart,
+        durationSec: duration,
+        mode: "move",
+      });
+      draw(state);
+      renderOverview(state);
+    } else {
       draw(state);
       renderOverview(state);
     }
@@ -4274,7 +7870,14 @@ export function renderSong2DawTimeline({
     updateSnapButton();
     draw(state);
   });
+  skeletonModeBtn.addEventListener("click", () => {
+    state.skeletonMode = !state.skeletonMode;
+    localStorage.setItem(SKELETON_MODE_STORAGE_KEY, state.skeletonMode ? "1" : "0");
+    updateSkeletonModeButton();
+    draw(state);
+  });
   updateSnapButton();
+  updateSkeletonModeButton();
 
   const isTextLikeTarget = (target) => {
     if (!target || typeof target !== "object") return false;
@@ -4285,6 +7888,10 @@ export function renderSong2DawTimeline({
   };
   state.keydownHandler = (event) => {
     if (!event) return;
+    state.keyModifiers.ctrl = Boolean(event.ctrlKey);
+    state.keyModifiers.shift = Boolean(event.shiftKey);
+    state.keyModifiers.alt = Boolean(event.altKey);
+    renderFooter(state);
     if (event.defaultPrevented) return;
     if (isTextLikeTarget(event.target)) return;
     const key = String(event.key || "");
@@ -4295,6 +7902,24 @@ export function renderSong2DawTimeline({
       togglePlayPause();
       return;
     }
+    const lowerKey = key.toLowerCase();
+    const modifierDown = Boolean(event.ctrlKey || event.metaKey);
+    if (modifierDown && !event.altKey) {
+      const wantsUndo = lowerKey === "z" && !event.shiftKey;
+      const wantsRedo = lowerKey === "y" || (lowerKey === "z" && event.shiftKey);
+      if (wantsUndo && typeof state.onUndo === "function") {
+        event.preventDefault();
+        const accepted = Boolean(state.onUndo());
+        if (accepted) renderOverview(state);
+        return;
+      }
+      if (wantsRedo && typeof state.onRedo === "function") {
+        event.preventDefault();
+        const accepted = Boolean(state.onRedo());
+        if (accepted) renderOverview(state);
+        return;
+      }
+    }
     if (key === "ArrowLeft" || key === "ArrowRight") {
       event.preventDefault();
       const direction = key === "ArrowRight" ? 1 : -1;
@@ -4302,22 +7927,35 @@ export function renderSong2DawTimeline({
     }
   };
   state.keyupHandler = (event) => {
+    state.keyModifiers.ctrl = Boolean(event?.ctrlKey);
+    state.keyModifiers.shift = Boolean(event?.shiftKey);
+    state.keyModifiers.alt = Boolean(event?.altKey);
+    renderFooter(state);
     const key = String(event?.key || "");
-    if (key !== "Control") return;
-    if (!state.cutPreview) return;
-    state.cutPreview = null;
-    if (!state.panningX && !state.scrubbing && !state.resizingSection) {
-      canvas.style.cursor = "";
+    let changed = false;
+    if (key === "Alt" && state.cutPreview) {
+      state.cutPreview = null;
+      changed = true;
     }
-    draw(state);
+    if (key === "Control" && state.joinPreview) {
+      state.joinPreview = null;
+      changed = true;
+    }
+    if (changed) {
+      if (!state.panningX && !state.scrubbing && !state.resizingSection) {
+        canvas.style.cursor = "";
+      }
+      draw(state);
+    }
   };
   window.addEventListener("keydown", state.keydownHandler);
   window.addEventListener("keyup", state.keyupHandler);
 
   canvas.addEventListener("pointerleave", () => {
-    if (!state.cutPreview) return;
+    if (!state.cutPreview && !state.joinPreview) return;
     if (state.panningX || state.scrubbing || state.resizingSection) return;
     state.cutPreview = null;
+    state.joinPreview = null;
     canvas.style.cursor = "";
     draw(state);
   });
@@ -4325,6 +7963,18 @@ export function renderSong2DawTimeline({
   resize();
   if (!hasInitialViewState) fitBtn.click();
   renderOverview(state);
+  // Guard against first-interaction glitches when the host panel just became visible:
+  // re-run size/layout once after mount and once after style settlement.
+  requestAnimationFrame(() => {
+    if (TIMELINE_STATE.get(body) !== state) return;
+    resize();
+    renderOverview(state);
+  });
+  setTimeout(() => {
+    if (TIMELINE_STATE.get(body) !== state) return;
+    resize();
+    renderOverview(state);
+  }, 90);
   TIMELINE_STATE.set(body, state);
 }
 
