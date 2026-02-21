@@ -308,7 +308,94 @@ export function injectStyles() {
       gap: 8px;
       overflow: hidden;
     }
+    .lemouf-loop-composition-main-split {
+      --lemouf-composition-row-split: 50%;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: grid;
+      grid-template-rows:
+        minmax(180px, calc(var(--lemouf-composition-row-split) - 5px))
+        10px
+        minmax(180px, calc(100% - var(--lemouf-composition-row-split) - 5px));
+      gap: 8px;
+      align-items: stretch;
+    }
+    .lemouf-loop-composition-main-split > .lemouf-loop-composition-resources,
+    .lemouf-loop-composition-main-split > .lemouf-loop-composition-top-deck,
+    .lemouf-loop-composition-main-split > .lemouf-loop-composition-editor-body {
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-loop-composition-main-split.is-row-resizing {
+      user-select: none;
+      cursor: row-resize;
+    }
+    .lemouf-loop-composition-top-deck {
+      --lemouf-composition-split: 50%;
+      display: grid;
+      grid-template-columns:
+        minmax(280px, calc(var(--lemouf-composition-split) - 5px))
+        10px
+        minmax(280px, calc(100% - var(--lemouf-composition-split) - 5px));
+      gap: 8px;
+      min-height: 0;
+      align-items: stretch;
+    }
+    .lemouf-loop-composition-top-deck.is-resizing {
+      user-select: none;
+      cursor: col-resize;
+    }
+    .lemouf-loop-composition-splitter {
+      position: relative;
+      border: 1px solid #c9b9a8;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #f6ecde, #e8d9c6);
+      cursor: col-resize;
+      touch-action: none;
+      min-height: 0;
+      outline: none;
+      transition: filter 120ms ease, box-shadow 120ms ease;
+    }
+    .lemouf-loop-composition-splitter::before {
+      content: "";
+      position: absolute;
+      inset: 4px 2px;
+      border-radius: 999px;
+      border: 1px dashed rgba(120, 95, 72, 0.5);
+      opacity: 0.75;
+    }
+    .lemouf-loop-composition-splitter:hover,
+    .lemouf-loop-composition-splitter:focus-visible {
+      filter: brightness(0.98);
+      box-shadow: 0 0 0 2px rgba(126, 95, 67, 0.2);
+    }
+    .lemouf-loop-composition-row-splitter {
+      position: relative;
+      border: 1px solid #c9b9a8;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #f6ecde, #e8d9c6);
+      cursor: row-resize;
+      touch-action: none;
+      min-height: 0;
+      outline: none;
+      transition: filter 120ms ease, box-shadow 120ms ease;
+    }
+    .lemouf-loop-composition-row-splitter::before {
+      content: "";
+      position: absolute;
+      inset: 2px 4px;
+      border-radius: 999px;
+      border: 1px dashed rgba(120, 95, 72, 0.5);
+      opacity: 0.75;
+    }
+    .lemouf-loop-composition-row-splitter:hover,
+    .lemouf-loop-composition-row-splitter:focus-visible {
+      filter: brightness(0.98);
+      box-shadow: 0 0 0 2px rgba(126, 95, 67, 0.2);
+    }
     .lemouf-loop-composition-resources {
+      --lemouf-resource-card-min: 168px;
+      --lemouf-resource-thumb-ratio: 1 / 1;
       border: 1px solid #cdbba9;
       border-radius: 10px;
       background: #fffaf3;
@@ -316,6 +403,21 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       gap: 6px;
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-loop-composition-resources[data-size-mode="small"] {
+      --lemouf-resource-card-min: 112px;
+      --lemouf-resource-thumb-ratio: 1 / 1;
+    }
+    .lemouf-loop-composition-resources[data-size-mode="large"] {
+      --lemouf-resource-card-min: 172px;
+      --lemouf-resource-thumb-ratio: 1 / 1;
+    }
+    .lemouf-loop-composition-resources.is-monitor-detached {
+      flex: 0 0 auto;
+      height: auto;
+      min-height: 0;
     }
     .lemouf-loop-composition-resources-head {
       display: flex;
@@ -332,12 +434,33 @@ export function injectStyles() {
       flex-direction: column;
       flex: 0 0 auto;
       gap: 6px;
+      justify-content: space-between;
+      min-height: 0;
+      padding-left: 2px;
+    }
+    .lemouf-loop-composition-resources-actions-top,
+    .lemouf-loop-composition-resources-actions-bottom {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
     }
     .lemouf-loop-composition-resources-content {
       display: flex;
       align-items: stretch;
       gap: 8px;
-      min-height: 88px;
+      min-height: 0;
+      flex: 1 1 auto;
+    }
+    .lemouf-loop-composition-resources.is-monitor-detached .lemouf-loop-composition-resources-content {
+      flex: 0 0 auto;
+    }
+    .lemouf-loop-composition-top-deck .lemouf-loop-composition-resources {
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-loop-composition-top-deck .lemouf-loop-composition-resources-content {
+      flex: 1 1 auto;
+      min-height: 0;
     }
     .lemouf-loop-composition-action-btn {
       width: 34px;
@@ -371,19 +494,32 @@ export function injectStyles() {
     .lemouf-loop-composition-resources-rail {
       flex: 1 1 auto;
       min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(var(--lemouf-resource-card-min), 1fr));
+      grid-auto-rows: max-content;
+      gap: 8px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 1px 6px 4px 1px;
+      align-content: start;
+    }
+    .lemouf-loop-composition-resources.is-monitor-detached .lemouf-loop-composition-resources-rail {
+      max-height: min(30vh, 240px);
+    }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resources-rail {
       display: flex;
-      gap: 6px;
-      overflow-x: auto;
-      overflow-y: hidden;
-      padding: 1px 1px 4px 1px;
-      min-height: 88px;
-      max-height: clamp(88px, 28vh, 160px);
-      align-items: flex-start;
+      flex-direction: column;
+      gap: 8px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding-right: 6px;
     }
     .lemouf-loop-composition-resource {
       position: relative;
-      flex: 0 0 84px;
-      width: 84px;
+      flex: 0 0 auto;
+      width: auto;
+      min-width: 0;
       border: 1px solid #b9a492;
       border-radius: 8px;
       background: #f8eee0;
@@ -397,13 +533,48 @@ export function injectStyles() {
       justify-content: flex-start;
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.5) inset;
     }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource {
+      display: grid;
+      grid-template-columns: 84px minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      align-items: stretch;
+      min-height: 84px;
+      overflow: hidden;
+    }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-label {
+      border-top: 0;
+      border-left: 1px solid rgba(150, 125, 103, 0.2);
+      padding: 8px 8px 2px;
+      background: transparent;
+      display: flex;
+      align-items: flex-start;
+      justify-content: flex-start;
+      white-space: normal;
+      word-break: break-word;
+      line-height: 1.25;
+    }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-duration-inline {
+      border-top: 0;
+      border-left: 1px solid rgba(150, 125, 103, 0.2);
+      padding: 0 8px 8px;
+      background: transparent;
+      text-align: left;
+    }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-kind {
+      top: 6px;
+      right: 6px;
+    }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-duration {
+      left: 6px;
+      bottom: 6px;
+    }
     .lemouf-loop-composition-resource:hover {
       filter: brightness(0.98);
     }
     .lemouf-loop-composition-resource-kind {
       position: absolute;
-      top: 3px;
-      right: 3px;
+      top: 5px;
+      right: 5px;
       z-index: 1;
       border-radius: 999px;
       border: 1px solid #bda996;
@@ -411,14 +582,14 @@ export function injectStyles() {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 18px;
-      height: 18px;
+      min-width: 20px;
+      height: 20px;
       padding: 0;
       color: #6f5b49;
     }
     .lemouf-loop-composition-resource-kind-icon {
-      width: 11px;
-      height: 11px;
+      width: 12px;
+      height: 12px;
       display: block;
     }
     .lemouf-loop-composition-resource-kind.image {
@@ -454,7 +625,7 @@ export function injectStyles() {
     .lemouf-loop-composition-resource-thumb,
     .lemouf-loop-composition-resource-fallback {
       width: 100%;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: var(--lemouf-resource-thumb-ratio, 1 / 1);
       object-fit: cover;
       background: #efe2d1;
       display: grid;
@@ -468,17 +639,24 @@ export function injectStyles() {
     .lemouf-loop-composition-resource-thumb-wrap {
       position: relative;
       width: 100%;
-      aspect-ratio: 1 / 1;
+      aspect-ratio: var(--lemouf-resource-thumb-ratio, 1 / 1);
       overflow: hidden;
       background: #efe2d1;
     }
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-thumb-wrap,
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-thumb,
+    .lemouf-loop-composition-resources[data-view-mode="list"] .lemouf-loop-composition-resource-fallback {
+      width: 84px;
+      height: 84px;
+      aspect-ratio: auto;
+    }
     .lemouf-loop-composition-resource-audio-flag {
       position: absolute;
-      top: 3px;
-      left: 3px;
+      top: 5px;
+      left: 5px;
       z-index: 2;
-      min-width: 18px;
-      height: 18px;
+      min-width: 20px;
+      height: 20px;
       border-radius: 999px;
       border: 1px solid #bda996;
       background: rgba(246, 235, 220, 0.95);
@@ -490,8 +668,8 @@ export function injectStyles() {
       box-shadow: 0 1px 3px rgba(35, 26, 18, 0.16);
     }
     .lemouf-loop-composition-resource-audio-flag-icon {
-      width: 11px;
-      height: 11px;
+      width: 12px;
+      height: 12px;
       display: block;
     }
     .lemouf-loop-composition-resource-audio-flag.is-with_audio {
@@ -511,17 +689,17 @@ export function injectStyles() {
     }
     .lemouf-loop-composition-resource-duration {
       position: absolute;
-      left: 4px;
-      bottom: 4px;
+      left: 5px;
+      bottom: 5px;
       z-index: 2;
       border-radius: 999px;
       border: 1px solid rgba(116, 94, 74, 0.55);
       background: rgba(248, 240, 229, 0.94);
       color: #5d4b3b;
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 700;
       letter-spacing: 0.2px;
-      padding: 1px 6px;
+      padding: 1px 7px;
       line-height: 1.25;
       box-shadow: 0 1px 2px rgba(30, 21, 14, 0.14);
     }
@@ -547,11 +725,11 @@ export function injectStyles() {
       opacity: 0.32;
     }
     .lemouf-loop-composition-resource-label {
-      font-size: 9px;
+      font-size: 10px;
       color: #6b5948;
       border-top: 1px solid rgba(150, 125, 103, 0.28);
       background: rgba(255, 249, 240, 0.92);
-      padding: 2px 5px 3px;
+      padding: 3px 6px 4px;
       text-transform: uppercase;
       letter-spacing: 0.2px;
       white-space: nowrap;
@@ -577,18 +755,52 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       gap: 6px;
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-loop-composition-top-deck .lemouf-loop-composition-monitor {
+      min-height: 0;
+      height: 100%;
+    }
+    .lemouf-loop-composition-monitor.is-embedded-host {
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      padding: 0;
+      gap: 6px;
+      box-shadow: none;
     }
     .lemouf-loop-composition-monitor-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      min-height: 13px;
     }
     .lemouf-loop-composition-monitor-status {
+      display: block;
+      flex: 1 1 min(65%, 420px);
       font-size: 10px;
       color: #6e5a48;
       text-transform: uppercase;
       letter-spacing: 0.24px;
+      line-height: 1.2;
+      min-height: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .lemouf-loop-composition-monitor-info {
+      display: block;
+      flex: 0 1 max(110px, 32%);
+      min-width: 84px;
+      font-size: 10px;
+      color: #6f5d4d;
+      text-transform: uppercase;
+      letter-spacing: 0.22px;
+      line-height: 1.2;
+      min-height: 12px;
+      text-align: right;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -596,9 +808,10 @@ export function injectStyles() {
     .lemouf-loop-composition-monitor-stage {
       position: relative;
       width: 100%;
-      min-height: 160px;
-      max-height: min(32vh, 320px);
-      aspect-ratio: 16 / 9;
+      flex: 1 1 auto;
+      min-height: 180px;
+      max-height: none;
+      aspect-ratio: auto;
       border: 1px solid rgba(150, 125, 103, 0.34);
       border-radius: 8px;
       overflow: hidden;
@@ -607,40 +820,99 @@ export function injectStyles() {
       align-items: center;
       justify-content: center;
     }
+    .lemouf-loop-composition-monitor-stage.is-gap {
+      background: #090909;
+    }
     .lemouf-loop-composition-monitor-video {
+      position: relative;
+      z-index: 2;
       width: 100%;
       height: 100%;
       object-fit: contain;
       background: #111;
-      display: none;
+      display: block;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+    }
+    .lemouf-loop-composition-monitor-video.is-visible {
+      visibility: visible;
+      opacity: 1;
+    }
+    .lemouf-loop-composition-monitor-image {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #111;
+      display: block;
+      visibility: hidden;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 120ms ease;
+    }
+    .lemouf-loop-composition-monitor-image.is-visible {
+      visibility: visible;
+      opacity: 1;
     }
     .lemouf-loop-composition-monitor-empty {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      pointer-events: none;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       font-size: 11px;
       color: #7a6756;
       text-transform: uppercase;
       letter-spacing: 0.28px;
       text-align: center;
-      padding: 10px;
-    }
-    .lemouf-loop-composition-monitor-meta {
-      font-size: 10px;
-      color: #6f5d4d;
-      text-transform: uppercase;
-      letter-spacing: 0.22px;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      line-height: 1.35;
+      padding: 14px 12px;
+      overflow-wrap: anywhere;
+      word-break: normal;
     }
     .lemouf-loop-composition-monitor-actions {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      min-height: 30px;
     }
-    .lemouf-loop-composition-monitor-actions .lemouf-loop-btn {
-      min-height: 26px;
-      padding: 4px 7px;
-      font-size: 10px;
-      line-height: 1.1;
+    .lemouf-loop-composition-monitor-actions-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .lemouf-loop-composition-monitor-actions-separator {
+      flex: 0 0 1px;
+      align-self: stretch;
+      background: linear-gradient(
+        180deg,
+        rgba(145, 121, 98, 0),
+        rgba(145, 121, 98, 0.58) 20%,
+        rgba(145, 121, 98, 0.58) 80%,
+        rgba(145, 121, 98, 0)
+      );
+    }
+    .lemouf-loop-composition-monitor-action-btn {
+      min-height: 28px;
+      min-width: 32px;
+      max-width: 32px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .lemouf-loop-composition-monitor-action-btn .lemouf-btn-icon {
+      width: 14px;
+      height: 14px;
     }
     .lemouf-loop-composition-editor-body {
       flex: 1 1 auto;
@@ -649,6 +921,23 @@ export function injectStyles() {
       border-radius: 10px;
       background: #f8eee0;
       overflow: hidden;
+    }
+    @media (max-width: 1180px) {
+      .lemouf-loop-composition-main-split {
+        grid-template-rows: minmax(220px, 46%) 10px minmax(220px, 1fr);
+      }
+      .lemouf-loop-composition-top-deck {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .lemouf-loop-composition-splitter {
+        display: none;
+      }
+      .lemouf-loop-composition-resources-content {
+        min-height: 0;
+      }
+      .lemouf-loop-composition-resources-actions {
+        justify-content: flex-start;
+      }
     }
     .lemouf-loop-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
     .lemouf-loop-row > * { flex: 1 1 120px; }
@@ -707,6 +996,13 @@ export function injectStyles() {
       box-shadow: none;
     }
     .lemouf-loop-btn.alt { background: #8a6b4f; }
+    .lemouf-loop-btn.debug {
+      background: #6f8192;
+      color: #f3f8ff;
+    }
+    .lemouf-loop-btn.debug:hover {
+      background: #617585;
+    }
     .lemouf-loop-btn.ghost { background: transparent; border: 1px solid #5b4637; color: #5b4637; }
     .lemouf-loop-btn.icon {
       flex: 0 0 34px;
@@ -2517,6 +2813,28 @@ export function injectStyles() {
       flex-direction: column;
       gap: 6px;
     }
+    .lemouf-song2daw-studio-panel {
+      --lemouf-song2daw-compact-height: 170px;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .lemouf-song2daw-studio-inline-resizer {
+      display: none;
+      height: 8px;
+      border: 1px solid rgba(118, 96, 76, 0.3);
+      border-radius: 6px;
+      background:
+        repeating-linear-gradient(
+          90deg,
+          rgba(94, 74, 56, 0.18) 0 5px,
+          rgba(94, 74, 56, 0.05) 5px 10px
+        );
+      cursor: ns-resize;
+      box-sizing: border-box;
+    }
+    .lemouf-song2daw-studio-panel.is-compact .lemouf-song2daw-studio-inline-resizer {
+      display: block;
+    }
     .lemouf-song2daw-audio-preview {
       border: 1px solid #c9b9a8;
       border-radius: 10px;
@@ -2625,8 +2943,29 @@ export function injectStyles() {
       min-height: 0;
       display: flex;
       flex-direction: column;
+      align-items: stretch;
       gap: 6px;
       overflow: auto;
+    }
+    .lemouf-tool-step-monitor-host > .lemouf-loop-composition-monitor {
+      width: 100%;
+      min-width: 0;
+    }
+    .lemouf-tool-step-monitor-placeholder {
+      border: 1px dashed rgba(142, 113, 84, 0.45);
+      border-radius: 8px;
+      background: #f7eddc;
+      color: #6e5b49;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.24px;
+      line-height: 1.35;
+      min-height: 88px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
     }
     .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor {
       flex: 1 1 auto;
@@ -2635,6 +2974,8 @@ export function injectStyles() {
     .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor-stage {
       max-height: none;
       min-height: 220px;
+      width: 100%;
+      min-width: 220px;
     }
     .lemouf-song2daw-detail-pre {
       flex: 1 1 auto;
@@ -2646,6 +2987,11 @@ export function injectStyles() {
       background: #5b4637;
       color: #f7f2ea;
       box-shadow: inset 0 0 0 1px rgba(20, 16, 12, 0.18);
+    }
+    .lemouf-loop-btn.debug.is-active {
+      background: #4c6174;
+      color: #f3f8ff;
+      box-shadow: inset 0 0 0 1px rgba(25, 38, 50, 0.3);
     }
     .lemouf-song2daw-studio-body {
       border: 1px solid #d6c4b2;
@@ -2663,6 +3009,10 @@ export function injectStyles() {
     .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact {
       overflow: hidden;
       gap: 6px;
+      height: var(--lemouf-song2daw-compact-height, 170px);
+      min-height: 96px;
+      max-height: 440px;
+      flex: 0 0 auto;
     }
     .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-studio-layout {
       min-height: 120px;
@@ -2721,9 +3071,14 @@ export function injectStyles() {
       color: #5f4e40;
       text-transform: uppercase;
       letter-spacing: 0.25px;
+      line-height: 1.2;
+      min-height: 12px;
       min-width: 0;
       flex: 1 1 180px;
       text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .lemouf-song2daw-studio-footer {
       border: 1px solid #cfbeac;
@@ -2733,16 +3088,105 @@ export function injectStyles() {
       padding: 5px 7px;
       display: flex;
       align-items: center;
-      justify-content: flex-end;
+      justify-content: space-between;
+      gap: 10px;
     }
     .lemouf-song2daw-studio-footer-actions {
-      margin-left: auto;
+      margin-left: 0;
       display: flex;
       align-items: center;
       justify-content: flex-end;
       flex-wrap: wrap;
       gap: 14px;
       min-width: 0;
+    }
+    .lemouf-song2daw-studio-footer-shortcuts-wrap {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+    .lemouf-song2daw-studio-footer-shortcuts {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      overflow: hidden;
+      font-size: 10px;
+      color: #6a5948;
+      letter-spacing: 0.18px;
+      white-space: nowrap;
+    }
+    .lemouf-song2daw-shortcut-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border: 1px solid #d8c6b3;
+      border-radius: 999px;
+      background: #f6ede2;
+      color: #5e4d3f;
+      padding: 1px 6px;
+      min-width: 0;
+      flex: 0 0 auto;
+    }
+    .lemouf-song2daw-shortcut-icon {
+      width: 12px;
+      height: 12px;
+      flex: 0 0 auto;
+      color: #6b5747;
+    }
+    .lemouf-song2daw-shortcut-text {
+      font-size: 9px;
+      line-height: 1.2;
+      letter-spacing: 0.18px;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .lemouf-song2daw-track-context-menu {
+      position: fixed;
+      z-index: 2147483640;
+      min-width: 180px;
+      max-width: min(320px, 72vw);
+      border: 1px solid rgba(136, 110, 86, 0.82);
+      border-radius: 10px;
+      background: #ece1d3;
+      box-shadow: 0 12px 26px rgba(24, 17, 11, 0.24);
+      padding: 6px;
+      display: grid;
+      gap: 5px;
+      pointer-events: auto;
+      isolation: isolate;
+    }
+    .lemouf-song2daw-track-context-menu-title {
+      font-size: 10px;
+      line-height: 1.2;
+      color: #5e4c3c;
+      letter-spacing: 0.24px;
+      text-transform: uppercase;
+      padding: 2px 4px 4px;
+      border-bottom: 1px dashed rgba(136, 110, 86, 0.42);
+      margin-bottom: 1px;
+    }
+    .lemouf-song2daw-track-context-menu-item {
+      border: 1px solid rgba(133, 104, 76, 0.78);
+      border-radius: 7px;
+      background: #8a6f53;
+      color: #f7f0e5;
+      min-height: 26px;
+      font-size: 11px;
+      line-height: 1.1;
+      padding: 5px 8px;
+      text-align: left;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .lemouf-song2daw-track-context-menu-item:hover {
+      background: #7a6048;
+    }
+    .lemouf-song2daw-track-context-menu-item:disabled,
+    .lemouf-song2daw-track-context-menu-item.is-disabled {
+      opacity: 0.55;
+      cursor: default;
+      background: #ad9a84;
+      color: #efe5d7;
     }
     .lemouf-song2daw-studio-footer-group {
       display: flex;

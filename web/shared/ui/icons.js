@@ -20,10 +20,65 @@ const ICON_MAP = {
       ["rect", { x: "4", y: "4", width: "8", height: "8", rx: "1.25", fill: "currentColor" }],
     ],
   },
+  mouse_wheel: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "4.1", y: "1.9", width: "7.8", height: "12.2", rx: "3.8", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }],
+      ["rect", { x: "7.2", y: "4", width: "1.6", height: "3", rx: "0.8", fill: "currentColor" }],
+      ["path", { d: "M2.5 8h1.4M12.1 8h1.4", fill: "none", stroke: "currentColor", "stroke-width": "1.2", "stroke-linecap": "round" }],
+    ],
+  },
+  arrows_lr: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M2.3 8h11.4", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round" }],
+      ["path", { d: "M5 5.2 2.3 8 5 10.8", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["path", { d: "m11 5.2 2.7 2.8-2.7 2.8", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
+  drag: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M8 1.8v12.4M1.8 8h12.4", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round" }],
+      ["path", { d: "m8 1.8 1.6 1.7M8 1.8 6.4 3.5M8 14.2l1.6-1.7M8 14.2l-1.6-1.7M1.8 8l1.7-1.6M1.8 8l1.7 1.6M14.2 8l-1.7-1.6M14.2 8l-1.7 1.6", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["circle", { cx: "8", cy: "8", r: "1.5", fill: "currentColor" }],
+    ],
+  },
+  key_ctrl: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "1.8", y: "2.2", width: "12.4", height: "11.6", rx: "2.4", fill: "none", stroke: "currentColor", "stroke-width": "1.2" }],
+      ["path", { d: "M10.9 5.3a2.7 2.7 0 1 0 0 5.4", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round" }],
+      ["path", { d: "M5.3 10.5V5.5h2.2", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
+  key_shift: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "1.8", y: "2.2", width: "12.4", height: "11.6", rx: "2.4", fill: "none", stroke: "currentColor", "stroke-width": "1.2" }],
+      ["path", { d: "M8 4.2 5.3 7h1.7v3h2v-3h1.7z", fill: "currentColor" }],
+    ],
+  },
+  cut: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["circle", { cx: "4.6", cy: "11.2", r: "1.6", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+      ["circle", { cx: "7.7", cy: "11.2", r: "1.6", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+      ["path", { d: "M3.7 4.2 12.8 10M8.5 5.4l4.3-1.2M8.5 9.8l4.3 1.2", fill: "none", stroke: "currentColor", "stroke-width": "1.25", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
   fit: {
     viewBox: "0 0 16 16",
     shapes: [
       ["path", { d: "M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
+  skeleton_mode: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "2.1", y: "2.3", width: "11.8", height: "11.4", rx: "1.7", fill: "none", stroke: "currentColor", "stroke-width": "1.3" }],
+      ["path", { d: "M4 6.1h8M4 9.1h8M4 12h5.2", fill: "none", stroke: "currentColor", "stroke-width": "1.25", "stroke-linecap": "round" }],
+      ["path", { d: "M5.2 3.7v9.2M8 3.7v9.2M10.8 3.7v5.4", fill: "none", stroke: "currentColor", "stroke-width": "1.1", "stroke-linecap": "round", opacity: "0.78" }],
     ],
   },
   zoom_reset: {
@@ -56,6 +111,20 @@ const ICON_MAP = {
       ["path", { d: "M12.7 2.8v3.4H9.3", fill: "none", stroke: "currentColor", "stroke-width": "1.45", "stroke-linecap": "round", "stroke-linejoin": "round" }],
     ],
   },
+  undo: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M5.4 5.1H12a3 3 0 0 1 0 6h-2.2", fill: "none", stroke: "currentColor", "stroke-width": "1.45", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["path", { d: "M5.4 5.1 7.8 2.9M5.4 5.1l2.4 2.2", fill: "none", stroke: "currentColor", "stroke-width": "1.45", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
+  redo: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M10.6 5.1H4a3 3 0 0 0 0 6h2.2", fill: "none", stroke: "currentColor", "stroke-width": "1.45", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["path", { d: "m10.6 5.1-2.4-2.2m2.4 2.2-2.4 2.2", fill: "none", stroke: "currentColor", "stroke-width": "1.45", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
   import_approved: {
     viewBox: "0 0 16 16",
     shapes: [
@@ -72,12 +141,48 @@ const ICON_MAP = {
       ["path", { d: "M8 4.6v6.8M4.6 8h6.8", fill: "none", stroke: "currentColor", "stroke-width": "1.5", "stroke-linecap": "round" }],
     ],
   },
+  view_grid: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "2.2", y: "2.2", width: "4.8", height: "4.8", rx: "0.9", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+      ["rect", { x: "9", y: "2.2", width: "4.8", height: "4.8", rx: "0.9", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+      ["rect", { x: "2.2", y: "9", width: "4.8", height: "4.8", rx: "0.9", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+      ["rect", { x: "9", y: "9", width: "4.8", height: "4.8", rx: "0.9", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
+    ],
+  },
+  view_list: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["circle", { cx: "3.5", cy: "4", r: "1", fill: "currentColor" }],
+      ["circle", { cx: "3.5", cy: "8", r: "1", fill: "currentColor" }],
+      ["circle", { cx: "3.5", cy: "12", r: "1", fill: "currentColor" }],
+      ["path", { d: "M6 4h7M6 8h7M6 12h7", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round" }],
+    ],
+  },
   clear_resources: {
     viewBox: "0 0 16 16",
     shapes: [
       ["path", { d: "M5.2 5.2h5.6l-.5 7a1 1 0 0 1-1 .9H6.7a1 1 0 0 1-1-.9z", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linejoin": "round" }],
       ["path", { d: "M4.2 5.2h7.6M6.1 5.2V3.9a1 1 0 0 1 1-1h1.8a1 1 0 0 1 1 1v1.3", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round" }],
       ["path", { d: "M6.8 7.2v4.1M9.2 7.2v4.1", fill: "none", stroke: "currentColor", "stroke-width": "1.2", "stroke-linecap": "round" }],
+    ],
+  },
+  save_project: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M2.3 2.3h9.2l2.2 2.2v9a1.2 1.2 0 0 1-1.2 1.2H3.5a1.2 1.2 0 0 1-1.2-1.2z", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linejoin": "round" }],
+      ["rect", { x: "4.1", y: "2.8", width: "5.8", height: "3.1", rx: "0.5", fill: "none", stroke: "currentColor", "stroke-width": "1.2" }],
+      ["rect", { x: "4", y: "8.3", width: "8", height: "4.3", rx: "0.7", fill: "none", stroke: "currentColor", "stroke-width": "1.2" }],
+      ["path", { d: "M10.7 2.5v3.2h2.8", fill: "none", stroke: "currentColor", "stroke-width": "1.2", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+    ],
+  },
+  export_render: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["path", { d: "M3 11.8h10v1.8H3z", fill: "none", stroke: "currentColor", "stroke-width": "1.25", "stroke-linejoin": "round" }],
+      ["path", { d: "M8 2.2v7.2", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round" }],
+      ["path", { d: "M5.3 6.9 8 9.7l2.7-2.8", fill: "none", stroke: "currentColor", "stroke-width": "1.4", "stroke-linecap": "round", "stroke-linejoin": "round" }],
+      ["path", { d: "M2.7 11.8h10.6", fill: "none", stroke: "currentColor", "stroke-width": "1.3", "stroke-linecap": "round" }],
     ],
   },
   panel_max: {

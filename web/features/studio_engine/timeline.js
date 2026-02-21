@@ -30,7 +30,7 @@ const SECTION_VIZ_STORAGE_KEY = "lemoufSong2DawSectionVizMode";
 const SKELETON_MODE_STORAGE_KEY = "lemoufStudioTimelineSkeletonMode";
 const TIMELINE_SNAP_STORAGE_KEY = "lemoufSong2DawTimelineSnapEnabled";
 const TRACK_ROW_SCALE_STORAGE_KEY = "lemoufSong2DawTrackRowScale";
-const SECTION_VIZ_MODES = ["bands", "filled", "peaks"];
+const SECTION_VIZ_MODES = ["bands", "filled", "peaks", "line", "dots"];
 const RULER_TARGET_PX = 92;
 const RULER_STEP_OPTIONS_SEC = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
 const MIDI_MASTER_GAIN = 0.5;
@@ -58,6 +58,19 @@ const JOIN_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/20
 const CLIP_JOIN_TIME_EPS_SEC = 0.035;
 let FILMSTRIP_QUEUE_ACTIVE = 0;
 const FILMSTRIP_QUEUE = [];
+const AUDIO_VIZ_DEFAULT_PALETTE = {
+  strokeStyle: "rgba(62, 46, 32, 0.82)",
+  fillStyle: "rgba(97, 73, 53, 0.34)",
+  bandLowStyle: "rgba(94, 171, 132, 0.72)",
+  bandMidStyle: "rgba(219, 174, 90, 0.76)",
+  bandHighStyle: "rgba(198, 104, 147, 0.76)",
+  centerLineStyle: "rgba(120, 100, 82, 0.16)",
+};
+
+function resolveAudioVizPalette(overrides = null) {
+  if (!overrides || typeof overrides !== "object") return { ...AUDIO_VIZ_DEFAULT_PALETTE };
+  return { ...AUDIO_VIZ_DEFAULT_PALETTE, ...overrides };
+}
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -408,12 +421,20 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
 
   const hitRow = compatibleRows.find(({ row }) => y >= row.rowTop + 1 && y <= row.rowBottom - 1);
   if (hitRow) {
+    const rowIndex = Number(hitRow.row?.index ?? -1);
+    const isDropzone = hitRow.trackKind === "dropzone";
+    const insertionIndex = isDropzone
+      ? (rowIndex <= 0 ? 1 : rowIndex)
+      : rowIndex;
     return {
       trackName: hitRow.trackName,
       trackKind: hitRow.trackKind,
       rowTop: hitRow.row.rowTop,
       rowBottom: hitRow.row.rowBottom,
       timeSec,
+      rowIndex,
+      insertMode: isDropzone,
+      insertIndex: insertionIndex,
     };
   }
 
@@ -437,12 +458,25 @@ function resolveDropTargetFromPoint(state, x, y, resourceKind = "") {
       bestDist = dist;
     }
   }
+  const bestCenterY = (best.row.rowTop + best.row.rowBottom) * 0.5;
+  const directionAfter = Number(y) >= bestCenterY;
+  const rowIndex = Number(best.row?.index ?? 0);
+  let insertIndex = rowIndex + (directionAfter ? 1 : 0);
+  const rowsLen = Math.max(0, rows.length);
+  if (rowsLen > 1) {
+    insertIndex = clamp(insertIndex, 1, rowsLen - 1);
+  } else {
+    insertIndex = Math.max(0, insertIndex);
+  }
   return {
     trackName: best.trackName,
     trackKind: best.trackKind,
     rowTop: best.row.rowTop,
     rowBottom: best.row.rowBottom,
     timeSec,
+    rowIndex,
+    insertMode: true,
+    insertIndex,
   };
 }
 
@@ -480,6 +514,8 @@ function sameDropTarget(a, b) {
   if (String(a.trackKind || "") !== String(b.trackKind || "")) return false;
   if (String(a.resourceId || "") !== String(b.resourceId || "")) return false;
   if (String(a.resourceKind || "") !== String(b.resourceKind || "")) return false;
+  if (Boolean(a.insertMode) !== Boolean(b.insertMode)) return false;
+  if (Number(a.insertIndex || -1) !== Number(b.insertIndex || -1)) return false;
   return Math.abs(Number(a.timeSec || 0) - Number(b.timeSec || 0)) < 0.02;
 }
 
@@ -869,6 +905,44 @@ function collectSelectedClipIdsForTrack(state, trackName) {
   return Array.from(new Set(out));
 }
 
+function resolveClipEditResult(result) {
+  if (result && typeof result === "object") {
+    return {
+      accepted: result.accepted !== false,
+      trackName: String(result.trackName || "").trim(),
+    };
+  }
+  return {
+    accepted: Boolean(result),
+    trackName: "",
+  };
+}
+
+function normalizeSelectionRect(rect) {
+  if (!rect || typeof rect !== "object") return null;
+  const x0 = Number(rect.x0);
+  const y0 = Number(rect.y0);
+  const x1 = Number(rect.x1);
+  const y1 = Number(rect.y1);
+  if (!Number.isFinite(x0) || !Number.isFinite(y0) || !Number.isFinite(x1) || !Number.isFinite(y1)) return null;
+  return {
+    x0: Math.min(x0, x1),
+    y0: Math.min(y0, y1),
+    x1: Math.max(x0, x1),
+    y1: Math.max(y0, y1),
+  };
+}
+
+function isRectContained(container, inner) {
+  if (!container || !inner) return false;
+  return (
+    inner.x0 >= container.x0 &&
+    inner.y0 >= container.y0 &&
+    inner.x1 <= container.x1 &&
+    inner.y1 <= container.y1
+  );
+}
+
 function resolvePrimaryClipSelectionKey(state) {
   const selection = state?.selection;
   if (!selection || typeof selection !== "object") return "";
@@ -1112,15 +1186,16 @@ function writePreviewClipEdits(state, session, next) {
         targetTrackName = nextTrackName;
       } else if (
         session.trackKind === "video" &&
-        targetTrackKind === "audio" &&
-        /^video\s*audio/i.test(targetTrackName)
+        targetTrackKind === "audio"
       ) {
-        targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(nextTrackName, targetTrackName);
+        // Keep linked audio coupled to the moved video lane, regardless of
+        // current audio lane naming (legacy/custom names can exist).
+        targetTrackName = deriveLinkedAudioTargetTrackFromVideo(nextTrackName, targetTrackName);
       } else if (session.trackKind === "audio" && canonicalVideoTrackFromAudio) {
         if (targetTrackKind === "video") {
           targetTrackName = canonicalVideoTrackFromAudio;
-        } else if (targetTrackKind === "audio" && /^video\s*audio/i.test(targetTrackName)) {
-          targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(canonicalVideoTrackFromAudio, targetTrackName);
+        } else if (targetTrackKind === "audio") {
+          targetTrackName = deriveLinkedAudioTargetTrackFromVideo(canonicalVideoTrackFromAudio, targetTrackName);
         }
       }
     }
@@ -1275,10 +1350,23 @@ function collectPreviewInjectedClipsForTrack(state, trackName, trackKind, clipCl
 function inferStudioTrackKindByName(trackName) {
   const text = String(trackName || "").trim().toLowerCase();
   if (!text) return "";
+  if (text.startsWith("video audio")) return "audio";
   if (text.startsWith("video")) return "video";
   if (text.startsWith("image")) return "image";
   if (text.startsWith("audio")) return "audio";
   if (text.startsWith("mix")) return "audio";
+  return "";
+}
+
+function inferAudioChannelModeByTrackName(trackName) {
+  const text = String(trackName || "").trim();
+  if (!text) return "";
+  if (/^audio\s*m\d+$/i.test(text)) return "mono";
+  if (/^audio\s*s\d+$/i.test(text)) return "stereo";
+  if (/^video\s*audio\s*m\d+$/i.test(text)) return "mono";
+  if (/^video\s*audio\s*\d+$/i.test(text)) return "stereo";
+  if (/\bmono\b/i.test(text)) return "mono";
+  if (/\bstereo\b/i.test(text)) return "stereo";
   return "";
 }
 
@@ -1297,6 +1385,55 @@ function deriveVideoTrackNameFromLinkedAudio(audioTrackName) {
   if (!match) return "";
   const lane = Math.max(1, Number(match[1]) || 1);
   return `Video ${lane}`;
+}
+
+function deriveLinkedAudioTargetTrackFromVideo(videoTrackName, currentAudioTrackName = "") {
+  const videoTrack = String(videoTrackName || "").trim();
+  const laneMatch = videoTrack.match(/^video\s*(\d+)$/i);
+  if (!laneMatch) return String(currentAudioTrackName || "").trim();
+  const lane = Math.max(1, Number(laneMatch[1] || 1));
+  const current = String(currentAudioTrackName || "").trim();
+  const shouldUseMono =
+    /^video\s*audio\s*m\d+$/i.test(current) ||
+    /^audio\s*m\d+$/i.test(current) ||
+    /(?:^|\s)mono(?:$|\s)/i.test(current);
+  return shouldUseMono ? `Video Audio M${lane}` : `Video Audio ${lane}`;
+}
+
+function canonicalizeTargetTrackForResource(trackName, trackKind, resourceKind) {
+  const safeTrackName = String(trackName || "").trim();
+  const safeTrackKind = String(trackKind || "").trim().toLowerCase();
+  const safeResourceKind = String(resourceKind || "").trim().toLowerCase();
+  if (!safeTrackName) return { trackName: safeTrackName, trackKind: safeTrackKind };
+  if (safeResourceKind === "video" && safeTrackKind === "audio") {
+    const videoTrack = deriveVideoTrackNameFromLinkedAudio(safeTrackName);
+    if (videoTrack) return { trackName: videoTrack, trackKind: "video" };
+  }
+  return { trackName: safeTrackName, trackKind: safeTrackKind };
+}
+
+function resolveInsertIndexForTargetTrack(baseInsertIndex, targetTrackName, targetTrackKind, payloadTrackName, payloadTrackKind) {
+  if (!Number.isFinite(Number(baseInsertIndex))) return undefined;
+  const base = Math.round(Number(baseInsertIndex));
+  const safeTargetName = String(targetTrackName || "").trim();
+  const safeTargetKind = String(targetTrackKind || "").trim().toLowerCase();
+  if (!safeTargetName || !safeTargetKind) return base;
+
+  // Keep deterministic visual ordering for linked video/audio lanes:
+  // Video N
+  // Video Audio N
+  // Video Audio MN
+  const payloadLane =
+    parseVideoLaneFromTrack(payloadTrackName, payloadTrackKind) ??
+    parseVideoLaneFromTrack(payloadTrackName, "video");
+  const targetLane = parseVideoLaneFromTrack(safeTargetName, safeTargetKind);
+
+  if (safeTargetKind === "audio" && payloadLane != null && targetLane != null && payloadLane === targetLane) {
+    if (/^video\s*audio\s*m\d+$/i.test(safeTargetName)) return base + 2;
+    if (/^video\s*audio/i.test(safeTargetName)) return base + 1;
+  }
+  if (safeTargetKind === "audio" && /^audio\s*m\d+$/i.test(safeTargetName)) return base + 1;
+  return base;
 }
 
 function parseVideoLaneFromTrack(trackName, trackKind = "") {
@@ -1339,6 +1476,9 @@ function applyCommittedClipEditToLocalStudio(state, payload) {
   const trackKind = String(payload.trackKind || "").trim().toLowerCase();
   const canonicalVideoTrackFromAudio =
     trackKind === "audio" ? deriveVideoTrackNameFromLinkedAudio(trackName) : "";
+  const insertMode = Boolean(payload?.insertMode);
+  const insertIndexRaw = Number(payload?.insertIndex);
+  const hasInsertIndex = Number.isFinite(insertIndexRaw);
   if (!clipId || !trackName) return false;
   const eventsByTrack = state.studioData?.eventsByTrack && typeof state.studioData.eventsByTrack === "object"
     ? state.studioData.eventsByTrack
@@ -1358,9 +1498,7 @@ function applyCommittedClipEditToLocalStudio(state, payload) {
       const samePrimary = resourceId
         ? eventClipId === clipId && eventResourceId === resourceId
         : eventClipId === clipId;
-      const sameLink = Boolean(linkGroupId) &&
-        eventLinkGroupId === linkGroupId &&
-        (!resourceId || !eventResourceId || eventResourceId === resourceId);
+      const sameLink = Boolean(linkGroupId) && eventLinkGroupId === linkGroupId;
       if (!samePrimary && !sameLink) continue;
       matches.push({ trackName: name, index: i, event });
     }
@@ -1391,21 +1529,36 @@ function applyCommittedClipEditToLocalStudio(state, payload) {
     Math.min(Number(payload.durationSec || base.duration || CLIP_EDIT_MIN_DURATION_SEC), maxDurationBySource)
   );
 
-  const ensureTrack = (name, kindHint = "") => {
+  const ensureTrack = (name, kindHint = "", options = {}) => {
     const safe = String(name || "").trim();
     if (!safe) return;
     if (!Array.isArray(eventsByTrack[safe])) eventsByTrack[safe] = [];
     if (!trackKindByName.has(safe)) {
       const inferredKind = kindHint || inferStudioTrackKindByName(safe);
       trackKindByName.set(safe, inferredKind);
-      studioTracks.push({
+      const row = {
         name: safe,
         kind: inferredKind || "audio",
         partition: "step_tracks",
         source: "",
         audioAssetKey: "",
         events: eventsByTrack[safe].length,
-      });
+      };
+      if (String(row.kind || "").toLowerCase() === "audio") {
+        const hintedMode = String(options?.channelMode || "").trim().toLowerCase();
+        const inferredMode = inferAudioChannelModeByTrackName(safe);
+        row.channelMode = hintedMode === "mono" || hintedMode === "stereo"
+          ? hintedMode
+          : (inferredMode || "stereo");
+        row.preserveEventDuration = true;
+      }
+      if (hasInsertIndex && Number.isFinite(Number(options?.insertIndex))) {
+        const maxInsert = Math.max(1, studioTracks.length - 1);
+        const insertAt = clamp(Math.round(Number(options.insertIndex)), 1, maxInsert);
+        studioTracks.splice(insertAt, 0, row);
+      } else {
+        studioTracks.push(row);
+      }
     }
   };
 
@@ -1447,17 +1600,34 @@ function applyCommittedClipEditToLocalStudio(state, payload) {
     let targetTrackName = currentTrackName;
     if (currentTrackKind === trackKind) {
       targetTrackName = trackName;
-    } else if (trackKind === "video" && currentTrackKind === "audio" && /^video\s*audio/i.test(currentTrackName)) {
-      targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(trackName, currentTrackName);
+    } else if (trackKind === "video" && currentTrackKind === "audio") {
+      // Strong coupling: when moving the video member, always relocate linked
+      // audio members to the corresponding audio lane for the target video lane.
+      targetTrackName = deriveLinkedAudioTargetTrackFromVideo(trackName, currentTrackName);
     } else if (trackKind === "audio" && canonicalVideoTrackFromAudio) {
       if (currentTrackKind === "video") {
         targetTrackName = canonicalVideoTrackFromAudio;
-      } else if (currentTrackKind === "audio" && /^video\s*audio/i.test(currentTrackName)) {
-        targetTrackName = deriveLinkedAudioTrackNameFromVideoTrack(canonicalVideoTrackFromAudio, currentTrackName);
+      } else if (currentTrackKind === "audio") {
+        targetTrackName = deriveLinkedAudioTargetTrackFromVideo(canonicalVideoTrackFromAudio, currentTrackName);
       }
     }
     if (targetTrackName !== currentTrackName) {
-      ensureTrack(targetTrackName, currentTrackKind);
+      const targetInsertIndex = insertMode
+        ? resolveInsertIndexForTargetTrack(
+            insertIndexRaw,
+            targetTrackName,
+            currentTrackKind,
+            trackName,
+            trackKind
+          )
+        : undefined;
+      ensureTrack(targetTrackName, currentTrackKind, {
+        insertIndex: targetInsertIndex,
+        channelMode:
+          currentTrackKind === "audio"
+            ? (String(event?.channelMode || "").trim().toLowerCase() || inferAudioChannelModeByTrackName(targetTrackName))
+            : "",
+      });
       const sourceList = eventsByTrack[currentTrackName];
       if (Array.isArray(sourceList) && sourceList[match.index] === event) {
         sourceList.splice(match.index, 1);
@@ -1479,6 +1649,27 @@ function applyCommittedClipEditToLocalStudio(state, payload) {
     });
     const track = studioTracks.find((row) => String(row?.name || "").trim() === name);
     if (track) track.events = events.length;
+  }
+  // Keep local track list coherent after move/insert commits:
+  // remove empty non-dropzone tracks immediately (same behavior user gets after full panel relayout).
+  if (Array.isArray(studioTracks)) {
+    const namesWithEvents = new Set();
+    for (const [name, events] of Object.entries(eventsByTrack)) {
+      const safeName = String(name || "").trim();
+      if (!safeName || !Array.isArray(events) || events.length <= 0) continue;
+      namesWithEvents.add(safeName);
+    }
+    for (let i = studioTracks.length - 1; i >= 0; i -= 1) {
+      const row = studioTracks[i];
+      const name = String(row?.name || "").trim();
+      const kind = String(row?.kind || "").trim().toLowerCase();
+      if (!name || kind === "dropzone") continue;
+      if (namesWithEvents.has(name)) continue;
+      studioTracks.splice(i, 1);
+      if (Object.prototype.hasOwnProperty.call(eventsByTrack, name)) {
+        delete eventsByTrack[name];
+      }
+    }
   }
   const maxEnd = Object.values(eventsByTrack).reduce((max, events) => {
     if (!Array.isArray(events)) return max;
@@ -1515,9 +1706,14 @@ function serializePreviewClipEdits(state) {
   return Object.keys(out).length ? out : null;
 }
 
+function isCuttableTrackKind(trackKind) {
+  const kind = String(trackKind || "").trim().toLowerCase();
+  return kind === "video" || kind === "audio";
+}
+
 function resolveCutTimeSecForHit(state, hit, pointerX) {
   if (!hit || String(hit?.type || "") !== "clip") return null;
-  if (String(hit?.track_kind || "").toLowerCase() !== "video") return null;
+  if (!isCuttableTrackKind(hit?.track_kind)) return null;
   const clipStart = Math.max(0, Number(hit?.t0_sec || 0));
   const clipEnd = Math.max(clipStart + CLIP_EDIT_MIN_DURATION_SEC, Number(hit?.t1_sec || clipStart + CLIP_EDIT_MIN_DURATION_SEC));
   if (!(clipEnd > clipStart + CLIP_EDIT_MIN_DURATION_SEC * 2)) return null;
@@ -1533,17 +1729,28 @@ function resolveCutTimeSecForHit(state, hit, pointerX) {
   return clamp(snappedCut, clipStart + CLIP_EDIT_MIN_DURATION_SEC, clipEnd - CLIP_EDIT_MIN_DURATION_SEC);
 }
 
-function resolveCutPreview(state, x, y) {
+function resolveTrimKeepSideForHit(hit, cutTimeSec) {
+  const clipStart = Math.max(0, Number(hit?.t0_sec || 0));
+  const clipEnd = Math.max(clipStart + CLIP_EDIT_MIN_DURATION_SEC, Number(hit?.t1_sec || clipStart + CLIP_EDIT_MIN_DURATION_SEC));
+  const mid = clipStart + (clipEnd - clipStart) * 0.5;
+  return Number(cutTimeSec) >= mid ? "right" : "left";
+}
+
+function resolveCutPreview(state, x, y, mode = "cut") {
   const hit = hitTest(state, x, y);
   if (!hit || String(hit?.type || "") !== "clip") return null;
-  if (String(hit?.track_kind || "").toLowerCase() !== "video") return null;
+  if (!isCuttableTrackKind(hit?.track_kind)) return null;
   const cutTimeSec = resolveCutTimeSecForHit(state, hit, x);
   if (cutTimeSec == null) return null;
+  const normalizedMode = String(mode || "").trim().toLowerCase() === "trim" ? "trim" : "cut";
+  const keepSide = normalizedMode === "trim" ? resolveTrimKeepSideForHit(hit, cutTimeSec) : "left";
   return {
+    mode: normalizedMode,
+    keepSide,
     clipId: String(hit?.clip_id || "").trim(),
     resourceId: String(hit?.resource_id || "").trim(),
     trackName: String(hit?.track_name || "").trim(),
-    trackKind: "video",
+    trackKind: String(hit?.track_kind || "").trim().toLowerCase(),
     t0Sec: Number(hit?.t0_sec || 0),
     t1Sec: Number(hit?.t1_sec || 0),
     rowTop: Number(hit?.row_top || 0),
@@ -1583,7 +1790,7 @@ function collectMultiSelectedMoveMembers(state, anchorHit) {
     const payload = region?.payload;
     if (!payload || String(payload.type || "") !== "clip") continue;
     const trackKind = String(payload.track_kind || "").toLowerCase();
-    if (trackKind !== "video" && trackKind !== "image") continue;
+    if (trackKind !== "video" && trackKind !== "image" && trackKind !== "audio") continue;
     const clipId = String(payload.clip_id || "").trim();
     const trackName = String(payload.track_name || "").trim();
     const resourceId = String(payload.resource_id || "").trim();
@@ -2051,7 +2258,10 @@ function renderFooter(state) {
     const hasClipSelection = selectedClipCount > 0;
     const hasGroupSelection = selectedClipCount > 1;
     const editMode = String(state.clipEditSession?.mode || "").trim().toLowerCase();
-    if (altDown) {
+    if (altDown && ctrlDown) {
+      hints.push({ icon: "cut", text: "Ctrl+Alt active" });
+      hints.push({ icon: "cut", text: "Click clip: trim keep side" });
+    } else if (altDown) {
       hints.push({ icon: "cut", text: "Alt active" });
       hints.push({ icon: "cut", text: "Click clip: cut" });
     } else if (ctrlDown) {
@@ -2606,6 +2816,135 @@ function mapTimelineSecToSignalSourceSec(state, sourceDurationSec, timelineSec) 
   return clamp(mappedSec, 0, Math.max(0, srcDur - 1e-6));
 }
 
+function drawAmplitudeVizLane(ctx, amplitudes, x0, widthPx, y, h, options = {}) {
+  const values = Array.isArray(amplitudes) ? amplitudes : [];
+  if (!values.length || widthPx <= 0 || h <= 0) return;
+  const mode = normalizeSectionVizMode(options.mode);
+  const palette = resolveAudioVizPalette(options.palette);
+  const bins = Math.max(1, values.length);
+  const stepX = widthPx / bins;
+  const midY = y + h * 0.5;
+  const ampPx = Math.max(1, h * 0.46);
+  if (palette.centerLineStyle) {
+    ctx.strokeStyle = palette.centerLineStyle;
+    ctx.beginPath();
+    ctx.moveTo(x0, midY + 0.5);
+    ctx.lineTo(x0 + widthPx, midY + 0.5);
+    ctx.stroke();
+  }
+  if (mode === "filled") {
+    ctx.save();
+    ctx.fillStyle = palette.fillStyle;
+    ctx.beginPath();
+    for (let i = 0; i < bins; i += 1) {
+      const x = x0 + i * stepX + stepX * 0.5;
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      const yTop = midY - a * ampPx;
+      if (i === 0) ctx.moveTo(x, yTop);
+      else ctx.lineTo(x, yTop);
+    }
+    for (let i = bins - 1; i >= 0; i -= 1) {
+      const x = x0 + i * stepX + stepX * 0.5;
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      const yBottom = midY + a * ampPx;
+      ctx.lineTo(x, yBottom);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = palette.strokeStyle;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < bins; i += 1) {
+      const x = x0 + i * stepX + stepX * 0.5;
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      const yTop = midY - a * ampPx;
+      if (i === 0) ctx.moveTo(x, yTop);
+      else ctx.lineTo(x, yTop);
+    }
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (mode === "bands") {
+    for (let i = 0; i < bins; i += 1) {
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      if (a <= 0.001) continue;
+      const x = x0 + i * stepX + stepX * 0.5;
+      const yTop = midY - a * ampPx;
+      const yBottom = midY + a * ampPx;
+      ctx.strokeStyle = palette.bandLowStyle;
+      ctx.beginPath();
+      ctx.moveTo(x, midY);
+      ctx.lineTo(x, yBottom);
+      ctx.stroke();
+      ctx.strokeStyle = palette.bandMidStyle;
+      ctx.beginPath();
+      ctx.moveTo(x, midY);
+      ctx.lineTo(x, midY - (midY - yTop) * 0.66);
+      ctx.stroke();
+      ctx.strokeStyle = palette.bandHighStyle;
+      ctx.beginPath();
+      ctx.moveTo(x, midY);
+      ctx.lineTo(x, yTop);
+      ctx.stroke();
+    }
+    return;
+  }
+  if (mode === "line") {
+    ctx.strokeStyle = palette.strokeStyle;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < bins; i += 1) {
+      const x = x0 + i * stepX + stepX * 0.5;
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      const yTop = midY - a * ampPx;
+      if (i === 0) ctx.moveTo(x, yTop);
+      else ctx.lineTo(x, yTop);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 0.72;
+    ctx.beginPath();
+    for (let i = 0; i < bins; i += 1) {
+      const x = x0 + i * stepX + stepX * 0.5;
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      const yBottom = midY + a * ampPx;
+      if (i === 0) ctx.moveTo(x, yBottom);
+      else ctx.lineTo(x, yBottom);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  if (mode === "dots") {
+    const radius = clamp(Math.floor(stepX * 0.28), 1, 3);
+    ctx.fillStyle = palette.strokeStyle;
+    for (let i = 0; i < bins; i += 1) {
+      const a = clamp(Number(values[i] || 0), 0, 1);
+      if (a <= 0.001) continue;
+      const x = x0 + i * stepX + stepX * 0.5;
+      const yTop = midY - a * ampPx;
+      const yBottom = midY + a * ampPx;
+      ctx.beginPath();
+      ctx.arc(x, yTop, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x, yBottom, Math.max(1, radius - 1), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return;
+  }
+  ctx.strokeStyle = palette.strokeStyle;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 0; i < bins; i += 1) {
+    const x = x0 + i * stepX + stepX * 0.5;
+    const a = clamp(Number(values[i] || 0), 0, 1);
+    ctx.moveTo(x, midY - a * ampPx);
+    ctx.lineTo(x, midY + a * ampPx);
+  }
+  ctx.stroke();
+}
+
 function drawSectionPeaks(state, ctx, y, height, visibleStartSec, samples, sampleRate) {
   const width = state.canvas.clientWidth;
   const startX = LEFT_GUTTER;
@@ -2872,6 +3211,34 @@ function drawSectionMidiFallback(state, ctx, y, height, visibleStartSec) {
   return true;
 }
 
+function buildSectionAudioEnvelopeFromBuffer(state, samples, sampleRate, visibleStartSec, bins) {
+  const width = Math.max(1, Number(state?.canvas?.clientWidth || 0) - LEFT_GUTTER);
+  const safeBins = Math.max(1, Math.floor(bins));
+  const sourceDurationSec = samples.length / Math.max(1, sampleRate);
+  const values = new Array(safeBins).fill(0);
+  for (let i = 0; i < safeBins; i += 1) {
+    const t0 = visibleStartSec + (i / safeBins) * (width / Math.max(1e-6, state.pxPerSec));
+    const t1 = visibleStartSec + ((i + 1) / safeBins) * (width / Math.max(1e-6, state.pxPerSec));
+    const mt0 = mapTimelineSecToSignalSourceSec(state, sourceDurationSec, t0);
+    const mt1 = mapTimelineSecToSignalSourceSec(state, sourceDurationSec, t1);
+    let s0 = Math.floor(mt0 * sampleRate);
+    let s1 = Math.ceil(mt1 * sampleRate);
+    if (!Number.isFinite(s0)) s0 = 0;
+    if (!Number.isFinite(s1)) s1 = s0 + 1;
+    s0 = clamp(s0, 0, Math.max(0, samples.length - 1));
+    s1 = clamp(s1, s0 + 1, samples.length);
+    const span = Math.max(1, s1 - s0);
+    const readStep = Math.max(1, Math.floor(span / SECTION_WAVE_DETAIL));
+    let peak = 0;
+    for (let s = s0; s < s1; s += readStep) {
+      const amp = Math.abs(samples[s] || 0);
+      if (amp > peak) peak = amp;
+    }
+    values[i] = clamp(peak, 0, 1);
+  }
+  return values;
+}
+
 function drawSectionWaveform(state, ctx, y, height, visibleStartSec) {
   const width = state.canvas.clientWidth;
   if (width <= LEFT_GUTTER + 1) return;
@@ -2890,9 +3257,28 @@ function drawSectionWaveform(state, ctx, y, height, visibleStartSec) {
   if (samples && samples.length >= 2) {
     const sampleRate = Math.max(1, Number(buffer.sampleRate || 44100));
     const mode = normalizeSectionVizMode(state.sectionVizMode);
-    if (mode === "filled") drawSectionFilled(state, ctx, y, height, visibleStartSec, samples, sampleRate);
-    else if (mode === "peaks") drawSectionPeaks(state, ctx, y, height, visibleStartSec, samples, sampleRate);
-    else drawSectionBands(state, ctx, y, height, visibleStartSec, samples, sampleRate);
+    if (mode === "line" || mode === "dots") {
+      const timelineWidth = Math.max(1, width - LEFT_GUTTER);
+      const bins = clamp(Math.floor(timelineWidth / 2.5), 24, 540);
+      const envelope = buildSectionAudioEnvelopeFromBuffer(state, samples, sampleRate, visibleStartSec, bins);
+      drawAmplitudeVizLane(ctx, envelope, LEFT_GUTTER, timelineWidth, y, height, {
+        mode,
+        palette: resolveAudioVizPalette({
+          strokeStyle: "rgba(62, 46, 32, 0.82)",
+          fillStyle: "rgba(63, 43, 27, 0.30)",
+          bandLowStyle: "rgba(74, 165, 142, 0.58)",
+          bandMidStyle: "rgba(219, 174, 90, 0.56)",
+          bandHighStyle: "rgba(198, 104, 147, 0.54)",
+          centerLineStyle: "rgba(120, 100, 82, 0.16)",
+        }),
+      });
+    } else if (mode === "filled") {
+      drawSectionFilled(state, ctx, y, height, visibleStartSec, samples, sampleRate);
+    } else if (mode === "peaks") {
+      drawSectionPeaks(state, ctx, y, height, visibleStartSec, samples, sampleRate);
+    } else {
+      drawSectionBands(state, ctx, y, height, visibleStartSec, samples, sampleRate);
+    }
   } else {
     drawSectionMidiFallback(state, ctx, y, height, visibleStartSec);
   }
@@ -3018,6 +3404,22 @@ function buildSectionCompositionAudioEnvelope(state, audioEvents, visibleStartSe
   return { left, right };
 }
 
+function getCachedSectionCompositionAudioEnvelope(state, audioEvents, visibleStartSec, visibleEndSec, bins) {
+  const signature = audioEvents
+    .map(
+      (event) =>
+        `${event.trackName}:${event.clipId}:${event.start.toFixed(4)}:${event.end.toFixed(4)}:` +
+        `${event.startOffsetSec.toFixed(4)}:${String(event.channelMode || "stereo").toLowerCase()}`
+    )
+    .join("|");
+  const key = `${visibleStartSec.toFixed(4)}:${visibleEndSec.toFixed(4)}:${bins}:${signature}`;
+  const cached = state._sectionCompositionAudioEnvelopeCache;
+  if (cached && cached.key === key && cached.value) return cached.value;
+  const value = buildSectionCompositionAudioEnvelope(state, audioEvents, visibleStartSec, visibleEndSec, bins);
+  state._sectionCompositionAudioEnvelopeCache = { key, value };
+  return value;
+}
+
 function drawSectionCompositionAudioOverlay(state, ctx, y, height, visibleStartSec, visibleEndSec) {
   if (height < 8) return false;
   const width = Number(state?.canvas?.clientWidth || 0);
@@ -3036,86 +3438,12 @@ function drawSectionCompositionAudioOverlay(state, ctx, y, height, visibleStartS
     return true;
   }
 
-  const envelope = buildSectionCompositionAudioEnvelope(state, events, visibleStartSec, visibleEndSec, bins);
+  const envelope = getCachedSectionCompositionAudioEnvelope(state, events, visibleStartSec, visibleEndSec, bins);
   const laneGap = Math.max(1, Math.floor(height * 0.08));
   const laneHeight = Math.max(3, Math.floor((height - laneGap) * 0.5));
   const leftY = y;
   const rightY = y + laneHeight + laneGap;
   const vizMode = normalizeSectionVizMode(state?.sectionVizMode);
-  const drawLane = (values, laneY, strokeStyle, accentStyle) => {
-    const midY = laneY + laneHeight * 0.5;
-    const ampPx = Math.max(1, laneHeight * 0.46);
-    const stepX = timelineWidth / bins;
-    ctx.strokeStyle = "rgba(120, 100, 82, 0.16)";
-    ctx.beginPath();
-    ctx.moveTo(LEFT_GUTTER, midY + 0.5);
-    ctx.lineTo(width, midY + 0.5);
-    ctx.stroke();
-    if (vizMode === "filled") {
-      ctx.save();
-      ctx.fillStyle = "rgba(63, 43, 27, 0.30)";
-      ctx.beginPath();
-      for (let i = 0; i < bins; i += 1) {
-        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
-        const a = values[i];
-        const yTop = midY - a * ampPx;
-        if (i === 0) ctx.moveTo(x, yTop);
-        else ctx.lineTo(x, yTop);
-      }
-      for (let i = bins - 1; i >= 0; i -= 1) {
-        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
-        const a = values[i];
-        const yBottom = midY + a * ampPx;
-        ctx.lineTo(x, yBottom);
-      }
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = strokeStyle;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      for (let i = 0; i < bins; i += 1) {
-        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
-        const a = values[i];
-        const yTop = midY - a * ampPx;
-        if (i === 0) ctx.moveTo(x, yTop);
-        else ctx.lineTo(x, yTop);
-      }
-      ctx.stroke();
-      ctx.restore();
-      return;
-    }
-    if (vizMode === "bands") {
-      for (let i = 0; i < bins; i += 1) {
-        const a = values[i];
-        if (a <= 0.001) continue;
-        const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
-        const yTop = midY - a * ampPx;
-        const yBottom = midY + a * ampPx;
-        ctx.strokeStyle = strokeStyle;
-        ctx.beginPath();
-        ctx.moveTo(x, midY);
-        ctx.lineTo(x, yBottom);
-        ctx.stroke();
-        ctx.strokeStyle = accentStyle;
-        ctx.beginPath();
-        ctx.moveTo(x, midY);
-        ctx.lineTo(x, yTop);
-        ctx.stroke();
-      }
-      return;
-    }
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = 1;
-    for (let i = 0; i < bins; i += 1) {
-      const a = values[i];
-      if (a <= 0.001) continue;
-      const x = LEFT_GUTTER + i * stepX + stepX * 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x, midY - a * ampPx);
-      ctx.lineTo(x, midY + a * ampPx);
-      ctx.stroke();
-    }
-  };
 
   const stepX = timelineWidth / bins;
   let runStart = -1;
@@ -3134,8 +3462,28 @@ function drawSectionCompositionAudioOverlay(state, ctx, y, height, visibleStartS
     }
   }
 
-  drawLane(envelope.left, leftY, "rgba(52, 130, 116, 0.68)", "rgba(216, 174, 92, 0.56)");
-  drawLane(envelope.right, rightY, "rgba(68, 96, 156, 0.62)", "rgba(198, 104, 147, 0.54)");
+  drawAmplitudeVizLane(ctx, envelope.left, LEFT_GUTTER, timelineWidth, leftY, laneHeight, {
+    mode: vizMode,
+    palette: resolveAudioVizPalette({
+      strokeStyle: "rgba(33, 24, 18, 0.65)",
+      fillStyle: "rgba(63, 43, 27, 0.36)",
+      bandLowStyle: "rgba(74, 165, 142, 0.58)",
+      bandMidStyle: "rgba(219, 174, 90, 0.56)",
+      bandHighStyle: "rgba(198, 104, 147, 0.54)",
+      centerLineStyle: "rgba(120, 100, 82, 0.14)",
+    }),
+  });
+  drawAmplitudeVizLane(ctx, envelope.right, LEFT_GUTTER, timelineWidth, rightY, laneHeight, {
+    mode: vizMode,
+    palette: resolveAudioVizPalette({
+      strokeStyle: "rgba(74, 48, 33, 0.6)",
+      fillStyle: "rgba(63, 43, 27, 0.36)",
+      bandLowStyle: "rgba(74, 165, 142, 0.58)",
+      bandMidStyle: "rgba(219, 174, 90, 0.56)",
+      bandHighStyle: "rgba(198, 104, 147, 0.54)",
+      centerLineStyle: "rgba(120, 100, 82, 0.14)",
+    }),
+  });
 
   ctx.fillStyle = "rgba(77, 61, 47, 0.72)";
   ctx.font = "8px monospace";
@@ -3172,15 +3520,14 @@ function drawSectionCompositionPreview(state, ctx, y, height) {
     const clipWidth = Math.max(0, right - left);
     if (clipWidth < 1) continue;
     if (clip.kind === "video") {
+      const hasBaseThumb = drawClipThumbnailCover(state, ctx, clip.src, left, clipWidth, previewY, previewH);
       const previewPlan = resolveVideoPreviewPlan(state, clipWidth, previewH);
       const filmstrip = ensureTimelineVideoFilmstrip(state, clip.src, clip.sourceDurationSec, previewPlan);
-      const hasFrames = previewPlan.strategy === "edges"
-        ? drawClipEdgeFrames(ctx, filmstrip?.frames || [], left, clipWidth, previewY, previewH)
-        : drawClipFilmstripTiles(ctx, filmstrip?.frames || [], left, clipWidth, previewY, previewH, {
-            sourceDurationSec: clip.sourceDurationSec,
-            clipDurationSec: clip.duration,
-            clipStartOffsetSec: clip.startOffsetSec,
-          });
+      const hasFrames = drawClipFilmstripTiles(ctx, filmstrip?.frames || [], left, clipWidth, previewY, previewH, {
+        sourceDurationSec: clip.sourceDurationSec,
+        clipDurationSec: clip.duration,
+        clipStartOffsetSec: clip.startOffsetSec,
+      });
       if (!hasFrames) {
         drawClipThumbnailTiles(state, ctx, clip.src, left, clipWidth, previewY, previewH);
       }
@@ -3274,9 +3621,6 @@ function drawAudioClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h, opt
   const channelPhase = toFiniteNumber(options?.channelPhase, 0) || 0;
   const strokeStyle = String(options?.strokeStyle || "rgba(41, 28, 18, 0.58)");
   const bins = clamp(Math.floor(widthPx / 2.5), 12, 280);
-  const stepX = widthPx / bins;
-  const midY = y + h * 0.5;
-  const ampPx = Math.max(2, h * 0.46);
   const clipStart = Number(clip?.start || 0);
   const clipEnd = Math.max(clipStart + 0.01, Number(clip?.end || clipStart + 0.01));
   const amplitudes = new Array(bins).fill(0);
@@ -3318,74 +3662,17 @@ function drawAudioClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h, opt
     }
   }
   const vizMode = normalizeSectionVizMode(state?.sectionVizMode);
-  if (vizMode === "filled") {
-    ctx.save();
-    ctx.fillStyle = "rgba(63, 43, 27, 0.36)";
-    ctx.beginPath();
-    for (let i = 0; i < bins; i += 1) {
-      const x = x0 + i * stepX + stepX * 0.5;
-      const a = amplitudes[i];
-      const yTop = midY - a * ampPx;
-      if (i === 0) ctx.moveTo(x, yTop);
-      else ctx.lineTo(x, yTop);
-    }
-    for (let i = bins - 1; i >= 0; i -= 1) {
-      const x = x0 + i * stepX + stepX * 0.5;
-      const a = amplitudes[i];
-      const yBottom = midY + a * ampPx;
-      ctx.lineTo(x, yBottom);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.strokeStyle = strokeStyle;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < bins; i += 1) {
-      const x = x0 + i * stepX + stepX * 0.5;
-      const a = amplitudes[i];
-      const yTop = midY - a * ampPx;
-      if (i === 0) ctx.moveTo(x, yTop);
-      else ctx.lineTo(x, yTop);
-    }
-    ctx.stroke();
-    ctx.restore();
-    return;
-  }
-  if (vizMode === "bands") {
-    for (let i = 0; i < bins; i += 1) {
-      const x = x0 + i * stepX + stepX * 0.5;
-      const a = amplitudes[i];
-      if (a <= 0.001) continue;
-      const yTop = midY - a * ampPx;
-      const yBottom = midY + a * ampPx;
-      ctx.strokeStyle = "rgba(74, 165, 142, 0.58)";
-      ctx.beginPath();
-      ctx.moveTo(x, midY);
-      ctx.lineTo(x, yTop);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(219, 174, 90, 0.56)";
-      ctx.beginPath();
-      ctx.moveTo(x, midY);
-      ctx.lineTo(x, midY - (midY - yTop) * 0.66);
-      ctx.stroke();
-      ctx.strokeStyle = "rgba(198, 104, 147, 0.54)";
-      ctx.beginPath();
-      ctx.moveTo(x, midY);
-      ctx.lineTo(x, yBottom);
-      ctx.stroke();
-    }
-    return;
-  }
-  ctx.strokeStyle = strokeStyle;
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let i = 0; i < bins; i += 1) {
-    const x = x0 + i * stepX + stepX * 0.5;
-    const a = amplitudes[i];
-    ctx.moveTo(x, midY - a * ampPx);
-    ctx.lineTo(x, midY + a * ampPx);
-  }
-  ctx.stroke();
+  drawAmplitudeVizLane(ctx, amplitudes, x0, widthPx, y, h, {
+    mode: vizMode,
+    palette: resolveAudioVizPalette({
+      strokeStyle,
+      fillStyle: "rgba(63, 43, 27, 0.36)",
+      bandLowStyle: "rgba(74, 165, 142, 0.58)",
+      bandMidStyle: "rgba(219, 174, 90, 0.56)",
+      bandHighStyle: "rgba(198, 104, 147, 0.54)",
+      centerLineStyle: "rgba(120, 100, 82, 0.14)",
+    }),
+  });
 }
 
 function drawStereoClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
@@ -3468,6 +3755,14 @@ function drawClipThumbnailTiles(state, ctx, src, x0, widthPx, y, h) {
   ctx.beginPath();
   ctx.rect(x0, y, widthPx, h);
   ctx.clip();
+  // Seed full strip with source thumbnail so async/missing per-tile work never
+  // exposes placeholder regions.
+  const coverScale = Math.max(widthPx / imgW, tileH / imgH);
+  const coverW = Math.max(1, Math.floor(imgW * coverScale));
+  const coverH = Math.max(1, Math.floor(imgH * coverScale));
+  const coverX = x0 + (widthPx - coverW) * 0.5;
+  const coverY = innerY + (tileH - coverH) * 0.5;
+  ctx.drawImage(img, coverX, coverY, coverW, coverH);
   for (const tile of layout.tiles) {
     const drawScale = Math.min(tile.w / imgW, tileH / imgH);
     const drawW = Math.max(1, Math.floor(imgW * drawScale));
@@ -3520,6 +3815,7 @@ function drawClipFilmstripTiles(ctx, frames, x0, widthPx, y, h, options = {}) {
   ctx.beginPath();
   ctx.rect(x0, y, widthPx, h);
   ctx.clip();
+  drawFrameInTileContain(ctx, list[0], x0, innerY, widthPx, tileH);
   for (const tile of layout.tiles) {
     const ratio = tileCount <= 1 ? 0 : (tile.index / Math.max(1, tileCount - 1));
     const localTimeSec = clipStartOffsetSec + clipDurationSec * ratio;
@@ -3577,12 +3873,13 @@ function drawClipEdgeFrames(ctx, frames, x0, widthPx, y, h) {
   return true;
 }
 
-function resolveVideoPreviewPlan(state, widthPx) {
+function resolveVideoPreviewPlan(state, widthPx, options = {}) {
   const mode = normalizeVideoPreviewMode(state?.videoPreviewMode);
   const qualityHint = normalizeVideoPreviewQualityHint(state?.previewQualityHint);
   const queuePressure = getFilmstripQueuePressure();
+  const clipInteractive = Boolean(options?.clipInteractive);
   const interactive = Boolean(
-    state?.clipEditSession ||
+    (state?.clipEditSession && clipInteractive) ||
     state?.panningX ||
     state?.scrubbing ||
     state?.resizingSection ||
@@ -3688,7 +3985,7 @@ function drawImageClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
   }
 }
 
-function drawVideoClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
+function drawVideoClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h, options = {}) {
   const thumbnailSrc = String(clip?.thumbnailSrc || clip?.previewSrc || clip?.src || "").trim();
   const clipStart = Number(clip?.start || 0);
   const clipEnd = Math.max(clipStart + 0.01, Number(clip?.end || clipStart + 0.01));
@@ -3714,19 +4011,36 @@ function drawVideoClipSignal(state, ctx, trackName, clip, x0, widthPx, y, h) {
   const frameCount = clamp(Math.floor(stripeW / 42), 3, 18);
   const stripeH = Math.max(4, Math.floor(contentH * 0.74));
   const stripeY = Math.floor(contentTop + Math.max(0, (contentH - stripeH) * 0.5));
-  const previewPlan = resolveVideoPreviewPlan(state, widthPx);
+  const hasBaseThumb = drawClipThumbnailCover(state, ctx, thumbnailSrc, stripeX, stripeW, stripeY, stripeH);
+  const activeSession = state?.clipEditSession;
+  const sessionMode = String(activeSession?.mode || "").trim().toLowerCase();
+  const sessionClipId = String(activeSession?.clipId || "").trim();
+  const clipId = String(getClipId(clip) || "").trim();
+  const isActiveSessionClip = Boolean(sessionClipId && clipId && sessionClipId === clipId);
+  const isMoveSession = Boolean(activeSession && sessionMode === "move");
+  const isGroupMoveMember = isMoveSession && Array.isArray(activeSession?.groupMembers)
+    ? activeSession.groupMembers.some((member) => String(member?.clipId || "").trim() === clipId)
+    : false;
+  // Drag-render mode must only affect the actual moved clip(s), not every selected clip.
+  const isDraggedClip = Boolean(isMoveSession && (isActiveSessionClip || isGroupMoveMember));
+  const previewPlan = resolveVideoPreviewPlan(state, widthPx, {
+    clipInteractive: isDraggedClip,
+  });
   const filmstrip = ensureTimelineVideoFilmstrip(state, thumbnailSrc, sourceDurationSec, previewPlan);
-  const hasFramePreview = previewPlan.strategy === "edges"
-    ? drawClipEdgeFrames(ctx, filmstrip?.frames || [], stripeX, stripeW, stripeY, stripeH)
-    : drawClipFilmstripTiles(ctx, filmstrip?.frames || [], stripeX, stripeW, stripeY, stripeH, {
-      sourceDurationSec,
-      clipDurationSec,
-      clipStartOffsetSec,
-    });
-  const hasThumb = hasFramePreview || drawClipThumbnailTiles(state, ctx, thumbnailSrc, stripeX, stripeW, stripeY, stripeH);
+  const hasFramePreview = drawClipFilmstripTiles(ctx, filmstrip?.frames || [], stripeX, stripeW, stripeY, stripeH, {
+    sourceDurationSec,
+    clipDurationSec,
+    clipStartOffsetSec,
+  });
+  const hasThumbTiles = !hasFramePreview
+    ? drawClipThumbnailTiles(state, ctx, thumbnailSrc, stripeX, stripeW, stripeY, stripeH)
+    : false;
+  const hasAnyVisual = hasFramePreview || hasThumbTiles || hasBaseThumb;
   const hash = normalizedTrackHash(`${trackName}:${clip?.label || "video"}`);
-  ctx.fillStyle = hasThumb ? "rgba(34, 26, 18, 0.2)" : "rgba(34, 26, 18, 0.3)";
-  ctx.fillRect(stripeX, stripeY, stripeW, stripeH);
+  if (!hasAnyVisual) {
+    ctx.fillStyle = "rgba(34, 26, 18, 0.3)";
+    ctx.fillRect(stripeX, stripeY, stripeW, stripeH);
+  }
   const keyframes = clamp(Math.floor(widthPx / 90), 1, 7);
   const frameW = Math.max(6, stripeW / Math.max(1, frameCount));
   for (let i = 0; i <= keyframes; i += 1) {
@@ -3839,7 +4153,9 @@ function drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, ro
     return;
   }
   if (kind === "video") {
-    drawVideoClipSignal(state, ctx, String(track?.name || ""), clip, x0, widthPx, innerY, innerH);
+    drawVideoClipSignal(state, ctx, String(track?.name || ""), clip, x0, widthPx, innerY, innerH, {
+      selected: Boolean(options?.selected),
+    });
     return;
   }
   if (kind === "image") {
@@ -4124,6 +4440,7 @@ function hasTrackAudioPlayback(state, options = {}) {
 function getPlaybackClockAudio(state) {
   // Track clip playback is event-driven (per clip/time window), so it cannot be used as a linear global clock.
   // Keep the deterministic clock source on the dedicated mix track only.
+  if (hasTrackAudioPlayback(state, { unmutedOnly: true })) return null;
   if (state.audio && state.audioSource && !state.audioErrored && !isMixTrackMuted(state)) return state.audio;
   return null;
 }
@@ -4190,15 +4507,20 @@ function resolveTrackAudioActiveEventAtTime(state, trackName, timeSec) {
   return selected;
 }
 
-function resolveTrackAudioLocalTime(active, playheadSec) {
+function resolveTrackAudioLocalTime(active, playheadSec, player = null) {
   if (!active || !active.event) return 0;
   const start = Math.max(0, Number(active.start || 0));
   const sourceDurationSec = Math.max(
     CLIP_EDIT_MIN_DURATION_SEC,
     Number(active.event?.sourceDurationSec || active.duration || CLIP_EDIT_MIN_DURATION_SEC)
   );
+  const mediaDurationSec = Number(player?.audio?.duration || 0);
+  const effectiveSourceDurationSec =
+    Number.isFinite(mediaDurationSec) && mediaDurationSec > 0.05
+      ? Math.max(sourceDurationSec, mediaDurationSec)
+      : sourceDurationSec;
   const startOffsetSec = Math.max(0, Number(active.event?.startOffsetSec || 0));
-  const maxLocal = Math.max(0, sourceDurationSec - 0.01);
+  const maxLocal = Math.max(0, effectiveSourceDurationSec - 0.01);
   const local = startOffsetSec + Math.max(0, Number(playheadSec || 0) - start);
   return clamp(local, 0, maxLocal);
 }
@@ -4286,7 +4608,7 @@ function syncTrackAudioPlayersToPlayhead(state, { play = false, forceSeek = fals
       continue;
     }
     const selectedAssetKey = String(selectedPlayer?.assetKey || "").trim();
-    const localTime = resolveTrackAudioLocalTime(active, t);
+    const localTime = resolveTrackAudioLocalTime(active, t, selectedPlayer);
     const currentLocal = Number(audio.currentTime || 0);
     const drift = Math.abs(currentLocal - localTime);
     const clipChanged =
@@ -4310,8 +4632,14 @@ function syncTrackAudioPlayersToPlayhead(state, { play = false, forceSeek = fals
     }
 
     if (selectedPlayer.pendingSeekSec != null) {
-      selectedPlayer.pendingPlay = true;
-      continue;
+      // Robustness: when playback starts away from t=0, a first seek can fail before media is ready.
+      // Re-try pending seek on each sync pass so audio can recover deterministically once ready.
+      const pendingTarget = Number(selectedPlayer.pendingSeekSec || 0);
+      const applied = applyTrackPlayerSeek(selectedPlayer, pendingTarget);
+      if (!applied) {
+        selectedPlayer.pendingPlay = shouldClipPlay;
+        continue;
+      }
     }
 
     selectedPlayer.pendingPlay = false;
@@ -4928,13 +5256,48 @@ function draw(state) {
       ctx.fillStyle = "rgba(118, 150, 198, 0.12)";
       ctx.fillRect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
     }
+    const dropzoneHoverFromResourceDrag = Boolean(
+      trackKind === "dropzone" &&
+      state.dropTarget &&
+      Boolean(state.dropTarget.insertMode) &&
+      String(state.dropTarget.trackName || "").trim() === trackName
+    );
+    const dropzoneHoverFromClipMove = Boolean(
+      trackKind === "dropzone" &&
+      activeEdit &&
+      String(activeEdit.mode || "").trim().toLowerCase() === "move" &&
+      Boolean(activeEdit.liveInsertMode) &&
+      String(activeEdit.liveInsertTrackName || "").trim() === trackName
+    );
+    if (dropzoneHoverFromResourceDrag || dropzoneHoverFromClipMove) {
+      const laneX = LEFT_GUTTER + 8;
+      const laneY = rowTop + 4;
+      const laneW = Math.max(10, timelineWidth - 16);
+      const laneH = Math.max(10, rowHeight - 8);
+      const grad = ctx.createLinearGradient(laneX, laneY, laneX, laneY + laneH);
+      grad.addColorStop(0, "rgba(132, 102, 72, 0.16)");
+      grad.addColorStop(1, "rgba(108, 84, 60, 0.10)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(laneX, laneY, laneW, laneH);
+      ctx.save();
+      ctx.setLineDash([6, 4]);
+      ctx.strokeStyle = "rgba(104, 76, 49, 0.88)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(laneX + 0.5, laneY + 0.5, Math.max(1, laneW - 1), Math.max(1, laneH - 1));
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
     if (locked) {
       ctx.fillStyle = "rgba(96, 117, 148, 0.12)";
       ctx.fillRect(LEFT_GUTTER, rowTop, timelineWidth, rowHeight - 1);
     }
     ctx.fillStyle = i % 2 === 0 ? "#e8d9c7" : "#e3d3c1";
     ctx.fillRect(0, rowTop, LEFT_GUTTER, rowHeight - 1);
-    if (state.dropTarget && String(state.dropTarget.trackName || "") === trackName) {
+    if (
+      state.dropTarget &&
+      !Boolean(state.dropTarget.insertMode) &&
+      String(state.dropTarget.trackName || "") === trackName
+    ) {
       const dropX = clamp(toX(Number(state.dropTarget.timeSec || 0)), LEFT_GUTTER, width);
       const ghostDuration = Math.max(0.25, Number(state.dropTarget.durationSec || 1));
       const ghostWidth = clamp(ghostDuration * state.pxPerSec, 16, Math.max(16, timelineWidth * 0.6));
@@ -5230,10 +5593,34 @@ function draw(state) {
           ctx.setLineDash([]);
           ctx.restore();
         }
+        const labelSafeInset = resolveClipHandleSafeInset(widthPx, 4);
+        const textW = Math.max(0, widthPx - labelSafeInset * 2 - 2);
+        if (textW >= 16) {
+          const clipDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(clip?.end || 0) - Number(clip?.start || 0));
+          const sourceDurationSec = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(clip?.sourceDurationSec || clipDurationSec));
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(x0 + labelSafeInset, clipBoxY + 1, textW, Math.max(8, clipBoxH - 2));
+          ctx.clip();
+          ctx.fillStyle = muted ? "rgba(68, 62, 58, 0.58)" : "rgba(56, 50, 47, 0.86)";
+          ctx.font = "9px monospace";
+          const titleChars = Math.max(4, Math.floor(textW / 5.6));
+          ctx.fillText(compactText(clip.label, titleChars), x0 + labelSafeInset, clipBoxY + 12);
+          if (clipBoxH >= 26) {
+            const info = `${clipDurationSec.toFixed(2)}s / src ${sourceDurationSec.toFixed(2)}s`;
+            const infoChars = Math.max(6, Math.floor(textW / 5.2));
+            ctx.globalAlpha = muted ? 0.6 : 0.9;
+            ctx.fillText(compactText(info, infoChars), x0 + labelSafeInset, clipBoxY + 23);
+            ctx.globalAlpha = 1;
+          }
+          ctx.restore();
+        }
         ctx.lineWidth = 1;
       } else {
         ctx.fillStyle = resolveAlternatingClipFill(trackKind, trackName || String(i), clipPaintIndex);
-        const baseAlpha = muted ? 0.2 : (isSelected ? 0.86 : (hasSelectionFocus ? 0.58 : 0.72));
+        // Keep non-selected clips visually stable while dragging/selecting.
+        // Only selected/grabbed clips should change style.
+        const baseAlpha = muted ? 0.2 : (isSelected ? 0.86 : 0.72);
         ctx.globalAlpha = baseAlpha;
         ctx.fillRect(x0, clipBoxY, widthPx, clipBoxH);
         ctx.globalAlpha = muted ? 0.55 : 1;
@@ -5277,6 +5664,7 @@ function draw(state) {
         drawClipSignal(state, ctx, track, clip, events, x0, widthPx, rowTop, rowHeight, {
           clipTopInset,
           clipBottomInset,
+          selected: isSelected,
         });
       }
       if (!skeletonMode) {
@@ -5505,6 +5893,66 @@ function draw(state) {
     }
   }
 
+  if (state.dropTarget && Boolean(state.dropTarget.insertMode)) {
+    const rows = Array.isArray(state.trackRows) ? state.trackRows : [];
+    const rawInsertIndex = Number(state.dropTarget.insertIndex);
+    const hasRows = rows.length >= 2;
+    if (hasRows && Number.isFinite(rawInsertIndex)) {
+      const insertIndex = clamp(Math.round(rawInsertIndex), 1, rows.length - 1);
+      const upper = rows[insertIndex - 1];
+      const lower = rows[insertIndex];
+      if (upper && lower) {
+        const markerY = Math.round((Number(upper.rowBottom || 0) + Number(lower.rowTop || 0)) * 0.5);
+        ctx.save();
+        ctx.setLineDash([8, 4]);
+        ctx.strokeStyle = "rgba(90, 65, 41, 0.96)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(LEFT_GUTTER + 2, markerY + 0.5);
+        ctx.lineTo(width - 2, markerY + 0.5);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(79, 58, 39, 0.96)";
+        const markerLabel = "insert new track";
+        ctx.font = "9px monospace";
+        const padX = 5;
+        const markerW = Math.ceil(ctx.measureText(markerLabel).width) + padX * 2;
+        const markerX = clamp(LEFT_GUTTER + 6, LEFT_GUTTER + 2, Math.max(LEFT_GUTTER + 2, width - markerW - 2));
+        const markerTop = clamp(markerY - 16, RULER_HEIGHT + 2, Math.max(RULER_HEIGHT + 2, markerY - 12));
+        ctx.fillRect(markerX, markerTop, markerW, 12);
+        ctx.strokeStyle = "rgba(226, 205, 176, 0.76)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(markerX + 0.5, markerTop + 0.5, Math.max(1, markerW - 1), 11);
+        ctx.fillStyle = "#f8efe2";
+        ctx.fillText(markerLabel, markerX + padX, markerTop + 9);
+        ctx.restore();
+      }
+    }
+  }
+
+  const selectionRect = normalizeSelectionRect(state.boxSelection);
+  if (selectionRect) {
+    ctx.save();
+    ctx.fillStyle = "rgba(76, 99, 138, 0.12)";
+    ctx.fillRect(
+      selectionRect.x0,
+      selectionRect.y0,
+      Math.max(1, selectionRect.x1 - selectionRect.x0),
+      Math.max(1, selectionRect.y1 - selectionRect.y0)
+    );
+    ctx.setLineDash([5, 4]);
+    ctx.strokeStyle = "rgba(56, 84, 136, 0.92)";
+    ctx.lineWidth = 1.25;
+    ctx.strokeRect(
+      selectionRect.x0 + 0.5,
+      selectionRect.y0 + 0.5,
+      Math.max(1, selectionRect.x1 - selectionRect.x0 - 1),
+      Math.max(1, selectionRect.y1 - selectionRect.y0 - 1)
+    );
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
   if (state.cutPreview && state.cutPreview.trackName) {
     const cutX = toX(Number(state.cutPreview.cutTimeSec || 0));
     const cutTop = Number.isFinite(Number(state.cutPreview.rowTop))
@@ -5525,7 +5973,11 @@ function draw(state) {
       ctx.setLineDash([]);
       ctx.fillStyle = "rgba(84, 52, 44, 0.94)";
       ctx.font = "9px monospace";
-      const label = `cut ${Number(state.cutPreview.cutTimeSec || 0).toFixed(2)}s`;
+      const isTrimPreview = String(state.cutPreview.mode || "").trim().toLowerCase() === "trim";
+      const trimSide = String(state.cutPreview.keepSide || "").trim().toLowerCase() === "right" ? "R" : "L";
+      const label = isTrimPreview
+        ? `trim ${trimSide} ${Number(state.cutPreview.cutTimeSec || 0).toFixed(2)}s`
+        : `cut ${Number(state.cutPreview.cutTimeSec || 0).toFixed(2)}s`;
       const padX = 5;
       const labelW = Math.ceil(ctx.measureText(label).width) + padX * 2;
       const labelX = clamp(cutX - labelW / 2, LEFT_GUTTER + 2, Math.max(LEFT_GUTTER + 2, width - labelW - 2));
@@ -5536,29 +5988,6 @@ function draw(state) {
       ctx.strokeRect(labelX + 0.5, labelY + 0.5, Math.max(1, labelW - 1), 11);
       ctx.fillStyle = "#f8efe2";
       ctx.fillText(label, labelX + padX, labelY + 9);
-      ctx.restore();
-    }
-  }
-
-  if (state.dropHint && typeof state.dropHint === "object") {
-    const hintText = String(state.dropHint.text || "").trim();
-    if (hintText) {
-      const hintXRaw = Number(state.dropHint.x || LEFT_GUTTER);
-      const hintYRaw = Number(state.dropHint.y || RULER_HEIGHT);
-      const hintPadX = 6;
-      const hintH = 14;
-      ctx.save();
-      ctx.font = "9px monospace";
-      const hintW = Math.ceil(ctx.measureText(hintText).width) + hintPadX * 2;
-      const hintX = clamp(hintXRaw + 10, LEFT_GUTTER + 2, Math.max(LEFT_GUTTER + 2, width - hintW - 2));
-      const hintY = clamp(hintYRaw + 10, RULER_HEIGHT + 2, Math.max(RULER_HEIGHT + 2, height - hintH - 2));
-      ctx.fillStyle = "rgba(113, 66, 58, 0.94)";
-      ctx.fillRect(hintX, hintY, hintW, hintH);
-      ctx.strokeStyle = "rgba(232, 193, 175, 0.76)";
-      ctx.lineWidth = 1;
-      ctx.strokeRect(hintX + 0.5, hintY + 0.5, Math.max(1, hintW - 1), hintH - 1);
-      ctx.fillStyle = "#f8efe2";
-      ctx.fillText(hintText, hintX + hintPadX, hintY + 10);
       ctx.restore();
     }
   }
@@ -5647,7 +6076,8 @@ function startPlayback(state) {
   state.lastFrameTs = null;
   void startMidiPlayback(state);
   if (hasTrackAudioPlayback(state, { unmutedOnly: true })) {
-    primeTrackAudioPlayersForGesture(state);
+    // Do not prime here: async prime play/pause can race with active playback
+    // and cause silent windows when starting from middle timeline positions.
     syncTrackAudioMuteVolumes(state);
     syncTrackAudioPlayersToPlayhead(state, { play: true, forceSeek: true });
     if (state.audio && state.audioSource) {
@@ -5735,12 +6165,14 @@ function resolveTrackContextFromPoint(state, x, y, hit = null) {
   const payloadTrackKind = String(payload?.track_kind || "").trim().toLowerCase();
   if (payloadTrackName) {
     const selectedClipIds = collectSelectedClipIdsForTrack(state, payloadTrackName);
+    const focusClipId = String(payload?.clip_id || "").trim();
+    if (focusClipId && !selectedClipIds.includes(focusClipId)) selectedClipIds.push(focusClipId);
     return {
       trackName: payloadTrackName,
       trackKind: payloadTrackKind,
       selectedClipIds,
       selectedClipCount: selectedClipIds.length,
-      focusClipId: String(payload?.clip_id || "").trim(),
+      focusClipId,
       focusResourceId: String(payload?.resource_id || "").trim(),
       focusLinkGroupId: String(payload?.link_group_id || "").trim(),
       locked: isTrackLocked(state, payloadTrackName),
@@ -5795,6 +6227,16 @@ function openTrackContextMenu(state, clientX, clientY, context) {
     role: "menu",
     "aria-label": "Track context menu",
   });
+  root.addEventListener("pointerdown", (event) => {
+    event.stopPropagation();
+  });
+  root.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  root.addEventListener("contextmenu", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
   const title = el("div", {
     class: "lemouf-song2daw-track-context-menu-title",
     text: compactText(trackName, 30),
@@ -5818,7 +6260,9 @@ function openTrackContextMenu(state, clientX, clientY, context) {
             action,
             trackName,
             trackKind,
-            selectedClipIds,
+            selectedClipIds: selectedClipIds.length
+              ? selectedClipIds
+              : (focusClipId ? [focusClipId] : []),
             focusClipId,
             focusResourceId,
             focusLinkGroupId,
@@ -5893,6 +6337,8 @@ function openTrackContextMenu(state, clientX, clientY, context) {
   root.style.top = `${top}px`;
 
   const onPointerDownCapture = (event) => {
+    const path = typeof event.composedPath === "function" ? event.composedPath() : null;
+    if (Array.isArray(path) && path.includes(root)) return;
     if (root.contains(event.target)) return;
     closeTrackContextMenu(state);
   };
@@ -5963,6 +6409,7 @@ export function clearSong2DawTimeline(body) {
   state.clipEditSession = null;
   state.cutPreview = null;
   state.joinPreview = null;
+  state.boxSelection = null;
   if (state.selectedClipKeys instanceof Set) state.selectedClipKeys.clear();
   if (state.previewClipEdits) state.previewClipEdits.clear();
   if (state.clipThumbCache && state.ownsClipThumbCache) state.clipThumbCache.clear();
@@ -6028,6 +6475,7 @@ export function renderSong2DawTimeline({
   onDropResource,
   onClipEdit,
   onClipCut,
+  onClipTrim,
   onClipJoin,
   onTrackContextAction,
   onUndo,
@@ -6047,9 +6495,15 @@ export function renderSong2DawTimeline({
 
   const playPauseBtn = el("button", { class: "lemouf-loop-btn icon", type: "button" });
   const stopBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+  const undoBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+  const redoBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+  const clearStudioBtn = el("button", { class: "lemouf-loop-btn debug icon", type: "button" });
   setButtonIcon(playPauseBtn, { icon: "play", title: "Play" });
   setButtonIcon(stopBtn, { icon: "stop", title: "Stop" });
-  controls.append(playPauseBtn, stopBtn);
+  setButtonIcon(undoBtn, { icon: "undo", title: "Undo (Ctrl+Z)" });
+  setButtonIcon(redoBtn, { icon: "redo", title: "Redo (Ctrl+Y)" });
+  setButtonIcon(clearStudioBtn, { icon: "clear_resources", title: "Clear studio (empty project)" });
+  controls.append(playPauseBtn, stopBtn, undoBtn, redoBtn, clearStudioBtn);
 
   const fitBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
   const snapBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
@@ -6059,7 +6513,9 @@ export function renderSong2DawTimeline({
   sectionVizSelect.append(
     el("option", { value: "bands", text: "Viz: Bands" }),
     el("option", { value: "filled", text: "Viz: Filled" }),
-    el("option", { value: "peaks", text: "Viz: Peaks" })
+    el("option", { value: "peaks", text: "Viz: Peaks" }),
+    el("option", { value: "line", text: "Viz: Line" }),
+    el("option", { value: "dots", text: "Viz: Dots" })
   );
   const jumpBtn = el("button", { class: "lemouf-loop-btn alt", text: "Step", type: "button" });
   jumpBtn.style.display = "none";
@@ -6139,6 +6595,7 @@ export function renderSong2DawTimeline({
     onDropResource,
     onClipEdit,
     onClipCut,
+    onClipTrim,
     onClipJoin,
     onTrackContextAction,
     onUndo,
@@ -6218,6 +6675,7 @@ export function renderSong2DawTimeline({
     dropHint: null,
     previewClipEdits: new Map(),
     clipEditSession: null,
+    boxSelection: null,
     joinPreview: null,
     clipThumbCache: externalClipThumbCache instanceof Map ? externalClipThumbCache : new Map(),
     ownsClipThumbCache: !(externalClipThumbCache instanceof Map),
@@ -6498,7 +6956,7 @@ export function renderSong2DawTimeline({
         ? "trim_end"
         : ((hitType === "clip_window" || hitType === "clip_window_rail") ? "slip" : "move"));
     const trackKind = String(hit?.track_kind || "").toLowerCase();
-    if (trackKind !== "video" && trackKind !== "image") return false;
+    if (trackKind !== "video" && trackKind !== "image" && trackKind !== "audio") return false;
     if (isTrackLocked(state, trackName)) return false;
     const clipAlreadySelected = isClipSelectedInSet(state, trackName, clipId);
     if (mode === "move" && !clipAlreadySelected) clearClipSelectionSet(state);
@@ -6554,6 +7012,9 @@ export function renderSong2DawTimeline({
       liveStartSec: start,
       liveEndSec: end,
       liveTrackName: trackName,
+      liveInsertMode: false,
+      liveInsertIndex: null,
+      liveInsertTrackName: "",
       liveStartOffsetSec: Math.max(0, Number(hit?.start_offset_sec || 0)),
       previewTargets: collectLinkedClipTargets(state, {
         clipId,
@@ -6630,6 +7091,9 @@ export function renderSong2DawTimeline({
     let nextStart = session.start;
     let nextEnd = session.end;
     let nextStartOffsetSec = Math.max(0, Number(session.startOffsetSec || 0));
+    session.liveInsertMode = false;
+    session.liveInsertIndex = null;
+    session.liveInsertTrackName = "";
     const sourceDurationSec = Math.max(
       CLIP_EDIT_MIN_DURATION_SEC,
       Number(session.sourceDurationSec || (session.end - session.start) || CLIP_EDIT_MIN_DURATION_SEC)
@@ -6705,8 +7169,36 @@ export function renderSong2DawTimeline({
         nextStart = Math.max(0, session.start + delta);
         nextEnd = Math.max(nextStart + CLIP_EDIT_MIN_DURATION_SEC, session.end + delta);
       } else {
+        let moveInsertMode = false;
+        let moveInsertIndex = null;
         const target = resolveDropTargetFromPoint(state, x, y, session.trackKind);
-        if (target?.trackName) nextTrackName = String(target.trackName || nextTrackName);
+        if (target?.trackName) {
+          nextTrackName = String(target.trackName || nextTrackName);
+          const canonical = canonicalizeTargetTrackForResource(
+            nextTrackName,
+            String(target?.trackKind || ""),
+            session.trackKind
+          );
+          nextTrackName = canonical.trackName || nextTrackName;
+        }
+        const rawInsertTrackName = String(target?.trackName || "").trim();
+        if (Boolean(target?.insertMode) && Number.isFinite(Number(target?.insertIndex))) {
+          moveInsertMode = true;
+          moveInsertIndex = Math.max(0, Math.round(Number(target.insertIndex)));
+        }
+        if (moveInsertMode) {
+          // Insert-mode targets can be dropzones. For live move preview, we need
+          // a concrete future lane name (not the dropzone row), otherwise linked
+          // audio mapping can drift and appear detached during drag.
+          const desiredMoveKind = String(session.trackKind || "").trim().toLowerCase();
+          if (desiredMoveKind === "video" || desiredMoveKind === "image") {
+            const knownSameKindTracks = getTrackNamesByKind(state, desiredMoveKind);
+            const previewInsertTrack = createNextTrackLaneName(desiredMoveKind, knownSameKindTracks);
+            if (previewInsertTrack) {
+              nextTrackName = previewInsertTrack;
+            }
+          }
+        }
         nextStart = snapTimeSec(state, rawStart, {
           trackName: nextTrackName,
           excludeClipId: session.clipId,
@@ -6715,23 +7207,31 @@ export function renderSong2DawTimeline({
         if (isNearTimelineOrigin(state, rawStart, x)) nextStart = 0;
         if (rawStart >= maxStart - boundarySnapSec) nextStart = maxStart;
         nextEnd = nextStart + duration;
-        const laneTrackName = resolveNonOverlappingTrackName(state, {
-          preferredTrackName: nextTrackName,
-          trackKind: session.trackKind,
-          startSec: nextStart,
-          endSec: nextEnd,
-          excludeClipId: session.clipId,
-        });
-        if (laneTrackName && laneTrackName !== nextTrackName) {
-          nextTrackName = laneTrackName;
-          nextStart = snapTimeSec(state, nextStart, {
-            trackName: nextTrackName,
+        if (!moveInsertMode) {
+          const laneTrackName = resolveNonOverlappingTrackName(state, {
+            preferredTrackName: nextTrackName,
+            trackKind: session.trackKind,
+            startSec: nextStart,
+            endSec: nextEnd,
             excludeClipId: session.clipId,
           });
-          nextStart = clamp(nextStart, 0, maxStart);
-          if (isNearTimelineOrigin(state, rawStart, x)) nextStart = 0;
-          if (rawStart >= maxStart - boundarySnapSec) nextStart = maxStart;
-          nextEnd = nextStart + duration;
+          if (laneTrackName && laneTrackName !== nextTrackName) {
+            nextTrackName = laneTrackName;
+            const canonicalLane = canonicalizeTargetTrackForResource(
+              nextTrackName,
+              session.trackKind,
+              session.trackKind
+            );
+            nextTrackName = canonicalLane.trackName || nextTrackName;
+            nextStart = snapTimeSec(state, nextStart, {
+              trackName: nextTrackName,
+              excludeClipId: session.clipId,
+            });
+            nextStart = clamp(nextStart, 0, maxStart);
+            if (isNearTimelineOrigin(state, rawStart, x)) nextStart = 0;
+            if (rawStart >= maxStart - boundarySnapSec) nextStart = maxStart;
+            nextEnd = nextStart + duration;
+          }
         }
         const maxTimelineSec = state.allowDurationExtend ? TIMELINE_EDIT_MAX_DURATION_SEC : state.durationSec;
         const moveBounds = resolveMoveDeltaBoundsForClip(state, {
@@ -6771,6 +7271,9 @@ export function renderSong2DawTimeline({
         if (Math.abs(nextStart) <= CLIP_EDIT_TIME_EPS_SEC) nextStart = 0;
         nextEnd = nextStart + moveDurationSec;
         // Move is a pure translation: never trim duration implicitly.
+        session.liveInsertMode = moveInsertMode;
+        session.liveInsertIndex = moveInsertMode ? moveInsertIndex : null;
+        session.liveInsertTrackName = moveInsertMode ? rawInsertTrackName : "";
       }
     } else if (session.mode === "trim_start") {
       const minStartByOffset = Math.max(0, session.start - sessionStartOffsetSec);
@@ -6945,9 +7448,13 @@ export function renderSong2DawTimeline({
             Number(current.sourceDurationSec || member?.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
           ),
         };
-        const accepted = typeof state.onClipEdit === "function"
-          ? Boolean(state.onClipEdit(payload))
+        const editResult = typeof state.onClipEdit === "function"
+          ? state.onClipEdit(payload)
           : false;
+        const resolvedEdit = resolveClipEditResult(editResult);
+        const accepted = resolvedEdit.accepted;
+        const committedTrackName = String(resolvedEdit.trackName || payload.trackName || "").trim() || payload.trackName;
+        payload.trackName = committedTrackName;
         clearPreviewClipEditsForSession(state, {
           ...session,
           clipId: memberClipId,
@@ -6962,7 +7469,7 @@ export function renderSong2DawTimeline({
             type: "clip",
             clip_id: memberClipId,
             resource_id: memberResourceId,
-            track_name: String(payload.trackName || memberTrackName),
+            track_name: committedTrackName,
             t0_sec: Math.max(0, Number(payload.timeSec || 0)),
             t1_sec: Math.max(
               Math.max(0, Number(payload.timeSec || 0)) + CLIP_EDIT_MIN_DURATION_SEC,
@@ -7019,49 +7526,125 @@ export function renderSong2DawTimeline({
       ),
       origin_step_index: Number(state.selection?.origin_step_index || 2),
     };
-    let accepted = false;
-    if (typeof state.onClipEdit === "function") {
-      accepted = Boolean(
-        state.onClipEdit({
-          clipId: session.clipId,
-          resourceId: session.resourceId,
-          linkGroupId: String(session.linkGroupId || ""),
-          trackKind: session.trackKind,
-          trackName: finalTrackName,
-          timeSec: finalStartSec,
-          durationSec: finalDurationSec,
-          startOffsetSec: finalStartOffsetSec,
-          mode: session.mode,
-          sourceDurationSec: Math.max(
-            CLIP_EDIT_MIN_DURATION_SEC,
-            Number(current.sourceDurationSec || session.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
-          ),
-        })
-      );
-    }
+    const clipEditPayload = {
+      clipId: session.clipId,
+      resourceId: session.resourceId,
+      linkGroupId: String(session.linkGroupId || ""),
+      trackKind: session.trackKind,
+      trackName: finalTrackName,
+      timeSec: finalStartSec,
+      durationSec: finalDurationSec,
+      startOffsetSec: finalStartOffsetSec,
+      mode: session.mode,
+      insertMode: Boolean(session.liveInsertMode),
+      insertIndex: Number.isFinite(Number(session.liveInsertIndex))
+        ? Math.max(0, Math.round(Number(session.liveInsertIndex)))
+        : undefined,
+      sourceDurationSec: Math.max(
+        CLIP_EDIT_MIN_DURATION_SEC,
+        Number(current.sourceDurationSec || session.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
+      ),
+    };
+    const clipEditResult = typeof state.onClipEdit === "function"
+      ? state.onClipEdit(clipEditPayload)
+      : false;
+    const resolvedClipEdit = resolveClipEditResult(clipEditResult);
+    const accepted = resolvedClipEdit.accepted;
+    const committedTrackName = String(resolvedClipEdit.trackName || finalTrackName || "").trim() || finalTrackName;
     clearPreviewClipEditsForSession(state, session);
     if (accepted) {
       applyCommittedClipEditToLocalStudio(state, {
-        clipId: session.clipId,
-        resourceId: session.resourceId,
-        linkGroupId: String(session.linkGroupId || ""),
-        trackKind: session.trackKind,
-        trackName: finalTrackName,
-        timeSec: finalStartSec,
-        durationSec: finalDurationSec,
-        startOffsetSec: finalStartOffsetSec,
-        mode: session.mode,
-        sourceDurationSec: Math.max(
-          CLIP_EDIT_MIN_DURATION_SEC,
-          Number(current.sourceDurationSec || session.sourceDurationSec || CLIP_EDIT_MIN_DURATION_SEC)
-        ),
+        ...clipEditPayload,
+        trackName: committedTrackName,
       });
+      state.selection = {
+        ...(state.selection && typeof state.selection === "object" ? state.selection : {}),
+        type: "clip",
+        clip_id: session.clipId,
+        resource_id: session.resourceId,
+        track_name: committedTrackName,
+        t0_sec: finalStartSec,
+        t1_sec: Math.max(finalStartSec + CLIP_EDIT_MIN_DURATION_SEC, finalStartSec + finalDurationSec),
+      };
       draw(state);
       renderOverview(state);
     } else {
       draw(state);
       renderOverview(state);
     }
+    return true;
+  };
+
+  const beginBoxSelection = (event, x, y, { additive = false } = {}) => {
+    state.boxSelection = {
+      pointerId: event.pointerId,
+      x0: Number(x),
+      y0: Number(y),
+      x1: Number(x),
+      y1: Number(y),
+      additive: Boolean(additive),
+    };
+    state.pendingTrackPointer = null;
+    try {
+      canvas.setPointerCapture?.(event.pointerId);
+    } catch {}
+    canvas.style.cursor = "crosshair";
+    draw(state);
+  };
+
+  const updateBoxSelection = (event) => {
+    if (!state.boxSelection) return false;
+    const box = state.boxSelection;
+    if (box.pointerId != null && event.pointerId !== box.pointerId) return false;
+    const rect = canvas.getBoundingClientRect();
+    box.x1 = clamp(event.clientX - rect.left, 0, canvas.clientWidth);
+    box.y1 = clamp(event.clientY - rect.top, 0, canvas.clientHeight);
+    draw(state);
+    return true;
+  };
+
+  const finalizeBoxSelection = (event, cancelled = false) => {
+    if (!state.boxSelection) return false;
+    const box = state.boxSelection;
+    if (box.pointerId != null && event.pointerId !== box.pointerId) return false;
+    const normalized = normalizeSelectionRect(box);
+    state.boxSelection = null;
+    canvas.style.cursor = "";
+    try {
+      canvas.releasePointerCapture?.(event.pointerId);
+    } catch {}
+    if (!cancelled && normalized) {
+      const hitClips = Array.isArray(state.hitRegions)
+        ? state.hitRegions.filter((region) => String(region?.payload?.type || "") === "clip")
+        : [];
+      const selectedKeys = new Set();
+      for (const region of hitClips) {
+        const regionRect = normalizeSelectionRect(region);
+        if (!regionRect || !isRectContained(normalized, regionRect)) continue;
+        const key = String(region?.payload?.clip_selection_key || "").trim();
+        if (!key) continue;
+        selectedKeys.add(key);
+      }
+      if (!(state.selectedClipKeys instanceof Set)) state.selectedClipKeys = new Set();
+      if (!box.additive) state.selectedClipKeys.clear();
+      for (const key of selectedKeys) state.selectedClipKeys.add(key);
+      if (selectedKeys.size > 0) {
+        const firstRegion = hitClips.find((region) => {
+          const key = String(region?.payload?.clip_selection_key || "").trim();
+          return key && selectedKeys.has(key);
+        });
+        if (firstRegion?.payload) {
+          state.selection = {
+            ...(firstRegion.payload || {}),
+            type: "clip",
+          };
+        }
+      } else if (!box.additive) {
+        state.selection = null;
+      }
+    }
+    draw(state);
+    renderOverview(state);
     return true;
   };
 
@@ -7165,10 +7748,12 @@ export function renderSong2DawTimeline({
       };
       const onTimeUpdate = () => {
         if (!state.isPlaying) return;
+        if (getPlaybackClockAudio(state) !== state.audio) return;
         state.playheadSec = clamp(Number(state.audio?.currentTime || 0), 0, state.durationSec);
         draw(state);
       };
       const onEnded = () => {
+        if (getPlaybackClockAudio(state) !== state.audio) return;
         stopPlayback(state, true);
       };
       const onError = () => {
@@ -7202,23 +7787,6 @@ export function renderSong2DawTimeline({
     state.dropHint = null;
     if (drawAfter) draw(state);
   };
-  const setDropHint = (text, x, y) => {
-    const next = {
-      text: String(text || "").trim(),
-      x: Number(x || LEFT_GUTTER),
-      y: Number(y || RULER_HEIGHT),
-    };
-    if (
-      state.dropHint &&
-      state.dropHint.text === next.text &&
-      Math.abs(Number(state.dropHint.x || 0) - next.x) < 1 &&
-      Math.abs(Number(state.dropHint.y || 0) - next.y) < 1
-    ) {
-      return;
-    }
-    state.dropHint = next;
-    draw(state);
-  };
 
   const resolveAdjustedDropTarget = (target, payload, { allowCreateLane = false, pointerCanvasX = null } = {}) => {
     if (!target || !payload) return null;
@@ -7230,6 +7798,12 @@ export function renderSong2DawTimeline({
       Math.max(0.25, Number(state.dropTarget?.durationSec || 1))
     );
     let trackName = String(target.trackName || "").trim();
+    let targetTrackKind = String(target.trackKind || resourceKind || "").toLowerCase();
+    {
+      const canonical = canonicalizeTargetTrackForResource(trackName, targetTrackKind, resourceKind);
+      trackName = canonical.trackName || trackName;
+      targetTrackKind = canonical.trackKind || targetTrackKind;
+    }
     let timeSec = Math.max(0, Number(target.timeSec || 0));
     if (resourceKind === "video" || resourceKind === "image") {
       trackName = resolveNonOverlappingTrackName(state, {
@@ -7253,7 +7827,7 @@ export function renderSong2DawTimeline({
     return {
       ...target,
       trackName,
-      trackKind: String(target.trackKind || resourceKind || "").toLowerCase(),
+      trackKind: targetTrackKind,
       timeSec,
       durationSec,
       resourceId,
@@ -7277,11 +7851,7 @@ export function renderSong2DawTimeline({
     const target = resolveDropTargetFromPoint(state, x, y, payload.resourceKind);
     if (!target) {
       clearDropTarget();
-      if (state.dropTargetMode === "strict") {
-        setDropHint("drop on compatible track", x, y);
-      } else {
-        clearDropHint();
-      }
+      clearDropHint(false);
       return;
     }
     clearDropHint(false);
@@ -7291,11 +7861,7 @@ export function renderSong2DawTimeline({
     });
     if (!nextTarget) {
       clearDropTarget();
-      if (state.dropTargetMode === "strict") {
-        setDropHint("drop on compatible track", x, y);
-      } else {
-        clearDropHint();
-      }
+      clearDropHint(false);
       return;
     }
     if (!sameDropTarget(state.dropTarget, nextTarget)) {
@@ -7341,11 +7907,7 @@ export function renderSong2DawTimeline({
     const target = directTarget || fallbackTarget;
     if (!target) {
       clearDropTarget();
-      if (state.dropTargetMode === "strict") {
-        setDropHint("drop on compatible track", x, y);
-      } else {
-        clearDropHint();
-      }
+      clearDropHint(false);
       return;
     }
     event.preventDefault();
@@ -7365,6 +7927,9 @@ export function renderSong2DawTimeline({
         trackName: finalTarget.trackName,
         trackKind: finalTarget.trackKind,
         timeSec: finalTarget.timeSec,
+        insertMode: Boolean(finalTarget.insertMode),
+        insertIndex: Number(finalTarget.insertIndex),
+        rowIndex: Number(finalTarget.rowIndex),
       });
     const accepted = Boolean(acceptedResult);
     if (accepted) {
@@ -7395,10 +7960,9 @@ export function renderSong2DawTimeline({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const hit = hitTest(state, x, y);
-    if (!event.ctrlKey || String(hit?.type || "") !== "clip") return;
+    if (!(event.ctrlKey || event.metaKey) || String(hit?.type || "") !== "clip") return;
     const trackKind = String(hit?.track_kind || "").toLowerCase();
-    if (trackKind !== "video" && trackKind !== "image") return;
-    event.preventDefault();
+    if (trackKind !== "video" && trackKind !== "image" && trackKind !== "audio") return;
     if (!toggleClipSelectionFromHit(state, hit)) return;
     state.selection = {
       ...(hit || {}),
@@ -7420,7 +7984,6 @@ export function renderSong2DawTimeline({
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const hit = hitTest(state, x, y);
-    if (event.ctrlKey && String(hit?.type || "") === "clip") return;
     const trackContext = resolveTrackContextFromPoint(state, x, y, hit);
     if (!trackContext) return;
     event.preventDefault();
@@ -7451,6 +8014,17 @@ export function renderSong2DawTimeline({
       return;
     }
     const hit = hitTest(state, x, y);
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && hit?.type === "clip") {
+      if (toggleClipSelectionFromHit(state, hit)) {
+        state.selection = {
+          ...(hit || {}),
+          type: "clip",
+        };
+        draw(state);
+        renderOverview(state);
+      }
+      return;
+    }
     if (
       event.ctrlKey &&
       hit?.type === "clip_join" &&
@@ -7482,21 +8056,28 @@ export function renderSong2DawTimeline({
     if (
       event.altKey &&
       hit?.type === "clip" &&
-      String(hit?.track_kind || "").toLowerCase() === "video" &&
-      typeof state.onClipCut === "function"
+      isCuttableTrackKind(hit?.track_kind) &&
+      (typeof state.onClipCut === "function" || typeof state.onClipTrim === "function")
     ) {
       if (isTrackLocked(state, String(hit?.track_name || "").trim())) return;
       const cutTimeSec = resolveCutTimeSecForHit(state, hit, x);
       if (cutTimeSec != null) {
-        const accepted = Boolean(
-          state.onClipCut({
-            clipId: String(hit?.clip_id || "").trim(),
-            resourceId: String(hit?.resource_id || "").trim(),
-            trackName: String(hit?.track_name || "").trim(),
-            trackKind: String(hit?.track_kind || "").trim().toLowerCase(),
-            cutTimeSec,
-          })
-        );
+        const payload = {
+          clipId: String(hit?.clip_id || "").trim(),
+          resourceId: String(hit?.resource_id || "").trim(),
+          trackName: String(hit?.track_name || "").trim(),
+          trackKind: String(hit?.track_kind || "").trim().toLowerCase(),
+          cutTimeSec,
+        };
+        const trimRequested = Boolean(event.ctrlKey);
+        const keepSide = resolveTrimKeepSideForHit(hit, cutTimeSec);
+        const accepted = trimRequested
+          ? Boolean(
+              typeof state.onClipTrim === "function"
+                ? state.onClipTrim({ ...payload, keepSide })
+                : state.onClipCut?.(payload)
+            )
+          : Boolean(state.onClipCut?.(payload));
         state.cutPreview = null;
         draw(state);
         if (accepted) renderOverview(state);
@@ -7512,6 +8093,10 @@ export function renderSong2DawTimeline({
     ) {
       if (beginClipEdit(event, hit, x)) return;
       handleHit(hit);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && x >= LEFT_GUTTER && y >= trackAreaTop && !hit) {
+      beginBoxSelection(event, x, y, { additive: true });
       return;
     }
     if (x >= LEFT_GUTTER && y >= trackAreaTop) {
@@ -7532,6 +8117,7 @@ export function renderSong2DawTimeline({
   canvas.addEventListener("pointermove", (event) => {
     updateMutePaint(event);
     if (state.mutePaintActive) return;
+    if (updateBoxSelection(event)) return;
     if (updateClipEdit(event)) return;
     if (
       state.pendingTrackPointer &&
@@ -7582,11 +8168,14 @@ export function renderSong2DawTimeline({
         canvas.style.cursor = JOIN_CURSOR;
         if (prevJoinKey !== nextJoinKey) draw(state);
       } else if (!hoverTrackLocked && cutModifierDown) {
-        const preview = resolveCutPreview(state, x, y);
+        const previewMode = event.ctrlKey ? "trim" : "cut";
+        const preview = resolveCutPreview(state, x, y, previewMode);
         const prevKey = state.cutPreview
-          ? `${state.cutPreview.clipId}:${Number(state.cutPreview.cutTimeSec || 0).toFixed(4)}`
+          ? `${state.cutPreview.mode || "cut"}:${state.cutPreview.keepSide || "left"}:${state.cutPreview.clipId}:${Number(state.cutPreview.cutTimeSec || 0).toFixed(4)}`
           : "";
-        const nextKey = preview ? `${preview.clipId}:${Number(preview.cutTimeSec || 0).toFixed(4)}` : "";
+        const nextKey = preview
+          ? `${preview.mode || "cut"}:${preview.keepSide || "left"}:${preview.clipId}:${Number(preview.cutTimeSec || 0).toFixed(4)}`
+          : "";
         state.cutPreview = preview;
         if (state.joinPreview) state.joinPreview = null;
         canvas.style.cursor = preview ? SCISSORS_CURSOR : "";
@@ -7617,7 +8206,7 @@ export function renderSong2DawTimeline({
         canvas.style.cursor = "not-allowed";
       } else if (event.ctrlKey && hover?.type === "clip_join" && typeof state.onClipJoin === "function") {
         canvas.style.cursor = JOIN_CURSOR;
-      } else if (event.altKey && hover?.type === "clip" && String(hover?.track_kind || "").toLowerCase() === "video") {
+      } else if (event.altKey && hover?.type === "clip" && isCuttableTrackKind(hover?.track_kind)) {
         canvas.style.cursor = SCISSORS_CURSOR;
       } else if (
         hover?.type === "clip_trim_start" ||
@@ -7641,6 +8230,7 @@ export function renderSong2DawTimeline({
       endMutePaint(event);
       return;
     }
+    if (finalizeBoxSelection(event, false)) return;
     if (finalizeClipEdit(event, false)) return;
     if (
       state.pendingTrackPointer &&
@@ -7667,6 +8257,7 @@ export function renderSong2DawTimeline({
       endMutePaint(event);
       return;
     }
+    if (finalizeBoxSelection(event, true)) return;
     if (finalizeClipEdit(event, true)) return;
     if (state.pendingTrackPointer && state.pendingTrackPointer.pointerId === event.pointerId) {
       state.pendingTrackPointer = null;
@@ -7772,7 +8363,7 @@ export function renderSong2DawTimeline({
     const trackName = String(selection.track_name || "").trim();
     const trackKind = String(selection.track_kind || "").trim().toLowerCase();
     if (isTrackLocked(state, trackName)) return false;
-    if (!resourceId || !trackName || (trackKind !== "video" && trackKind !== "image")) return false;
+    if (!resourceId || !trackName || (trackKind !== "video" && trackKind !== "image" && trackKind !== "audio")) return false;
     const currentStart = Math.max(0, Number(selection.t0_sec || 0));
     const currentEnd = Math.max(currentStart + CLIP_EDIT_MIN_DURATION_SEC, Number(selection.t1_sec || currentStart + CLIP_EDIT_MIN_DURATION_SEC));
     const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, currentEnd - currentStart);
@@ -7813,31 +8404,33 @@ export function renderSong2DawTimeline({
       t0_sec: nextStart,
       t1_sec: nextEnd,
     };
-    const accepted = typeof state.onClipEdit === "function"
-      ? Boolean(
-          state.onClipEdit({
-            clipId: String(selection.clip_id || ""),
-            resourceId,
-            linkGroupId: String(selection.link_group_id || ""),
-            trackKind,
-            trackName: nextTrackName,
-            timeSec: nextStart,
-            durationSec: duration,
-            mode: "move",
-          })
-        )
+    const nudgePayload = {
+      clipId: String(selection.clip_id || ""),
+      resourceId,
+      linkGroupId: String(selection.link_group_id || ""),
+      trackKind,
+      trackName: nextTrackName,
+      timeSec: nextStart,
+      durationSec: duration,
+      mode: "move",
+    };
+    const editResult = typeof state.onClipEdit === "function"
+      ? state.onClipEdit(nudgePayload)
       : false;
+    const resolvedEdit = resolveClipEditResult(editResult);
+    const accepted = resolvedEdit.accepted;
+    const committedTrackName = String(resolvedEdit.trackName || nextTrackName || "").trim() || nextTrackName;
     if (accepted) {
       applyCommittedClipEditToLocalStudio(state, {
-        clipId: String(selection.clip_id || ""),
-        resourceId,
-        linkGroupId: String(selection.link_group_id || ""),
-        trackKind,
-        trackName: nextTrackName,
-        timeSec: nextStart,
-        durationSec: duration,
-        mode: "move",
+        ...nudgePayload,
+        trackName: committedTrackName,
       });
+      state.selection = {
+        ...selection,
+        track_name: committedTrackName,
+        t0_sec: nextStart,
+        t1_sec: nextEnd,
+      };
       draw(state);
       renderOverview(state);
     } else {
@@ -7848,6 +8441,39 @@ export function renderSong2DawTimeline({
   };
   playPauseBtn.addEventListener("click", () => togglePlayPause());
   stopBtn.addEventListener("click", () => stopPlayback(state, true));
+  undoBtn.disabled = typeof state.onUndo !== "function";
+  redoBtn.disabled = typeof state.onRedo !== "function";
+  clearStudioBtn.disabled = typeof state.onTrackContextAction !== "function";
+  undoBtn.addEventListener("click", () => {
+    if (typeof state.onUndo !== "function") return;
+    const accepted = Boolean(state.onUndo());
+    if (accepted) renderOverview(state);
+  });
+  redoBtn.addEventListener("click", () => {
+    if (typeof state.onRedo !== "function") return;
+    const accepted = Boolean(state.onRedo());
+    if (accepted) renderOverview(state);
+  });
+  clearStudioBtn.addEventListener("click", () => {
+    if (typeof state.onTrackContextAction !== "function") return;
+    const accepted = Boolean(
+      state.onTrackContextAction({
+        action: "clear_composition",
+        trackName: "",
+        trackKind: "",
+        selectedClipIds: [],
+        focusClipId: "",
+        focusResourceId: "",
+        focusLinkGroupId: "",
+        locked: false,
+      })
+    );
+    if (accepted) {
+      clearClipSelectionSet(state);
+      draw(state);
+      renderOverview(state);
+    }
+  });
   fitBtn.addEventListener("click", () => {
     resetTemporalZoom();
     state.scrollY = 0;

@@ -15,6 +15,7 @@ import threading
 import time
 import uuid
 import wave
+from urllib.parse import quote as url_quote
 from array import array
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -27,9 +28,13 @@ if THIS_DIR not in sys.path:
 try:
     from .backend.workflows import catalog as workflow_catalog
     from .backend.workflows import profiles as workflow_profiles
+    from .backend.loop.media_cache import LoopMediaCacheStore
+    from .backend.loop.runtime_state import LoopRuntimeStateStore
 except Exception:  # pragma: no cover - direct import context
     from backend.workflows import catalog as workflow_catalog
     from backend.workflows import profiles as workflow_profiles
+    from backend.loop.media_cache import LoopMediaCacheStore
+    from backend.loop.runtime_state import LoopRuntimeStateStore
 
 def _int_env(name: str, default: int) -> int:
     try:
@@ -45,7 +50,23 @@ def _log(message: str) -> None:
 MAX_LOOPS = _int_env("LEMOUF_MAX_LOOPS", 50)
 MAX_MANIFEST = _int_env("LEMOUF_MAX_MANIFEST", 2000)
 MAX_SONG2DAW_RUNS = _int_env("LEMOUF_MAX_SONG2DAW_RUNS", 100)
+MAX_RUNTIME_STATES = _int_env("LEMOUF_MAX_RUNTIME_STATES", max(10, MAX_LOOPS if MAX_LOOPS > 0 else 100))
+MAX_MEDIA_CACHE_FILES_PER_LOOP = _int_env("LEMOUF_MAX_MEDIA_CACHE_FILES_PER_LOOP", 512)
+MAX_MEDIA_CACHE_FILE_MB = _int_env("LEMOUF_MAX_MEDIA_CACHE_FILE_MB", 512)
+MAX_MEDIA_CACHE_FILE_BYTES = max(1, int(MAX_MEDIA_CACHE_FILE_MB)) * 1024 * 1024
 _MIDI_EXTENSIONS = {".mid", ".midi"}
+
+_LOOP_RUNTIME_STATE_PATH = os.path.join(THIS_DIR, "backend", "loop", "runtime_state.json")
+LOOP_RUNTIME_STATES = LoopRuntimeStateStore(
+    path=_LOOP_RUNTIME_STATE_PATH,
+    max_entries=MAX_RUNTIME_STATES,
+)
+_LOOP_MEDIA_CACHE_DIR = os.path.join(THIS_DIR, "backend", "loop", "media_cache")
+LOOP_MEDIA_CACHE = LoopMediaCacheStore(
+    path=_LOOP_MEDIA_CACHE_DIR,
+    max_files_per_loop=MAX_MEDIA_CACHE_FILES_PER_LOOP,
+    max_file_bytes=MAX_MEDIA_CACHE_FILE_BYTES,
+)
 
 
 try:
@@ -1467,6 +1488,7 @@ def _ensure_routes() -> None:
         s = REGISTRY.get(loop_id)
         if not s:
             return web.json_response({"error": "not_found"}, status=404)
+        runtime_state = LOOP_RUNTIME_STATES.get(loop_id)
         warning = REGISTRY.consume_warning()
         payload = {
             "loop_id": s.loop_id,
@@ -1482,6 +1504,7 @@ def _ensure_routes() -> None:
             "workflow_source": s.workflow_source,
             "manifest": [entry.__dict__ for entry in s.manifest],
             "last_error": s.last_error,
+            "runtime_state": runtime_state,
         }
         if warning:
             payload["warning"] = warning
@@ -1655,7 +1678,110 @@ def _ensure_routes() -> None:
         s = REGISTRY.reset(loop_id, keep_workflow=bool(keep_workflow))
         if not s:
             return web.json_response({"error": "not_found"}, status=404)
+        LOOP_RUNTIME_STATES.clear(str(loop_id))
+        LOOP_MEDIA_CACHE.clear_loop(str(loop_id))
         return web.json_response({"ok": True})
+
+    async def loop_runtime_state_set(request):
+        payload = await request.json()
+        loop_id = str(payload.get("loop_id") or "").strip()
+        if not loop_id:
+            return web.json_response({"error": "missing_loop_id"}, status=400)
+        if payload.get("clear"):
+            LOOP_RUNTIME_STATES.clear(loop_id)
+            return web.json_response({"ok": True, "cleared": True})
+        runtime_state = payload.get("runtime_state")
+        if not isinstance(runtime_state, dict):
+            return web.json_response({"error": "invalid_runtime_state"}, status=400)
+        saved = LOOP_RUNTIME_STATES.set(loop_id, runtime_state)
+        if not saved:
+            return web.json_response({"error": "invalid_runtime_state"}, status=400)
+        return web.json_response({"ok": True})
+
+    async def loop_media_cache_upload(request):
+        if not request.content_type or "multipart/" not in str(request.content_type):
+            return web.json_response({"error": "invalid_content_type"}, status=400)
+        try:
+            reader = await request.multipart()
+        except Exception:
+            return web.json_response({"error": "invalid_multipart"}, status=400)
+        loop_id = ""
+        file_name = ""
+        content_type = ""
+        payload = None
+        while True:
+            part = await reader.next()
+            if part is None:
+                break
+            name = str(getattr(part, "name", "") or "").strip().lower()
+            if name == "loop_id":
+                try:
+                    loop_id = str(await part.text()).strip()
+                except Exception:
+                    loop_id = ""
+                continue
+            if name != "file":
+                try:
+                    await part.release()
+                except Exception:
+                    pass
+                continue
+            file_name = str(getattr(part, "filename", "") or "resource.bin").strip()
+            content_type = str(
+                getattr(part, "content_type", "") or part.headers.get("Content-Type") or ""
+            ).strip()
+            data = bytearray()
+            total = 0
+            while True:
+                chunk = await part.read_chunk()
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > LOOP_MEDIA_CACHE.max_file_bytes:
+                    return web.json_response(
+                        {
+                            "error": "file_too_large",
+                            "max_file_bytes": int(LOOP_MEDIA_CACHE.max_file_bytes),
+                        },
+                        status=413,
+                    )
+                data.extend(chunk)
+            payload = bytes(data)
+        if payload is None:
+            return web.json_response({"error": "missing_file"}, status=400)
+        saved = LOOP_MEDIA_CACHE.store(loop_id=loop_id, filename=file_name, content_type=content_type, data=payload)
+        if not saved:
+            return web.json_response({"error": "cache_store_failed"}, status=400)
+        safe_loop_id = str(saved.get("loop_id") or "default")
+        safe_file_id = str(saved.get("file_id") or "")
+        src = (
+            f"/lemouf/loop/media_cache/{url_quote(safe_loop_id, safe='')}/"
+            f"{url_quote(safe_file_id, safe='')}"
+        )
+        mime = str(saved.get("mime") or "")
+        preview_src = src if mime.lower().startswith("image/") else ""
+        return web.json_response(
+            {
+                "ok": True,
+                "asset": {
+                    "src": src,
+                    "previewSrc": preview_src,
+                    "mime": mime,
+                    "size": int(saved.get("size") or 0),
+                    "filename": str(saved.get("filename") or file_name or "resource.bin"),
+                    "loop_id": safe_loop_id,
+                    "cache_id": safe_file_id,
+                },
+            }
+        )
+
+    async def loop_media_cache_get(request):
+        loop_id = request.match_info.get("loop_id", "")
+        file_id = request.match_info.get("file_id", "")
+        path = LOOP_MEDIA_CACHE.resolve(loop_id=loop_id, file_id=file_id)
+        if not path:
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.FileResponse(path=path)
 
     async def workflows_list(_request):
         folder = _workflows_dir()
@@ -1791,6 +1917,9 @@ def _ensure_routes() -> None:
     add_route("POST", "/lemouf/loop/config", loop_config)
     add_route("POST", "/lemouf/loop/export_approved", loop_export_approved)
     add_route("POST", "/lemouf/loop/reset", loop_reset)
+    add_route("POST", "/lemouf/loop/runtime_state", loop_runtime_state_set)
+    add_route("POST", "/lemouf/loop/media_cache", loop_media_cache_upload)
+    add_route("GET", "/lemouf/loop/media_cache/{loop_id}/{file_id}", loop_media_cache_get)
     add_route("GET", "/lemouf/workflows/list", workflows_list)
     add_route("POST", "/lemouf/workflows/load", workflows_load)
     add_route("GET", "/lemouf/song2daw/runs", song2daw_runs_list)

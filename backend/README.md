@@ -8,7 +8,9 @@ Backend code is feature-scoped, similar to `workflows/`.
   - workflow catalog discovery/loading
   - workflow profile resolution
 - `backend/loop/`
-  - loop orchestration domain (planned extraction target)
+  - loop orchestration domain
+  - local runtime UI persistence (`runtime_state.py`, repo-local JSON store)
+  - local persisted media cache for manual composition resources (`media_cache.py`)
 - `backend/song2daw/`
   - song2daw backend adapters/services (planned extraction target)
 

@@ -10,7 +10,6 @@ export function createHomeScreen() {
     class: "lemouf-loop-status lemouf-workflow-profile-status",
     text: "Workflow profile: generic_loop (auto)",
   });
-  const workflowUseCurrentBtn = el("button", { class: "lemouf-loop-btn alt", text: "Use current WF" });
   const pipelineNav = el("div", { class: "lemouf-loop-block lemouf-home-card lemouf-home-card-compact" });
   const pipelineRefreshBtn = el("button", { class: "lemouf-loop-btn ghost icon", text: "⟳", title: "Refresh list" });
   setButtonIcon(pipelineRefreshBtn, { icon: "refresh", title: "Refresh workflow list" });
@@ -81,12 +80,17 @@ export function createHomeScreen() {
     song2dawStudioTracksBtn,
     song2dawStudioSpectrumBtn,
   ]);
+  const song2dawStudioInlineResizer = el("div", {
+    class: "lemouf-song2daw-studio-inline-resizer",
+    title: "Resize compact studio view",
+  });
   const song2dawStudioBody = el("div", {
     class: "lemouf-song2daw-studio-body",
     text: "Load a run to preview DAW visual data.",
   });
-  const song2dawStudioPanel = el("div", { class: "lemouf-song2daw-step-panel" }, [
+  const song2dawStudioPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-song2daw-studio-panel" }, [
     song2dawStudioTabs,
+    song2dawStudioInlineResizer,
     song2dawStudioBody,
   ]);
   const song2dawDetail = el("pre", { class: "lemouf-loop-payload-pre lemouf-song2daw-detail-pre", text: "" });
@@ -119,7 +123,6 @@ export function createHomeScreen() {
   const pipelineBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-home-card" });
   pipelineBlock.append(
     el("label", { text: "Pipeline workflow" }),
-    workflowUseCurrentBtn,
     pipelineList,
     pipelineSelect,
     workflowDiagnosticsPanel,
@@ -163,7 +166,6 @@ export function createHomeScreen() {
     pipelineRefreshBtn,
     pipelineLoadBtn,
     pipelineRunBtn,
-    workflowUseCurrentBtn,
     cyclesRow,
     cyclesInput,
     validateBtn,
@@ -193,6 +195,7 @@ export function createHomeScreen() {
     song2dawStudioTimelineBtn,
     song2dawStudioTracksBtn,
     song2dawStudioSpectrumBtn,
+    song2dawStudioInlineResizer,
     song2dawStudioBody,
     song2dawDetail,
   };
