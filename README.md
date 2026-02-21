@@ -10,7 +10,8 @@ tools, techniques, and practical building blocks for creators.
 
 ## Status
 
-Current version: `0.3.1`
+Current version: `0.3.2`  
+Working line: `0.3.3-wip`
 
 ## Versioning Workflow
 
@@ -71,6 +72,19 @@ Examples:
 
 - `feat(song2daw): add deterministic ui hydration`
 - `fix(composition): keep linked audio/video trim in sync`
+
+## Precommit Gate
+
+Before each commit, run the quality gate in this order:
+
+1. `python -m pytest -q`
+2. JS syntax checks on touched files (`node --check <file.js>`)
+3. Structure sanity:
+   - workflows stay under `workflows/<feature>/`
+   - examples stay under `examples/<feature>/`
+   - feature code stays under `features/<feature>/`
+
+Release prep (version bump/changelog publish) is performed only on explicit request.
 
 ## Friendly WIP Disclaimer
 

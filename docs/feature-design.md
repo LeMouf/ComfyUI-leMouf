@@ -1,10 +1,120 @@
-# Feature Design: Workflow Loop Orchestrator
+# Feature Design: Workflow Loop Orchestrator + Composition Studio
 
-Version target: `0.3.2`
+Version target: `0.3.3-wip`
 
 ## Goal
 
 Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, expose per-cycle results, and let users approve, reject, or replay each cycle while staying workflow-agnostic.
+
+## Consolidated Program Status (Single Source of Truth)
+
+This document now tracks two synchronized streams:
+
+- **Stream A (stabilization closure)**: baseline robustness pass on loop + composition internals.
+- **Stream B (workspace evolution)**: monitor/workspace/editor UX program for composition tooling.
+
+Current state:
+
+- Stream A: **closed** (phases completed, regression tests green).
+- Stream B: **in progress** (rephased below with execution order).
+
+## Workspace Evolution Program (Aggregated Plan)
+
+Robust 6-phase program (from quick-win UI to full editing workspace):
+
+1. **UI Monitor Cleanup** (quick win, low risk)
+2. **Workspace Canvas Foundation**
+3. **Technical Overlays / Guides**
+4. **Output Format & Export Config Panel**
+5. **Layer Transform Controls** (x/y/scale/rotate)
+6. **Composition Integration & Reliability**
+
+Execution order agreed for implementation:
+
+1. Phase 1
+2. Phase 2 (minimal)
+3. Phase 3
+4. Phase 5 (MVP transforms)
+5. Phase 4
+6. Phase 6
+
+### Phase Tracking
+
+- [~] Phase 1 - UI Monitor Cleanup
+  - done:
+    - monitor action buttons moved to icon-first toolbar primitives
+    - monitor surface uses available block height more consistently
+  - remaining:
+    - finalize 3 explicit action groups (`project`, `preview`, `export`)
+    - complete spacing contract (button gap vs group gap + separators)
+- [~] Phase 2 - Workspace Canvas Foundation
+  - done:
+    - composition monitor/timeline coupling improved (playhead/state sync path)
+  - remaining:
+    - true 2D workspace stage with output frame + pasteboard model
+    - explicit work-area/fill/fit behavior on the stage
+- [ ] Phase 3 - Technical Overlays / Guides
+  - pending:
+    - center cross, thirds, diagonals, safe title/action areas
+    - per-overlay toggles + opacity controls (non-destructive)
+- [ ] Phase 4 - Output Format & Export Config Panel
+  - pending:
+    - resolution presets/custom, fps, duration mode, audio format
+    - export profile placeholders wired to workspace frame
+- [ ] Phase 5 - Layer Transform Controls
+  - pending:
+    - per-clip instance transforms (x/y/scale/rotate/pivot)
+    - gizmo + numeric inputs + persistence per clip instance
+    - base keybind layer (select/move/rotate/scale)
+- [~] Phase 6 - Composition Integration & Reliability
+  - done/partial:
+    - many DnD/move/snap fixes, linked video+audio coupling hardening
+    - scrub source routing and audio-player stabilization improved
+  - remaining:
+    - final reliability closure on cross-track linked moves/dropzones
+    - playback from arbitrary playhead without audio loss
+    - gap rendering consistency in monitor/timeline composition preview
+    - full crash/reload restore parity (layout + resources + studio state)
+
+## Active Bugfix Backlog (Rephased)
+
+Open items grouped to finish Stream B safely:
+
+1. **Linked clip move/drop invariants**
+   - no split behavior between video/audio members during move preview and drop
+   - dropzones must create correct lane type regardless of top/bottom insertion
+2. **Playback/scrub reliability**
+   - stable audio when playback starts from non-zero playhead
+   - no forced jump/reset to `t=0` during timeline click/scrub
+3. **Render consistency**
+   - filmstrip parity between static state and drag state
+   - no placeholder/brown-frame regressions at segment boundaries
+4. **Persistence parity after reload**
+   - restore studio visibility/layout mode and loaded manual resources
+   - restore working composition project state (not only run metadata)
+5. **Editing UX completion**
+   - context menu actions always actionable (no blocked layers)
+   - stable multiselect + marquee + group move feedback
+
+## Precommit Gate (Must Pass Before Commit)
+
+- [ ] **Worktree hygiene**
+  - remove debug/temp artifacts (`.tmp/`, test tmp dirs) from tracked changes
+  - ensure no orphan legacy paths remain after refactors
+- [ ] **Functional validation**
+  - `python -m pytest -q` green
+  - targeted JS syntax checks on touched studio modules
+- [ ] **Docs/version coherence**
+  - align release line across:
+    - `README.md`
+    - `docs/song2daw/*.md` release references
+    - `feature_versions.json`
+    - `CHANGELOG.md` / `FEATURE_CHANGELOG.md`
+  - keep workflow/examples feature-scoped structure rules documented and respected
+- [ ] **Release prep (when requested)**
+  - bump version with project policy (minor/medium/major request flow)
+  - generate/stage feature changelog
+  - commit with Conventional Commit + scope
 
 ## Current MVP (Implemented)
 
@@ -30,6 +140,37 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
   - improved timeline drag/drop visibility with stronger ghost clip rendering.
 - Robustness pass:
   - loop/composition UI state synchronization hardened across workflow switches and reload scenarios.
+
+## Stabilization Closure Pass (Step-by-step)
+
+This pass closes previously opened implementation tracks on the composition studio side.
+
+- [x] Phase 1 - Timeline/placement invariants hardening
+  - deterministic placement normalization on load/render
+  - source-window clamp (`startOffsetSec + durationSec <= sourceDurationSec`)
+  - non-overlap normalization per track lane (left-to-right deterministic ordering)
+- [x] Phase 2 - Multi-source audio per track
+  - audio playback now resolves per active clip event (`assetKey`) on the same audio lane
+  - no longer assumes one static `audioAssetKey` per track
+- [x] Phase 3 - Monitor/scrub stability
+  - scrub source selection prefers active clip-at-playhead audio source before fallback
+  - reduced decode/load overhead for track players (`preload=metadata`)
+- [x] Phase 4 - Clip visual robustness
+  - clip rendering relies on normalized source-window metadata and deterministic bounds
+  - safer clip metadata overlays inside clip-safe drawing area
+- [x] Phase 5 - Composition UX completion (context actions)
+  - track context menu supports:
+    - delete selected clips
+    - duplicate selected clips
+    - duplicate lane
+    - lock/unlock lane
+    - clear composition
+- [x] Phase 6 - Performance/cache tightening
+  - reduced unnecessary heavy media preloads for track audio players
+  - keeps scrub selection deterministic with minimal source switching
+- [x] Phase 7 - QA + docs closure
+  - `python -m pytest -q` green
+  - this design doc updated with closure checklist
 
 ## 0.3.1 Extensions (Implemented)
 
@@ -104,6 +245,10 @@ Provide a workflow orchestrator for ComfyUI that can run a workflow in cycles, e
 - Export approved copies images to output/lemouf/{loop_id}/ with unique names:
   cycle_0000_r00_i00_<timestamp>_<counter>.png
 - Loop Map uses `cycle_source` (optional; default `$payload[cycle_index]`).
+- Manual composition resources are now persisted through a backend media cache:
+  - uploaded files are materialized to repo-local cache paths (stable URL, no `blob:` dependency),
+  - persisted runtime snapshots can restore manual resources after `Ctrl+F5` / crash recovery,
+  - fallback to in-memory blob URL remains available if backend upload fails.
 
 ### Loop Map (expressive)
 
@@ -142,6 +287,8 @@ If no links exist, the panel falls back to node id ordering.
 - POST /lemouf/loop/config
 - POST /lemouf/loop/reset
 - POST /lemouf/loop/export_approved
+- POST /lemouf/loop/media_cache
+- GET /lemouf/loop/media_cache/{loop_id}/{file_id}
 - GET /lemouf/workflows/list
 - POST /lemouf/workflows/load
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased - 0.3.3-wip
+
+- Documentation alignment:
+  - adopt **Precommit Gate** as the canonical event reference for quality checks
+  - synchronize status wording across planning and release docs
+- Composition studio stabilization continues on the 0.3.3 working line.
+
 ## 0.3.1 - 2026-02-16
 
 - Add lightbox cycle jump selector for loop cycle previews.
