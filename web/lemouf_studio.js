@@ -2611,8 +2611,20 @@ app.registerExtension({
       }, RUNTIME_STATE_REMOTE_PERSIST_DEBOUNCE_MS);
     };
 
+    const runtimeSnapshotResources = (payload) => {
+      if (!payload || typeof payload !== "object") return [];
+      const snapshot = payload.compositionStateSnapshot;
+      if (!snapshot || typeof snapshot !== "object") return [];
+      const rows = Array.isArray(snapshot.manualResources)
+        ? snapshot.manualResources
+        : (Array.isArray(snapshot.manual_resources) ? snapshot.manual_resources : []);
+      return normalizeCompositionResourcesList(rows);
+    };
+
     const applyPipelineRuntimePayload = (payload, targetLoopId) => {
-      if (!payload || String(payload.loopId || "") !== targetLoopId) return false;
+      if (!payload || typeof payload !== "object") return false;
+      const payloadLoopId = String(payload.loopId || payload.loop_id || "").trim();
+      if (payloadLoopId && payloadLoopId !== targetLoopId) return false;
       const steps = sanitizePipelineSteps(payload.steps);
       if (!steps.length) return false;
       pipelineState.steps = steps;
@@ -2629,14 +2641,17 @@ app.registerExtension({
       if (payload.compositionStateSnapshot && typeof payload.compositionStateSnapshot === "object") {
         applyCompositionScopeSnapshot(targetLoopId, payload.compositionStateSnapshot, { silent: true });
       }
-      if (Array.isArray(payload.compositionResources)) {
-        const restoredResources = normalizeCompositionResourcesList(payload.compositionResources);
-        if (restoredResources.length) {
-          compositionResourcesByLoop.set(targetLoopId, restoredResources);
-        } else {
-          compositionResourcesByLoop.delete(targetLoopId);
-        }
+      const explicitRuntimeResources = Array.isArray(payload.compositionResources)
+        ? normalizeCompositionResourcesList(payload.compositionResources)
+        : [];
+      const snapshotRuntimeResources = runtimeSnapshotResources(payload);
+      const mergedRuntimeResources = explicitRuntimeResources.length
+        ? explicitRuntimeResources
+        : snapshotRuntimeResources;
+      if (mergedRuntimeResources.length) {
+        compositionResourcesByLoop.set(targetLoopId, mergedRuntimeResources);
       } else {
+        compositionResourcesByLoop.delete(targetLoopId);
         const compositionStep = steps.find(
           (entry) => String(entry?.role || "").toLowerCase() === "composition"
         );
