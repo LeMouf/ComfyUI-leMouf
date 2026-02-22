@@ -150,6 +150,30 @@ const ICON_MAP = {
       ["rect", { x: "9", y: "9", width: "4.8", height: "4.8", rx: "0.9", fill: "none", stroke: "currentColor", "stroke-width": "1.25" }],
     ],
   },
+  monitor_center: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["circle", { cx: "8", cy: "8", r: "1.4", fill: "currentColor" }],
+      ["path", { d: "M8 2.2v3M8 10.8v3M2.2 8h3M10.8 8h3", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round" }],
+      ["circle", { cx: "8", cy: "8", r: "5.4", fill: "none", stroke: "currentColor", "stroke-width": "1.15", opacity: "0.62" }],
+    ],
+  },
+  monitor_diagonal: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "2.2", y: "2.2", width: "11.6", height: "11.6", rx: "1.3", fill: "none", stroke: "currentColor", "stroke-width": "1.2", opacity: "0.72" }],
+      ["path", { d: "M3.2 12.8 12.8 3.2", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round" }],
+      ["path", { d: "M3.2 3.2 12.8 12.8", fill: "none", stroke: "currentColor", "stroke-width": "1.35", "stroke-linecap": "round" }],
+    ],
+  },
+  monitor_workarea: {
+    viewBox: "0 0 16 16",
+    shapes: [
+      ["rect", { x: "1.8", y: "2.2", width: "12.4", height: "11.6", rx: "1.8", fill: "none", stroke: "currentColor", "stroke-width": "1.2", opacity: "0.7" }],
+      ["rect", { x: "4", y: "4.2", width: "8", height: "7.6", rx: "1.1", fill: "none", stroke: "currentColor", "stroke-width": "1.35" }],
+      ["path", { d: "M8 2.2v1.6M8 12.2v1.6M1.8 8h1.6M12.6 8h1.6", fill: "none", stroke: "currentColor", "stroke-width": "1.2", "stroke-linecap": "round" }],
+    ],
+  },
   view_list: {
     viewBox: "0 0 16 16",
     shapes: [

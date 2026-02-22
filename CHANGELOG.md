@@ -2,10 +2,26 @@
 
 ## Unreleased - 0.3.3-wip
 
-- Documentation alignment:
-  - adopt **Precommit Gate** as the canonical event reference for quality checks
-  - synchronize status wording across planning and release docs
-- Composition studio stabilization continues on the 0.3.3 working line.
+- Release line:
+  - `0.3.3-wip`
+- Program status:
+  - Stream A `closed`
+  - Stream B `in progress`
+- Quality gate status:
+  - **Precommit Gate open**
+- Delivered in current iteration:
+  - unified insert/drop lane resolution between resource drop and clip move paths
+  - hardened audio event-edge picking during heavy seek/scrub
+  - backend composition manifest persistence route wired (`POST /lemouf/composition/export_manifest`)
+  - backend export profile catalog wired (`backend/composition/export_profiles.py` + `GET /lemouf/composition/export_profiles`)
+  - composition monitor codec selector now hydrates from backend profiles with local fallback
+  - backend execution endpoint wired (`POST /lemouf/composition/export_execute`) with ffmpeg command planning + optional run mode
+  - export duration mode now resolves timeline length from actual placement span
+  - synchronized status wording/template across planning and changelog docs
+- Remaining priorities:
+  - output/export compositor-level execution integration (timeline/layer source render path)
+  - transform ergonomics/keybind polish (`V/R/S`)
+  - phase-6 final closure (gap rendering consistency + crash/reload parity)
 
 ## 0.3.1 - 2026-02-16
 

@@ -1,6 +1,7 @@
 # Feature Design: Workflow Loop Orchestrator + Composition Studio
 
 Version target: `0.3.3-wip`
+Last update: `2026-02-22`
 
 ## Goal
 
@@ -17,6 +18,34 @@ Current state:
 
 - Stream A: **closed** (phases completed, regression tests green).
 - Stream B: **in progress** (rephased below with execution order).
+
+## Cross-doc Status Template
+
+To keep `docs/feature-design.md`, `CHANGELOG.md`, and `FEATURE_CHANGELOG.md`
+strictly aligned, status summaries must follow this canonical order:
+
+1. **Release line**
+2. **Program status**
+3. **Quality gate status**
+4. **Delivered in current iteration**
+5. **Remaining priorities**
+
+Current canonical snapshot:
+
+- Release line: `0.3.3-wip`
+- Program status: Stream A `closed`, Stream B `in progress`
+- Quality gate status: **Precommit Gate open**
+- Delivered in current iteration:
+  - unified insert/drop lane resolution for composition top/bottom dropzones
+  - hardened audio event-edge picking for seek/scrub reliability
+  - backend export profiles catalog wired (`backend/composition/export_profiles.py` + `GET /lemouf/composition/export_profiles`)
+  - backend codec/container execution path wired (`backend/composition/render_execute.py` + `POST /lemouf/composition/export_execute`)
+  - composition monitor codec config now hydrates from backend profiles with resilient local fallback
+  - documentation/status synchronization pass across planning + changelog docs
+- Remaining priorities:
+  - full compositor execution integration (timeline/layer source mixing path)
+  - render consistency closure (filmstrip edge placeholders + static/drag parity)
+  - persistence parity after reload (full composition state recovery)
 
 ## Workspace Evolution Program (Aggregated Plan)
 
@@ -40,39 +69,50 @@ Execution order agreed for implementation:
 
 ### Phase Tracking
 
-- [~] Phase 1 - UI Monitor Cleanup
+- [x] Phase 1 - UI Monitor Cleanup
   - done:
     - monitor action buttons moved to icon-first toolbar primitives
+    - monitor action groups finalized (`project`, `preview`, `export`) with separators
     - monitor surface uses available block height more consistently
-  - remaining:
-    - finalize 3 explicit action groups (`project`, `preview`, `export`)
-    - complete spacing contract (button gap vs group gap + separators)
-- [~] Phase 2 - Workspace Canvas Foundation
+- [x] Phase 2 - Workspace Canvas Foundation
   - done:
     - composition monitor/timeline coupling improved (playhead/state sync path)
+    - monitor frame foundation introduced (output ratio-aware frame host)
+    - stronger insert/drop lane resolution between top/bottom dropzones and move paths
+    - workspace stage now includes explicit output frame + pasteboard model
+    - explicit work-area toggle and stage background modes (neutral/dark/checker)
+- [x] Phase 3 - Technical Overlays / Guides
+  - done:
+    - grid and safe-area overlays wired with monitor toggles
+    - center cross and diagonal overlays added
+    - per-overlay opacity controls persisted in layout state
+- [~] Phase 4 - Output Format & Export Config Panel
+  - done/partial:
+    - output preset/custom dimensions + fps/audio fields routed in monitor config
+    - render manifest export scaffold available
+    - backend manifest persistence endpoint wired (`POST /lemouf/composition/export_manifest`)
+    - backend export profile catalog wired (`GET /lemouf/composition/export_profiles`)
+    - monitor codec selector now hydrates from backend profiles with fallback cache
+    - backend execution endpoint wired (`POST /lemouf/composition/export_execute`) with deterministic ffmpeg plan + optional run
+    - timeline/custom duration export resolution hardened against stale duration hints
   - remaining:
-    - true 2D workspace stage with output frame + pasteboard model
-    - explicit work-area/fill/fit behavior on the stage
-- [ ] Phase 3 - Technical Overlays / Guides
-  - pending:
-    - center cross, thirds, diagonals, safe title/action areas
-    - per-overlay toggles + opacity controls (non-destructive)
-- [ ] Phase 4 - Output Format & Export Config Panel
-  - pending:
-    - resolution presets/custom, fps, duration mode, audio format
-    - export profile placeholders wired to workspace frame
-- [ ] Phase 5 - Layer Transform Controls
-  - pending:
-    - per-clip instance transforms (x/y/scale/rotate/pivot)
-    - gizmo + numeric inputs + persistence per clip instance
-    - base keybind layer (select/move/rotate/scale)
+    - final compositor-level timeline/layer render integration (beyond black-frame execution path)
+- [~] Phase 5 - Layer Transform Controls
+  - done/partial:
+    - per-clip transform fields persisted (`x/y/scale/rotate`)
+    - pointer/wheel interactions on monitor frame wired
+    - transform modes wired (`move/scale/rotate`) with keyboard shortcuts (`V/S/R`)
+  - remaining:
+    - visual gizmo ergonomics pass
+    - keybind conflict handling/polish
 - [~] Phase 6 - Composition Integration & Reliability
   - done/partial:
     - many DnD/move/snap fixes, linked video+audio coupling hardening
     - scrub source routing and audio-player stabilization improved
+    - insert-mode move now reuses timeline-resolved lane when valid (prevents top/bottom dropzone drift)
+    - playback clamp now uses max(duration hint, computed timeline content) in seek/sync/tick
+    - active audio-event edge pick hardened for heavy seek/scrub scenarios
   - remaining:
-    - final reliability closure on cross-track linked moves/dropzones
-    - playback from arbitrary playhead without audio loss
     - gap rendering consistency in monitor/timeline composition preview
     - full crash/reload restore parity (layout + resources + studio state)
 
@@ -81,20 +121,52 @@ Execution order agreed for implementation:
 Open items grouped to finish Stream B safely:
 
 1. **Linked clip move/drop invariants**
-   - no split behavior between video/audio members during move preview and drop
-   - dropzones must create correct lane type regardless of top/bottom insertion
+   - [x] no split behavior between video/audio members during move preview and drop
+   - [x] dropzones must create correct lane type regardless of top/bottom insertion
 2. **Playback/scrub reliability**
-   - stable audio when playback starts from non-zero playhead
-   - no forced jump/reset to `t=0` during timeline click/scrub
+   - [x] stable audio when playback starts from non-zero playhead
+   - [x] no forced jump/reset to `t=0` during timeline click/scrub
+   - [x] soak check with mixed lanes (video+audio + audio-only + images) under heavy seek
 3. **Render consistency**
-   - filmstrip parity between static state and drag state
-   - no placeholder/brown-frame regressions at segment boundaries
+   - [~] filmstrip parity between static state and drag state
+   - [ ] no placeholder/brown-frame regressions at segment boundaries
 4. **Persistence parity after reload**
-   - restore studio visibility/layout mode and loaded manual resources
-   - restore working composition project state (not only run metadata)
+   - [~] restore studio visibility/layout mode and loaded manual resources
+   - [ ] restore working composition project state (not only run metadata)
 5. **Editing UX completion**
-   - context menu actions always actionable (no blocked layers)
-   - stable multiselect + marquee + group move feedback
+   - [~] context menu actions always actionable (no blocked layers)
+   - [~] stable multiselect + marquee + group move feedback
+
+### First-4 Execution Pass (one-pass batch)
+
+Completed in one pass:
+
+1. **Drop final top/bottom + cleanup lane**
+   - unified insert-index resolution for resource drop and clip move paths
+   - deterministic lane creation when dropping on top/bottom dropzones
+   - non-drop lane cleanup path kept deterministic after commit
+2. **Soak test mix lanes**
+   - mixed-lane seek/play stress pass executed (`video+audio`, `audio-only`, `image`)
+   - playback clamp remains based on `max(duration hint, computed content span)`
+3. **Audio timeline edge-case polish**
+   - active audio-event pick tolerance hardened at clip edges
+   - start/end edge handling now resists floating-point drift during heavy seek
+4. **Doc coherence cleanup**
+   - backlog checkbox state aligned with this batch pass
+   - execution notes consolidated under this section
+
+## Next Sprint (Prioritized)
+
+1. [x] **Render consistency closure**
+   - filmstrip draw path now uses per-tile fallback to frame 0 and only reports success when at least one frame is actually drawn
+   - drag/static preview parity aligned (no dragged-clip-only preview mode branch)
+2. [x] **Persistence parity closure**
+   - composition state-change runtime persistence now accepts active composition scope aliases (loop id + workflow alias + explicit alias list)
+3. [x] **Editing UX closure**
+   - track-context selected clip collection now includes primary clip fallback
+   - clip selection-set remap added on track change commit (single + group move)
+4. [ ] **Workspace evolution continuation**
+   - complete Phase 4/5 remaining points before Phase 6 full closure
 
 ## Precommit Gate (Must Pass Before Commit)
 
@@ -102,8 +174,8 @@ Open items grouped to finish Stream B safely:
   - remove debug/temp artifacts (`.tmp/`, test tmp dirs) from tracked changes
   - ensure no orphan legacy paths remain after refactors
 - [ ] **Functional validation**
-  - `python -m pytest -q` green
-  - targeted JS syntax checks on touched studio modules
+  - [x] `python -m pytest -q` green
+  - [x] targeted JS syntax checks on touched studio modules
 - [ ] **Docs/version coherence**
   - align release line across:
     - `README.md`

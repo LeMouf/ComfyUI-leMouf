@@ -67,6 +67,10 @@ function sanitizeManualResource(resource) {
 }
 
 function sanitizePlacementRecord(record = {}) {
+  const transformXPct = Math.max(-200, Math.min(200, toFiniteNumber(record.transformXPct, 0)));
+  const transformYPct = Math.max(-200, Math.min(200, toFiniteNumber(record.transformYPct, 0)));
+  const transformScalePct = Math.max(10, Math.min(600, toFiniteNumber(record.transformScalePct, 100)));
+  const transformRotateDeg = Math.max(-180, Math.min(180, toFiniteNumber(record.transformRotateDeg, 0)));
   const out = {
     resourceId: String(record.resourceId || "").trim(),
     trackName: String(record.trackName || "").trim(),
@@ -77,6 +81,10 @@ function sanitizePlacementRecord(record = {}) {
     autoDuration: Boolean(record.autoDuration),
     linkGroupId: String(record.linkGroupId || "").trim(),
     clipId: String(record.clipId || record.placementKey || "").trim(),
+    transformXPct,
+    transformYPct,
+    transformScalePct,
+    transformRotateDeg,
   };
   if (!out.resourceId || !out.clipId) return null;
   return out;
@@ -99,7 +107,77 @@ function sanitizeLayoutState(snapshot = null) {
   const rowSplitPercent = Math.max(24, Math.min(76, toFiniteNumber(snapshot.rowSplitPercent, 50)));
   const sizeMode = String(snapshot.sizeMode || "large").toLowerCase() === "small" ? "small" : "large";
   const viewMode = String(snapshot.viewMode || "thumb").toLowerCase() === "list" ? "list" : "thumb";
-  return { splitPercent, rowSplitPercent, sizeMode, viewMode };
+  const monitorFit = snapshot.monitorFit !== false;
+  const monitorGrid = Boolean(snapshot.monitorGrid);
+  const monitorSafe = Boolean(snapshot.monitorSafe);
+  const monitorWorkArea = snapshot.monitorWorkArea !== false;
+  const monitorBackgroundRaw = String(snapshot.monitorBackground || "neutral").toLowerCase();
+  const monitorBackground = (
+    monitorBackgroundRaw === "neutral" ||
+    monitorBackgroundRaw === "dark" ||
+    monitorBackgroundRaw === "checker"
+  ) ? monitorBackgroundRaw : "neutral";
+  const monitorCenter = Boolean(snapshot.monitorCenter);
+  const monitorDiagonal = Boolean(snapshot.monitorDiagonal);
+  const monitorGridOpacity = Math.max(0.1, Math.min(1, toFiniteNumber(snapshot.monitorGridOpacity, 1)));
+  const monitorSafeOpacity = Math.max(0.1, Math.min(1, toFiniteNumber(snapshot.monitorSafeOpacity, 1)));
+  const monitorCenterOpacity = Math.max(0.1, Math.min(1, toFiniteNumber(snapshot.monitorCenterOpacity, 0.9)));
+  const monitorDiagonalOpacity = Math.max(0.1, Math.min(1, toFiniteNumber(snapshot.monitorDiagonalOpacity, 0.85)));
+  const monitorTransformModeRaw = String(snapshot.monitorTransformMode || "move").toLowerCase();
+  const monitorTransformMode = (
+    monitorTransformModeRaw === "move" ||
+    monitorTransformModeRaw === "scale" ||
+    monitorTransformModeRaw === "rotate"
+  ) ? monitorTransformModeRaw : "move";
+  const outputPresetRaw = String(snapshot.outputPreset || "hd_1080p").toLowerCase();
+  const outputPreset = (
+    outputPresetRaw === "hd_1080p" ||
+    outputPresetRaw === "hd_720p" ||
+    outputPresetRaw === "square_1080" ||
+    outputPresetRaw === "portrait_1080" ||
+    outputPresetRaw === "custom"
+  ) ? outputPresetRaw : "hd_1080p";
+  const outputWidth = Math.max(16, Math.round(toFiniteNumber(snapshot.outputWidth, 1920)));
+  const outputHeight = Math.max(16, Math.round(toFiniteNumber(snapshot.outputHeight, 1080)));
+  const outputFps = Math.max(1, Math.min(240, Math.round(toFiniteNumber(snapshot.outputFps, 30))));
+  const outputDurationMode = String(snapshot.outputDurationMode || "timeline").toLowerCase() === "custom"
+    ? "custom"
+    : "timeline";
+  const outputDurationSec = Math.max(0.1, toFiniteNumber(snapshot.outputDurationSec, 10));
+  const outputAudioRate = Math.max(8000, Math.min(192000, Math.round(toFiniteNumber(snapshot.outputAudioRate, 48000))));
+  const outputAudioChannels = String(snapshot.outputAudioChannels || "stereo").toLowerCase() === "mono"
+    ? "mono"
+    : "stereo";
+  const outputCodec = String(snapshot.outputCodec || "h264_mp4").toLowerCase() === "vp9_webm"
+    ? "vp9_webm"
+    : "h264_mp4";
+  return {
+    splitPercent,
+    rowSplitPercent,
+    sizeMode,
+    viewMode,
+    monitorFit,
+    monitorGrid,
+    monitorSafe,
+    monitorWorkArea,
+    monitorBackground,
+    monitorCenter,
+    monitorDiagonal,
+    monitorGridOpacity,
+    monitorSafeOpacity,
+    monitorCenterOpacity,
+    monitorDiagonalOpacity,
+    monitorTransformMode,
+    outputPreset,
+    outputWidth,
+    outputHeight,
+    outputFps,
+    outputDurationMode,
+    outputDurationSec,
+    outputAudioRate,
+    outputAudioChannels,
+    outputCodec,
+  };
 }
 
 function sanitizeTrackLocks(snapshot = null) {

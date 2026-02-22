@@ -11,6 +11,11 @@ Backend code is feature-scoped, similar to `workflows/`.
   - loop orchestration domain
   - local runtime UI persistence (`runtime_state.py`, repo-local JSON store)
   - local persisted media cache for manual composition resources (`media_cache.py`)
+- `backend/composition/`
+  - composition-specific backend persistence/services
+  - local render manifest store (`export_manifest.py`)
+  - export profile catalog/normalization (`export_profiles.py`)
+  - render execution path and ffmpeg planning/execution (`render_execute.py`)
 - `backend/song2daw/`
   - song2daw backend adapters/services (planned extraction target)
 

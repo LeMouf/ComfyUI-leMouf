@@ -28,11 +28,17 @@ if THIS_DIR not in sys.path:
 try:
     from .backend.workflows import catalog as workflow_catalog
     from .backend.workflows import profiles as workflow_profiles
+    from .backend.composition.export_manifest import CompositionRenderManifestStore
+    from .backend.composition.render_execute import CompositionRenderExecutionService
+    from .backend.composition import export_profiles as composition_export_profiles
     from .backend.loop.media_cache import LoopMediaCacheStore
     from .backend.loop.runtime_state import LoopRuntimeStateStore
 except Exception:  # pragma: no cover - direct import context
     from backend.workflows import catalog as workflow_catalog
     from backend.workflows import profiles as workflow_profiles
+    from backend.composition.export_manifest import CompositionRenderManifestStore
+    from backend.composition.render_execute import CompositionRenderExecutionService
+    from backend.composition import export_profiles as composition_export_profiles
     from backend.loop.media_cache import LoopMediaCacheStore
     from backend.loop.runtime_state import LoopRuntimeStateStore
 
@@ -54,6 +60,8 @@ MAX_RUNTIME_STATES = _int_env("LEMOUF_MAX_RUNTIME_STATES", max(10, MAX_LOOPS if 
 MAX_MEDIA_CACHE_FILES_PER_LOOP = _int_env("LEMOUF_MAX_MEDIA_CACHE_FILES_PER_LOOP", 512)
 MAX_MEDIA_CACHE_FILE_MB = _int_env("LEMOUF_MAX_MEDIA_CACHE_FILE_MB", 512)
 MAX_MEDIA_CACHE_FILE_BYTES = max(1, int(MAX_MEDIA_CACHE_FILE_MB)) * 1024 * 1024
+MAX_COMPOSITION_EXPORTS_PER_SCOPE = _int_env("LEMOUF_MAX_COMPOSITION_EXPORTS_PER_SCOPE", 200)
+MAX_COMPOSITION_RENDERS_PER_SCOPE = _int_env("LEMOUF_MAX_COMPOSITION_RENDERS_PER_SCOPE", 120)
 _MIDI_EXTENSIONS = {".mid", ".midi"}
 
 _LOOP_RUNTIME_STATE_PATH = os.path.join(THIS_DIR, "backend", "loop", "runtime_state.json")
@@ -66,6 +74,16 @@ LOOP_MEDIA_CACHE = LoopMediaCacheStore(
     path=_LOOP_MEDIA_CACHE_DIR,
     max_files_per_loop=MAX_MEDIA_CACHE_FILES_PER_LOOP,
     max_file_bytes=MAX_MEDIA_CACHE_FILE_BYTES,
+)
+_COMPOSITION_EXPORT_DIR = os.path.join(THIS_DIR, "backend", "composition", "render_exports")
+COMPOSITION_EXPORTS = CompositionRenderManifestStore(
+    path=_COMPOSITION_EXPORT_DIR,
+    max_files_per_scope=MAX_COMPOSITION_EXPORTS_PER_SCOPE,
+)
+_COMPOSITION_RENDER_OUTPUT_DIR = os.path.join(THIS_DIR, "backend", "composition", "renders")
+COMPOSITION_RENDER_EXECUTOR = CompositionRenderExecutionService(
+    path=_COMPOSITION_RENDER_OUTPUT_DIR,
+    max_files_per_scope=MAX_COMPOSITION_RENDERS_PER_SCOPE,
 )
 
 
@@ -1783,6 +1801,135 @@ def _ensure_routes() -> None:
             return web.json_response({"error": "not_found"}, status=404)
         return web.FileResponse(path=path)
 
+    async def composition_export_manifest_post(request):
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_payload"}, status=400)
+        if not isinstance(payload, dict):
+            return web.json_response({"error": "invalid_payload"}, status=400)
+        manifest = payload.get("manifest")
+        if not isinstance(manifest, dict):
+            return web.json_response({"error": "missing_manifest"}, status=400)
+        scope_key = str(payload.get("scope_key") or manifest.get("scopeKey") or "default").strip() or "default"
+        output = manifest.get("output") if isinstance(manifest.get("output"), dict) else {}
+        export_plan = composition_export_profiles.build_export_plan(output)
+        manifest = dict(manifest)
+        manifest["output"] = dict(export_plan.get("output") or {})
+        manifest["export_profile"] = dict(export_plan.get("profile") or {})
+        manifest["export_ffmpeg"] = dict(export_plan.get("ffmpeg") or {})
+        saved = COMPOSITION_EXPORTS.save(scope_key=scope_key, manifest=manifest)
+        if not isinstance(saved, dict):
+            return web.json_response({"error": "invalid_manifest"}, status=400)
+        download_url = (
+            f"/lemouf/composition/export_manifest/"
+            f"{url_quote(str(saved.get('scope_key') or ''), safe='')}/"
+            f"{url_quote(str(saved.get('file_name') or ''), safe='')}"
+        )
+        return web.json_response(
+            {
+                "ok": True,
+                "saved": saved,
+                "download_url": download_url,
+                "export_plan": export_plan,
+            }
+        )
+
+    async def composition_export_profiles_get(_request):
+        profiles = composition_export_profiles.list_export_profiles()
+        return web.json_response(
+            {
+                "ok": True,
+                "schema_version": composition_export_profiles.EXPORT_PROFILES_SCHEMA_VERSION,
+                "profiles": profiles,
+            }
+        )
+
+    async def composition_export_manifest_get(request):
+        scope_key = request.match_info.get("scope_key", "")
+        file_name = request.match_info.get("file_name", "")
+        path = COMPOSITION_EXPORTS.resolve(scope_key=scope_key, file_name=file_name)
+        if not path:
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.FileResponse(path=path)
+
+    async def composition_export_execute_post(request):
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "invalid_payload"}, status=400)
+        if not isinstance(payload, dict):
+            return web.json_response({"error": "invalid_payload"}, status=400)
+
+        scope_key = str(payload.get("scope_key") or "default").strip() or "default"
+        manifest = payload.get("manifest")
+        manifest_obj: Optional[Dict[str, Any]] = manifest if isinstance(manifest, dict) else None
+
+        if manifest_obj is None:
+            file_name = str(payload.get("file_name") or "").strip()
+            if not file_name:
+                return web.json_response({"error": "missing_manifest_or_file_name"}, status=400)
+            resolved = COMPOSITION_EXPORTS.resolve(scope_key=scope_key, file_name=file_name)
+            if not resolved:
+                return web.json_response({"error": "manifest_not_found"}, status=404)
+            try:
+                with open(resolved, "r", encoding="utf-8") as fh:
+                    parsed = json.load(fh)
+            except Exception:
+                return web.json_response({"error": "manifest_read_failed"}, status=400)
+            if not isinstance(parsed, dict):
+                return web.json_response({"error": "manifest_invalid"}, status=400)
+            manifest_obj = parsed
+            scope_key = str(manifest_obj.get("scopeKey") or scope_key).strip() or scope_key
+
+        output = manifest_obj.get("output") if isinstance(manifest_obj.get("output"), dict) else {}
+        export_plan = composition_export_profiles.build_export_plan(output)
+        try:
+            timeout_raw = float(payload.get("timeout_sec") or 300.0)
+        except Exception:
+            timeout_raw = 300.0
+        timeout_sec = max(1.0, min(900.0, timeout_raw))
+        execute_now = bool(payload.get("execute"))
+        execution = COMPOSITION_RENDER_EXECUTOR.execute(
+            scope_key=scope_key,
+            manifest=manifest_obj,
+            export_plan=export_plan,
+            execute=execute_now,
+            timeout_sec=timeout_sec,
+        )
+        output_path = str(execution.get("output_path") or "").strip()
+        download_url = ""
+        if output_path:
+            try:
+                safe_scope = url_quote(str(execution.get("scope_key") or scope_key), safe="")
+                safe_name = url_quote(os.path.basename(output_path), safe="")
+                download_url = f"/lemouf/composition/render_file/{safe_scope}/{safe_name}"
+            except Exception:
+                download_url = ""
+        return web.json_response(
+            {
+                "ok": bool(execution.get("status") in {"planned", "ok"}),
+                "execution": execution,
+                "export_plan": export_plan,
+                "download_url": download_url,
+            }
+        )
+
+    async def composition_render_file_get(request):
+        scope_key = request.match_info.get("scope_key", "")
+        file_name = request.match_info.get("file_name", "")
+        safe_scope = re.sub(r"[^a-z0-9_-]+", "_", str(scope_key or "").strip().lower()).strip("_") or "default"
+        safe_name = os.path.basename(str(file_name or "").strip())
+        if not safe_name or safe_name != str(file_name or "").strip():
+            return web.json_response({"error": "invalid_file_name"}, status=400)
+        target_dir = os.path.realpath(os.path.join(COMPOSITION_RENDER_EXECUTOR.path, safe_scope))
+        target = os.path.realpath(os.path.join(target_dir, safe_name))
+        if not target.startswith(target_dir + os.sep):
+            return web.json_response({"error": "invalid_path"}, status=400)
+        if not os.path.isfile(target):
+            return web.json_response({"error": "not_found"}, status=404)
+        return web.FileResponse(path=target)
+
     async def workflows_list(_request):
         folder = _workflows_dir()
         entries = _list_workflow_entries()
@@ -1920,6 +2067,11 @@ def _ensure_routes() -> None:
     add_route("POST", "/lemouf/loop/runtime_state", loop_runtime_state_set)
     add_route("POST", "/lemouf/loop/media_cache", loop_media_cache_upload)
     add_route("GET", "/lemouf/loop/media_cache/{loop_id}/{file_id}", loop_media_cache_get)
+    add_route("GET", "/lemouf/composition/export_profiles", composition_export_profiles_get)
+    add_route("POST", "/lemouf/composition/export_manifest", composition_export_manifest_post)
+    add_route("GET", "/lemouf/composition/export_manifest/{scope_key}/{file_name}", composition_export_manifest_get)
+    add_route("POST", "/lemouf/composition/export_execute", composition_export_execute_post)
+    add_route("GET", "/lemouf/composition/render_file/{scope_key}/{file_name}", composition_render_file_get)
     add_route("GET", "/lemouf/workflows/list", workflows_list)
     add_route("POST", "/lemouf/workflows/load", workflows_load)
     add_route("GET", "/lemouf/song2daw/runs", song2daw_runs_list)

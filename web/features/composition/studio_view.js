@@ -40,6 +40,120 @@ const COMPOSITION_SPLIT_MIN_PERCENT = 28;
 const COMPOSITION_SPLIT_MAX_PERCENT = 72;
 const COMPOSITION_ROW_SPLIT_MIN_PERCENT = 24;
 const COMPOSITION_ROW_SPLIT_MAX_PERCENT = 76;
+const MONITOR_OUTPUT_PRESETS = [
+  { id: "hd_1080p", label: "1080p", width: 1920, height: 1080 },
+  { id: "hd_720p", label: "720p", width: 1280, height: 720 },
+  { id: "square_1080", label: "1:1", width: 1080, height: 1080 },
+  { id: "portrait_1080", label: "9:16", width: 1080, height: 1920 },
+  { id: "custom", label: "Custom", width: 1920, height: 1080 },
+];
+const DEFAULT_MONITOR_CODEC_OPTIONS = Object.freeze([
+  { id: "h264_mp4", label: "H264 MP4" },
+  { id: "vp9_webm", label: "VP9 WebM" },
+]);
+let MONITOR_CODEC_OPTIONS_CACHE = DEFAULT_MONITOR_CODEC_OPTIONS;
+let MONITOR_CODEC_OPTIONS_REQUEST = null;
+const MONITOR_TRANSFORM_XY_LIMIT_PCT = 200;
+const MONITOR_TRANSFORM_SCALE_MIN_PCT = 10;
+const MONITOR_TRANSFORM_SCALE_MAX_PCT = 600;
+const MONITOR_TRANSFORM_ROTATE_MIN_DEG = -180;
+const MONITOR_TRANSFORM_ROTATE_MAX_DEG = 180;
+const MONITOR_WHEEL_COMMIT_DEBOUNCE_MS = 140;
+const MONITOR_WHEEL_SCALE_STEP_PCT = 4;
+const MONITOR_WHEEL_SCALE_FINE_STEP_PCT = 1;
+const MONITOR_WHEEL_ROTATE_STEP_DEG = 2;
+const MONITOR_WHEEL_ROTATE_FINE_STEP_DEG = 0.5;
+const MONITOR_TRANSFORM_MODE_VALUES = ["move", "scale", "rotate"];
+const MONITOR_OVERLAY_OPACITY_MIN = 0.1;
+const MONITOR_OVERLAY_OPACITY_MAX = 1;
+const MONITOR_OVERLAY_OPACITY_STEP = 0.05;
+
+function clampOverlayOpacity(value, fallback = 1) {
+  return clamp(
+    toNumber(value, fallback),
+    MONITOR_OVERLAY_OPACITY_MIN,
+    MONITOR_OVERLAY_OPACITY_MAX
+  );
+}
+
+function normalizeMonitorTransformMode(value, fallback = "move") {
+  const raw = String(value || fallback || "move").trim().toLowerCase();
+  return MONITOR_TRANSFORM_MODE_VALUES.includes(raw) ? raw : "move";
+}
+
+function resolveMonitorOutputSize(layoutState = {}) {
+  const presetId = String(layoutState?.outputPreset || "hd_1080p").trim().toLowerCase();
+  if (presetId === "custom") {
+    return {
+      width: Math.max(16, Math.round(toNumber(layoutState?.outputWidth, 1920))),
+      height: Math.max(16, Math.round(toNumber(layoutState?.outputHeight, 1080))),
+    };
+  }
+  const preset = MONITOR_OUTPUT_PRESETS.find((row) => row.id === presetId) || MONITOR_OUTPUT_PRESETS[0];
+  return {
+    width: Math.max(16, Math.round(toNumber(preset?.width, 1920))),
+    height: Math.max(16, Math.round(toNumber(preset?.height, 1080))),
+  };
+}
+
+function normalizeMonitorCodecOptions(payload) {
+  const rows = Array.isArray(payload) ? payload : [];
+  const out = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const id = String(row.id || "").trim().toLowerCase();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const label = String(row.label || id).trim() || id;
+    out.push({ id, label });
+  }
+  return out.length ? out : DEFAULT_MONITOR_CODEC_OPTIONS.slice();
+}
+
+function getMonitorCodecOptions() {
+  const rows = normalizeMonitorCodecOptions(MONITOR_CODEC_OPTIONS_CACHE);
+  MONITOR_CODEC_OPTIONS_CACHE = rows;
+  return rows;
+}
+
+function normalizeMonitorCodecId(value, options = null) {
+  const rows = normalizeMonitorCodecOptions(options || MONITOR_CODEC_OPTIONS_CACHE);
+  const requested = String(value || "").trim().toLowerCase();
+  if (requested && rows.some((row) => row.id === requested)) return requested;
+  return String(rows[0]?.id || "h264_mp4");
+}
+
+async function loadMonitorCodecOptions() {
+  if (MONITOR_CODEC_OPTIONS_REQUEST) return MONITOR_CODEC_OPTIONS_REQUEST;
+  MONITOR_CODEC_OPTIONS_REQUEST = (async () => {
+    try {
+      const res = await api.fetchApi("/lemouf/composition/export_profiles", { method: "GET" });
+      if (!res?.ok) throw new Error(`http_${Number(res?.status || 0)}`);
+      const payload = await safeJsonResponse(res);
+      const rows = normalizeMonitorCodecOptions(payload?.profiles);
+      MONITOR_CODEC_OPTIONS_CACHE = rows;
+      return rows;
+    } catch {
+      return getMonitorCodecOptions();
+    } finally {
+      MONITOR_CODEC_OPTIONS_REQUEST = null;
+    }
+  })();
+  return MONITOR_CODEC_OPTIONS_REQUEST;
+}
+
+function renderMonitorCodecOptions(selectNode, options, preferredCodec) {
+  if (!selectNode) return normalizeMonitorCodecId(preferredCodec, options);
+  const rows = normalizeMonitorCodecOptions(options);
+  const safeCodec = normalizeMonitorCodecId(preferredCodec, rows);
+  selectNode.innerHTML = "";
+  for (const row of rows) {
+    selectNode.appendChild(el("option", { value: row.id, text: row.label }));
+  }
+  selectNode.value = safeCodec;
+  return safeCodec;
+}
 const COMPOSITION_HISTORY_LIMIT = 120;
 const COMPOSITION_HISTORY_BY_SCOPE = new Map();
 const COMPOSITION_DROPZONE_TOP_TRACK = "__dropzone_top__";
@@ -111,7 +225,66 @@ function normalizeCompositionLayoutState(state = {}) {
   const sizeMode = sizeModeRaw === "small" ? "small" : "large";
   const viewModeRaw = String(state?.viewMode || "thumb").toLowerCase();
   const viewMode = viewModeRaw === "list" ? "list" : "thumb";
-  return { splitPercent, rowSplitPercent, sizeMode, viewMode };
+  const monitorFit = state?.monitorFit !== false;
+  const monitorGrid = Boolean(state?.monitorGrid);
+  const monitorSafe = Boolean(state?.monitorSafe);
+  const monitorWorkArea = state?.monitorWorkArea !== false;
+  const monitorBackgroundRaw = String(state?.monitorBackground || "neutral").trim().toLowerCase();
+  const monitorBackground = (
+    monitorBackgroundRaw === "neutral" ||
+    monitorBackgroundRaw === "dark" ||
+    monitorBackgroundRaw === "checker"
+  ) ? monitorBackgroundRaw : "neutral";
+  const monitorCenter = Boolean(state?.monitorCenter);
+  const monitorDiagonal = Boolean(state?.monitorDiagonal);
+  const monitorGridOpacity = clampOverlayOpacity(state?.monitorGridOpacity, 1);
+  const monitorSafeOpacity = clampOverlayOpacity(state?.monitorSafeOpacity, 1);
+  const monitorCenterOpacity = clampOverlayOpacity(state?.monitorCenterOpacity, 0.9);
+  const monitorDiagonalOpacity = clampOverlayOpacity(state?.monitorDiagonalOpacity, 0.85);
+  const monitorTransformMode = normalizeMonitorTransformMode(state?.monitorTransformMode, "move");
+  const outputPresetRaw = String(state?.outputPreset || "hd_1080p").toLowerCase();
+  const outputPreset = MONITOR_OUTPUT_PRESETS.some((row) => row.id === outputPresetRaw)
+    ? outputPresetRaw
+    : "hd_1080p";
+  const outputWidth = Math.max(16, Math.round(toNumber(state?.outputWidth, 1920)));
+  const outputHeight = Math.max(16, Math.round(toNumber(state?.outputHeight, 1080)));
+  const outputFps = Math.max(1, Math.min(240, Math.round(toNumber(state?.outputFps, 30))));
+  const outputDurationMode = String(state?.outputDurationMode || "timeline").toLowerCase() === "custom"
+    ? "custom"
+    : "timeline";
+  const outputDurationSec = Math.max(0.1, toNumber(state?.outputDurationSec, 10));
+  const outputAudioRate = Math.max(8000, Math.min(192000, Math.round(toNumber(state?.outputAudioRate, 48000))));
+  const outputAudioChannels = String(state?.outputAudioChannels || "stereo").toLowerCase() === "mono"
+    ? "mono"
+    : "stereo";
+  const outputCodec = normalizeMonitorCodecId(state?.outputCodec);
+  return {
+    splitPercent,
+    rowSplitPercent,
+    sizeMode,
+    viewMode,
+    monitorFit,
+    monitorGrid,
+    monitorSafe,
+    monitorWorkArea,
+    monitorBackground,
+    monitorCenter,
+    monitorDiagonal,
+    monitorGridOpacity,
+    monitorSafeOpacity,
+    monitorCenterOpacity,
+    monitorDiagonalOpacity,
+    monitorTransformMode,
+    outputPreset,
+    outputWidth,
+    outputHeight,
+    outputFps,
+    outputDurationMode,
+    outputDurationSec,
+    outputAudioRate,
+    outputAudioChannels,
+    outputCodec,
+  };
 }
 
 function getCompositionLayoutState(scopeKey) {
@@ -154,6 +327,13 @@ function getCompositionHistoryState(scopeKey) {
     });
   }
   return COMPOSITION_HISTORY_BY_SCOPE.get(key);
+}
+
+function resetCompositionHistory(scopeKey) {
+  const history = getCompositionHistoryState(scopeKey);
+  history.undo = [];
+  history.redo = [];
+  history.applying = false;
 }
 
 function createCompositionHistoryEntry(snapshot) {
@@ -1109,6 +1289,43 @@ function createNextTrackNameByKind(kind, trackNames = []) {
   return `${prefix}${Math.max(1, maxLane + 1)}`;
 }
 
+function listNonDropTracks(tracks = []) {
+  const rows = Array.isArray(tracks) ? tracks : [];
+  return rows.filter((item) => {
+    const name = String(item?.name || "").trim();
+    const kind = String(item?.kind || "").trim().toLowerCase();
+    return Boolean(name) && kind !== "dropzone" && !isCompositionDropzoneTrackName(name);
+  });
+}
+
+function listNonDropTrackNames(tracks = []) {
+  return listNonDropTracks(tracks)
+    .map((item) => String(item?.name || "").trim())
+    .filter(Boolean);
+}
+
+function resolveCompositionInsertIndex(studioTracks, {
+  requestedInsertIndex = null,
+  hasRequestedInsertIndex = false,
+  targetTrackName = "",
+} = {}) {
+  const tracks = Array.isArray(studioTracks) ? studioTracks : [];
+  if (!tracks.length) return 1;
+  if (hasRequestedInsertIndex && Number.isFinite(Number(requestedInsertIndex))) {
+    const raw = Math.round(Number(requestedInsertIndex));
+    return clamp(raw, 1, Math.max(1, tracks.length - 1));
+  }
+  const targetName = String(targetTrackName || "").trim();
+  if (targetName === COMPOSITION_DROPZONE_TOP_TRACK) return 1;
+  const bottomIndex = tracks.findIndex(
+    (item) => String(item?.name || "").trim() === COMPOSITION_DROPZONE_BOTTOM_TRACK
+  );
+  if (targetName === COMPOSITION_DROPZONE_BOTTOM_TRACK) {
+    return bottomIndex >= 0 ? bottomIndex : Math.max(1, tracks.length - 1);
+  }
+  return null;
+}
+
 function createNextTrackNameFromTrack(trackName, trackKind, trackNames = []) {
   const name = String(trackName || "").trim();
   const kind = String(trackKind || "").trim().toLowerCase() || inferTrackKindFromName(name);
@@ -1523,6 +1740,32 @@ function buildPlacementKey(resourceId, segmentIndex) {
   return `${rid}${PLACEMENT_CLIP_PREFIX}${safeSeg}`;
 }
 
+function normalizePlacementTransform(source = null) {
+  const row = source && typeof source === "object" ? source : {};
+  return {
+    transformXPct: clamp(
+      toNumber(row.transformXPct, 0),
+      -MONITOR_TRANSFORM_XY_LIMIT_PCT,
+      MONITOR_TRANSFORM_XY_LIMIT_PCT
+    ),
+    transformYPct: clamp(
+      toNumber(row.transformYPct, 0),
+      -MONITOR_TRANSFORM_XY_LIMIT_PCT,
+      MONITOR_TRANSFORM_XY_LIMIT_PCT
+    ),
+    transformScalePct: clamp(
+      toNumber(row.transformScalePct, 100),
+      MONITOR_TRANSFORM_SCALE_MIN_PCT,
+      MONITOR_TRANSFORM_SCALE_MAX_PCT
+    ),
+    transformRotateDeg: clamp(
+      toNumber(row.transformRotateDeg, 0),
+      MONITOR_TRANSFORM_ROTATE_MIN_DEG,
+      MONITOR_TRANSFORM_ROTATE_MAX_DEG
+    ),
+  };
+}
+
 function normalizePlacementRecord(resourceId, placementKey, placementValue = null, fallback = null) {
   const base = placementValue && typeof placementValue === "object" ? placementValue : {};
   const rid = String(resourceId || base.resourceId || inferResourceIdFromPlacementKey(placementKey) || "").trim();
@@ -1541,6 +1784,7 @@ function normalizePlacementRecord(resourceId, placementKey, placementValue = nul
       toFiniteNumber(source.durationSec) ||
       0.1
   );
+  const transform = normalizePlacementTransform(source);
   const autoDuration = Boolean(source.autoDuration);
   return {
     placementKey: key,
@@ -1553,6 +1797,7 @@ function normalizePlacementRecord(resourceId, placementKey, placementValue = nul
     sourceDurationSec,
     linkGroupId,
     autoDuration,
+    ...transform,
   };
 }
 
@@ -1642,6 +1887,10 @@ function setPlacementRecord(placementMap, record) {
     sourceDurationSec: normalized.sourceDurationSec,
     linkGroupId: normalized.linkGroupId,
     autoDuration: Boolean(normalized.autoDuration),
+    transformXPct: normalized.transformXPct,
+    transformYPct: normalized.transformYPct,
+    transformScalePct: normalized.transformScalePct,
+    transformRotateDeg: normalized.transformRotateDeg,
   });
   return normalized;
 }
@@ -2588,6 +2837,19 @@ function makeResourceCard(resource, onOpenAsset, options = {}) {
 export function clearLoopCompositionStudioView({ panelBody }) {
   if (!panelBody) return;
   stopActiveResourceHoverPreview();
+  const monitorNodes = panelBody.querySelectorAll?.(".lemouf-loop-composition-monitor");
+  if (monitorNodes && monitorNodes.length) {
+    for (const node of monitorNodes) {
+      try {
+        node.__lemoufMonitorInteractionDispose?.();
+      } catch {}
+      try {
+        node.__lemoufMonitorResizeObserver?.disconnect?.();
+      } catch {}
+      node.__lemoufMonitorResizeObserver = null;
+      node.__lemoufMonitorInteractionDispose = null;
+    }
+  }
   const leakingPreviews = panelBody.querySelectorAll?.(".lemouf-loop-composition-resource-thumb-video");
   if (leakingPreviews && leakingPreviews.length) {
     for (const video of leakingPreviews) {
@@ -3195,6 +3457,10 @@ export function renderLoopCompositionStudioView({
     monitorInfo,
   ]);
   const monitorStage = el("div", { class: "lemouf-loop-composition-monitor-stage" });
+  const monitorPasteboard = el("div", {
+    class: "lemouf-loop-composition-monitor-pasteboard",
+    "aria-hidden": "true",
+  });
   const monitorVideo = document.createElement("video");
   monitorVideo.className = "lemouf-loop-composition-monitor-video";
   monitorVideo.preload = "auto";
@@ -3207,6 +3473,23 @@ export function renderLoopCompositionStudioView({
     class: "lemouf-loop-composition-monitor-empty",
     text: "No visual clip at current position.",
   });
+  const monitorFrame = el("div", { class: "lemouf-loop-composition-monitor-frame" });
+  const monitorGuideGrid = el("div", {
+    class: "lemouf-loop-composition-monitor-guide lemouf-loop-composition-monitor-guide-grid",
+    "aria-hidden": "true",
+  });
+  const monitorGuideSafe = el("div", {
+    class: "lemouf-loop-composition-monitor-guide lemouf-loop-composition-monitor-guide-safe",
+    "aria-hidden": "true",
+  });
+  const monitorGuideCenter = el("div", {
+    class: "lemouf-loop-composition-monitor-guide lemouf-loop-composition-monitor-guide-center",
+    "aria-hidden": "true",
+  });
+  const monitorGuideDiagonal = el("div", {
+    class: "lemouf-loop-composition-monitor-guide lemouf-loop-composition-monitor-guide-diagonal",
+    "aria-hidden": "true",
+  });
   const setMonitorStageState = (mode = "empty", { isGap = false, emptyText = null } = {}) => {
     const showVideo = mode === "video";
     const showImage = mode === "image";
@@ -3217,25 +3500,1037 @@ export function renderLoopCompositionStudioView({
     monitorEmpty.hidden = showVideo || showImage;
   };
   setMonitorStageState("empty", { isGap: false });
-  monitorStage.append(monitorVideo, monitorImage, monitorEmpty);
+  monitorFrame.append(
+    monitorVideo,
+    monitorImage,
+    monitorGuideGrid,
+    monitorGuideSafe,
+    monitorGuideCenter,
+    monitorGuideDiagonal,
+    monitorEmpty
+  );
+  monitorStage.append(monitorPasteboard, monitorFrame);
   const monitorSaveBtn = el("button", {
     class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
     type: "button",
-    disabled: true,
   });
-  setButtonIcon(monitorSaveBtn, { icon: "save_project", title: "Save project (soon)" });
+  setButtonIcon(monitorSaveBtn, { icon: "save_project", title: "Save project snapshot (.json)" });
+  const monitorLoadBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+  });
+  setButtonIcon(monitorLoadBtn, { icon: "import_approved", title: "Load project snapshot (.json)" });
+  const monitorResetBtn = el("button", {
+    class: "lemouf-loop-btn ghost icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+  });
+  setButtonIcon(monitorResetBtn, { icon: "clear_resources", title: "Reset project (clear composition)" });
+  const monitorLoadInput = el("input", {
+    type: "file",
+    accept: "application/json,.json",
+  });
+  monitorLoadInput.style.display = "none";
+  const applyLoadedSnapshot = (snapshot) => {
+    applyCompositionScopeSnapshotInStore(scopeKey, snapshot || null);
+    COMPOSITION_LAYOUT_STATE_BY_SCOPE.delete(scopeKey);
+    resetCompositionHistory(scopeKey);
+    renderLoopCompositionStudioView({ detail, panelBody, dockExpanded, onOpenAsset, compositionGate, monitorHost });
+  };
+  const saveProjectSnapshot = () => {
+    const snapshot = getCompositionScopeSnapshotInStore(scopeKey);
+    if (!snapshot || typeof snapshot !== "object") return;
+    const payload = {
+      schema: "lemouf.composition.scope.v1",
+      exportedAt: new Date().toISOString(),
+      scopeKey: String(scopeKey || "default"),
+      snapshot,
+    };
+    const safeScope = String(scopeKey || "default")
+      .trim()
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "") || "default";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `lemouf_composition_${safeScope}_${stamp}.json`;
+    try {
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 250);
+    } catch {}
+  };
+  const loadProjectSnapshotFromFile = (file) => {
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const raw = String(reader.result || "");
+        const parsed = JSON.parse(raw);
+        const snapshot = parsed && typeof parsed === "object" && parsed.snapshot && typeof parsed.snapshot === "object"
+          ? parsed.snapshot
+          : parsed;
+        if (!snapshot || typeof snapshot !== "object") {
+          window.alert("Invalid composition snapshot file.");
+          return;
+        }
+        applyLoadedSnapshot(snapshot);
+      } catch {
+        window.alert("Unable to load composition snapshot.");
+      }
+    };
+    reader.onerror = () => {
+      window.alert("Unable to read selected file.");
+    };
+    reader.readAsText(file, "utf-8");
+  };
+  monitorSaveBtn.addEventListener("click", saveProjectSnapshot);
+  monitorLoadBtn.addEventListener("click", () => {
+    try {
+      monitorLoadInput.value = "";
+    } catch {}
+    monitorLoadInput.click();
+  });
+  monitorLoadInput.addEventListener("change", () => {
+    const file = monitorLoadInput.files && monitorLoadInput.files.length
+      ? monitorLoadInput.files[0]
+      : null;
+    loadProjectSnapshotFromFile(file);
+  });
+  monitorResetBtn.addEventListener("click", () => {
+    if (!window.confirm("Reset composition project for this workflow scope?")) return;
+    applyLoadedSnapshot(null);
+  });
+  const monitorFitBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorGridBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorSafeBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorWorkAreaBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorCenterBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorDiagonalBtn = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
   const monitorExportBtn = el("button", {
     class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
     type: "button",
-    disabled: true,
   });
-  setButtonIcon(monitorExportBtn, { icon: "export_render", title: "Export render (soon)" });
-  const monitorActions = el("div", { class: "lemouf-loop-composition-monitor-actions" }, [
-    el("div", { class: "lemouf-loop-composition-monitor-actions-group" }, [monitorSaveBtn]),
-    el("div", { class: "lemouf-loop-composition-monitor-actions-separator", "aria-hidden": "true" }),
-    el("div", { class: "lemouf-loop-composition-monitor-actions-group" }, [monitorExportBtn]),
+  setButtonIcon(monitorExportBtn, { icon: "export_render", title: "Export render manifest (.json)" });
+  const exportRenderManifest = async () => {
+    const snapshot = getCompositionScopeSnapshotInStore(scopeKey);
+    const placements = Array.isArray(snapshot?.placements) ? snapshot.placements : [];
+    if (!placements.length) {
+      window.alert("No clips in composition to export.");
+      return;
+    }
+    const computedTimelineDurationSec = placements.reduce((max, row) => {
+      const start = Math.max(0, toNumber(row?.timeSec, 0));
+      const duration = Math.max(0.1, toNumber(row?.durationSec, 0.1));
+      const end = start + duration;
+      return end > max ? end : max;
+    }, 0);
+    const timelineDurationSec = Math.max(
+      0.1,
+      toNumber(studio.durationSec, 0.1),
+      computedTimelineDurationSec
+    );
+    const outputSize = resolveMonitorOutputSize(layoutState);
+    const durationMode = String(layoutState.outputDurationMode || "timeline").trim().toLowerCase();
+    const outputDurationSec = durationMode === "custom"
+      ? Math.max(0.1, toNumber(layoutState.outputDurationSec, timelineDurationSec))
+      : timelineDurationSec;
+    const manifest = {
+      schema: "lemouf.composition.render_manifest.v1",
+      generatedAt: new Date().toISOString(),
+      scopeKey: String(scopeKey || "default"),
+      output: {
+        width: outputSize.width,
+        height: outputSize.height,
+        fps: Math.max(1, Math.min(240, Math.round(toNumber(layoutState.outputFps, 30)))),
+        durationSec: outputDurationSec,
+        audioRate: Math.max(8000, Math.min(192000, Math.round(toNumber(layoutState.outputAudioRate, 48000)))),
+        audioChannels: String(layoutState.outputAudioChannels || "stereo").trim().toLowerCase() === "mono"
+          ? "mono"
+          : "stereo",
+        codec: normalizeMonitorCodecId(layoutState.outputCodec),
+      },
+      timeline: {
+        durationSec: timelineDurationSec,
+        tempoBpm: Math.max(1, toNumber(studio.tempoBpm, 120)),
+        sections: cloneJsonSafe(studio.sections, []),
+        tracks: cloneJsonSafe(studio.tracks, []),
+        eventsByTrack: cloneJsonSafe(studio.eventsByTrack, {}),
+      },
+      snapshot: cloneJsonSafe(snapshot, {}),
+    };
+    const safeScope = String(scopeKey || "default")
+      .trim()
+      .replace(/[^a-z0-9_-]+/gi, "_")
+      .replace(/^_+|_+$/g, "") || "default";
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `lemouf_render_manifest_${safeScope}_${stamp}.json`;
+    let persistedRemotely = false;
+    try {
+      const res = await api.fetchApi("/lemouf/composition/export_manifest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope_key: String(scopeKey || "default"),
+          manifest,
+        }),
+      });
+      persistedRemotely = Boolean(res?.ok);
+    } catch {}
+    try {
+      const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 250);
+    } catch {}
+    if (!persistedRemotely) {
+      console.warn("[LeMouf Composition] backend manifest export unavailable, local fallback used.");
+    }
+  };
+  monitorExportBtn.addEventListener("click", exportRenderManifest);
+  const monitorOutputSummary = el("div", { class: "lemouf-loop-composition-monitor-config-summary" });
+  const monitorPresetSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-preset" });
+  for (const preset of MONITOR_OUTPUT_PRESETS) {
+    monitorPresetSelect.appendChild(
+      el("option", { value: preset.id, text: preset.label })
+    );
+  }
+  const monitorWidthInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: "16",
+    max: "16384",
+    step: "1",
+  });
+  const monitorHeightInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: "16",
+    max: "16384",
+    step: "1",
+  });
+  const monitorFpsSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select" });
+  for (const fps of [24, 25, 30, 50, 60]) {
+    monitorFpsSelect.appendChild(el("option", { value: String(fps), text: `${fps}fps` }));
+  }
+  const monitorDurationModeSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select" });
+  monitorDurationModeSelect.appendChild(el("option", { value: "timeline", text: "Timeline" }));
+  monitorDurationModeSelect.appendChild(el("option", { value: "custom", text: "Custom" }));
+  const monitorDurationInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: "0.10",
+    max: "21600",
+    step: "0.10",
+  });
+  const monitorAudioRateSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select" });
+  for (const hz of [44100, 48000, 96000]) {
+    monitorAudioRateSelect.appendChild(el("option", { value: String(hz), text: `${hz}Hz` }));
+  }
+  const monitorAudioChannelsSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select" });
+  monitorAudioChannelsSelect.appendChild(el("option", { value: "stereo", text: "Stereo" }));
+  monitorAudioChannelsSelect.appendChild(el("option", { value: "mono", text: "Mono" }));
+  const monitorCodecSelect = el("select", { class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select" });
+  renderMonitorCodecOptions(monitorCodecSelect, getMonitorCodecOptions(), layoutState.outputCodec);
+  const monitorBackgroundSelect = el("select", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-select",
+  });
+  monitorBackgroundSelect.appendChild(el("option", { value: "neutral", text: "BG Neutral" }));
+  monitorBackgroundSelect.appendChild(el("option", { value: "dark", text: "BG Dark" }));
+  monitorBackgroundSelect.appendChild(el("option", { value: "checker", text: "BG Checker" }));
+  const monitorOverlaySummary = el("div", {
+    class: "lemouf-loop-composition-monitor-config-summary",
+    text: "Guides",
+  });
+  const monitorGridOpacityInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-range",
+    type: "range",
+    min: `${MONITOR_OVERLAY_OPACITY_MIN}`,
+    max: `${MONITOR_OVERLAY_OPACITY_MAX}`,
+    step: `${MONITOR_OVERLAY_OPACITY_STEP}`,
+    title: "Grid opacity",
+  });
+  const monitorSafeOpacityInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-range",
+    type: "range",
+    min: `${MONITOR_OVERLAY_OPACITY_MIN}`,
+    max: `${MONITOR_OVERLAY_OPACITY_MAX}`,
+    step: `${MONITOR_OVERLAY_OPACITY_STEP}`,
+    title: "Safe-area opacity",
+  });
+  const monitorCenterOpacityInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-range",
+    type: "range",
+    min: `${MONITOR_OVERLAY_OPACITY_MIN}`,
+    max: `${MONITOR_OVERLAY_OPACITY_MAX}`,
+    step: `${MONITOR_OVERLAY_OPACITY_STEP}`,
+    title: "Center cross opacity",
+  });
+  const monitorDiagonalOpacityInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-range",
+    type: "range",
+    min: `${MONITOR_OVERLAY_OPACITY_MIN}`,
+    max: `${MONITOR_OVERLAY_OPACITY_MAX}`,
+    step: `${MONITOR_OVERLAY_OPACITY_STEP}`,
+    title: "Diagonal opacity",
+  });
+  const monitorTransformSummary = el("div", { class: "lemouf-loop-composition-monitor-transform-summary", text: "No clip selected" });
+  const monitorTransformModeBtnMove = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "true",
+  });
+  const monitorTransformModeBtnScale = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorTransformModeBtnRotate = el("button", {
+    class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
+    type: "button",
+    "aria-pressed": "false",
+  });
+  const monitorTransformXInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: `${-MONITOR_TRANSFORM_XY_LIMIT_PCT}`,
+    max: `${MONITOR_TRANSFORM_XY_LIMIT_PCT}`,
+    step: "1",
+    placeholder: "X%",
+    title: "X offset (%)",
+  });
+  const monitorTransformYInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: `${-MONITOR_TRANSFORM_XY_LIMIT_PCT}`,
+    max: `${MONITOR_TRANSFORM_XY_LIMIT_PCT}`,
+    step: "1",
+    placeholder: "Y%",
+    title: "Y offset (%)",
+  });
+  const monitorTransformScaleInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: `${MONITOR_TRANSFORM_SCALE_MIN_PCT}`,
+    max: `${MONITOR_TRANSFORM_SCALE_MAX_PCT}`,
+    step: "1",
+    placeholder: "Scale%",
+    title: "Scale (%)",
+  });
+  const monitorTransformRotateInput = el("input", {
+    class: "lemouf-loop-input lemouf-loop-composition-monitor-config-number",
+    type: "number",
+    min: `${MONITOR_TRANSFORM_ROTATE_MIN_DEG}`,
+    max: `${MONITOR_TRANSFORM_ROTATE_MAX_DEG}`,
+    step: "1",
+    placeholder: "Rot°",
+    title: "Rotate (deg)",
+  });
+  const monitorTransformResetBtn = el("button", {
+    class: "lemouf-loop-btn alt lemouf-loop-composition-monitor-transform-reset",
+    type: "button",
+    text: "Reset",
+  });
+  const monitorConfig = el("div", { class: "lemouf-loop-composition-monitor-config" }, [
+    el("div", { class: "lemouf-loop-composition-monitor-config-head" }, [
+      el("div", { class: "lemouf-loop-composition-monitor-config-title", text: "Output" }),
+      monitorOutputSummary,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row" }, [
+      monitorPresetSelect,
+      monitorWidthInput,
+      monitorHeightInput,
+      monitorFpsSelect,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row" }, [
+      monitorDurationModeSelect,
+      monitorDurationInput,
+      monitorAudioChannelsSelect,
+      monitorAudioRateSelect,
+      monitorCodecSelect,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row lemouf-loop-composition-monitor-workspace-row" }, [
+      monitorBackgroundSelect,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-transform-head" }, [
+      el("div", { class: "lemouf-loop-composition-monitor-config-title", text: "Guides opacity" }),
+      monitorOverlaySummary,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row lemouf-loop-composition-monitor-overlay-row" }, [
+      monitorGridOpacityInput,
+      monitorSafeOpacityInput,
+      monitorCenterOpacityInput,
+      monitorDiagonalOpacityInput,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-transform-head" }, [
+      el("div", { class: "lemouf-loop-composition-monitor-config-title", text: "Transform" }),
+      monitorTransformSummary,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row lemouf-loop-composition-monitor-mode-row" }, [
+      monitorTransformModeBtnMove,
+      monitorTransformModeBtnScale,
+      monitorTransformModeBtnRotate,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-config-row lemouf-loop-composition-monitor-transform-row" }, [
+      monitorTransformXInput,
+      monitorTransformYInput,
+      monitorTransformScaleInput,
+      monitorTransformRotateInput,
+      monitorTransformResetBtn,
+    ]),
   ]);
-  monitorPanel.append(monitorHead, monitorStage, monitorActions);
+  let monitorSelectedTrackName = "";
+  let monitorSelectedClipId = "";
+  let monitorSelectedResourceId = "";
+  let monitorSelectedClipCount = 0;
+  let monitorCurrentPlacementTransform = normalizePlacementTransform();
+  let monitorTransformUiSyncing = false;
+  let monitorTransformDragState = null;
+  let monitorWheelCommitTimer = null;
+  let monitorWheelPendingTransform = null;
+  let monitorTransformMode = normalizeMonitorTransformMode(layoutState.monitorTransformMode, "move");
+  const monitorModeButtons = [
+    monitorTransformModeBtnMove,
+    monitorTransformModeBtnScale,
+    monitorTransformModeBtnRotate,
+  ];
+  const applyMonitorTransformMode = (mode, { persist = false } = {}) => {
+    monitorTransformMode = normalizeMonitorTransformMode(mode, monitorTransformMode);
+    if (persist) {
+      layoutState.monitorTransformMode = monitorTransformMode;
+      persistCompositionLayoutState(scopeKey, layoutState);
+    }
+    const isMove = monitorTransformMode === "move";
+    const isScale = monitorTransformMode === "scale";
+    const isRotate = monitorTransformMode === "rotate";
+    monitorTransformModeBtnMove.classList.toggle("is-active", isMove);
+    monitorTransformModeBtnScale.classList.toggle("is-active", isScale);
+    monitorTransformModeBtnRotate.classList.toggle("is-active", isRotate);
+    monitorTransformModeBtnMove.setAttribute("aria-pressed", isMove ? "true" : "false");
+    monitorTransformModeBtnScale.setAttribute("aria-pressed", isScale ? "true" : "false");
+    monitorTransformModeBtnRotate.setAttribute("aria-pressed", isRotate ? "true" : "false");
+    setButtonIcon(monitorTransformModeBtnMove, {
+      icon: "drag",
+      title: `Move mode (V)${isMove ? " - active" : ""}`,
+    });
+    setButtonIcon(monitorTransformModeBtnScale, {
+      icon: "fit",
+      title: `Scale mode (S)${isScale ? " - active" : ""}`,
+    });
+    setButtonIcon(monitorTransformModeBtnRotate, {
+      icon: "refresh",
+      title: `Rotate mode (R)${isRotate ? " - active" : ""}`,
+    });
+    monitorFrame.classList.toggle("is-transform-mode-move", isMove);
+    monitorFrame.classList.toggle("is-transform-mode-scale", isScale);
+    monitorFrame.classList.toggle("is-transform-mode-rotate", isRotate);
+  };
+  const setMonitorTransformInputsDisabled = (disabled) => {
+    const next = Boolean(disabled);
+    monitorTransformXInput.disabled = next;
+    monitorTransformYInput.disabled = next;
+    monitorTransformScaleInput.disabled = next;
+    monitorTransformRotateInput.disabled = next;
+    monitorTransformResetBtn.disabled = next;
+    for (const btn of monitorModeButtons) btn.disabled = next;
+  };
+  const updateMonitorTransformInteractionState = () => {
+    const hasSelection = Boolean(monitorSelectedClipId);
+    const isDragging = Boolean(monitorTransformDragState);
+    const isWheeling = Boolean(monitorWheelCommitTimer);
+    monitorFrame.classList.toggle("is-transform-enabled", hasSelection);
+    monitorFrame.classList.toggle("is-transform-dragging", isDragging);
+    monitorFrame.classList.toggle("is-transform-wheeling", !isDragging && isWheeling);
+  };
+  const applyMonitorMediaTransform = (transformValue = null) => {
+    const transform = normalizePlacementTransform(transformValue || monitorCurrentPlacementTransform);
+    monitorCurrentPlacementTransform = transform;
+    const width = Math.max(1, Number(monitorFrame.clientWidth || parseInt(monitorFrame.style.width, 10) || 1));
+    const height = Math.max(1, Number(monitorFrame.clientHeight || parseInt(monitorFrame.style.height, 10) || 1));
+    const txPx = (transform.transformXPct / 100) * width;
+    const tyPx = (transform.transformYPct / 100) * height;
+    const scale = transform.transformScalePct / 100;
+    const rotate = transform.transformRotateDeg;
+    const transformCss = `translate3d(${txPx.toFixed(3)}px, ${tyPx.toFixed(3)}px, 0px) rotate(${rotate.toFixed(3)}deg) scale(${scale.toFixed(4)})`;
+    monitorVideo.style.transformOrigin = "50% 50%";
+    monitorImage.style.transformOrigin = "50% 50%";
+    monitorVideo.style.transform = transformCss;
+    monitorImage.style.transform = transformCss;
+  };
+  const updateMonitorTransformControls = () => {
+    const hasSelection = Boolean(monitorSelectedClipId);
+    const transform = normalizePlacementTransform(monitorCurrentPlacementTransform);
+    monitorTransformUiSyncing = true;
+    try {
+      monitorTransformXInput.value = `${Math.round(transform.transformXPct)}`;
+      monitorTransformYInput.value = `${Math.round(transform.transformYPct)}`;
+      monitorTransformScaleInput.value = `${Math.round(transform.transformScalePct)}`;
+      monitorTransformRotateInput.value = `${Math.round(transform.transformRotateDeg)}`;
+      monitorTransformSummary.textContent = hasSelection
+        ? `${monitorSelectedTrackName || "clip"} · ${monitorSelectedClipId}${
+            monitorSelectedClipCount > 1 ? ` · group ${monitorSelectedClipCount}` : ""
+          }`
+        : "No clip selected";
+      setMonitorTransformInputsDisabled(!hasSelection);
+      if (!hasSelection) {
+        if (monitorWheelCommitTimer != null) {
+          clearTimeout(monitorWheelCommitTimer);
+          monitorWheelCommitTimer = null;
+        }
+        monitorWheelPendingTransform = null;
+      }
+      if (hasSelection) {
+        monitorTransformSummary.textContent += ` · ${monitorTransformMode.toUpperCase()}`;
+      }
+      updateMonitorTransformInteractionState();
+    } finally {
+      monitorTransformUiSyncing = false;
+    }
+  };
+  const resolveMonitorSelectedPlacement = () => {
+    const clipId = String(monitorSelectedClipId || "").trim();
+    if (!clipId) return null;
+    const resourceId = String(monitorSelectedResourceId || "").trim();
+    const placementMap = getPlacementMap(scopeKey);
+    const fromClip = getPlacementByClipId(placementMap, clipId, resourceId);
+    if (fromClip) return fromClip;
+    return getPlacementByClipId(placementMap, clipId);
+  };
+  const commitMonitorTransformPatch = (patch = {}) => {
+    if (monitorTransformUiSyncing) return false;
+    const current = resolveMonitorSelectedPlacement();
+    if (!current) return false;
+    const nextTransform = normalizePlacementTransform({
+      ...current,
+      ...(patch && typeof patch === "object" ? patch : {}),
+    });
+    const changed =
+      Math.abs(toNumber(current.transformXPct, 0) - nextTransform.transformXPct) > 1e-6 ||
+      Math.abs(toNumber(current.transformYPct, 0) - nextTransform.transformYPct) > 1e-6 ||
+      Math.abs(toNumber(current.transformScalePct, 100) - nextTransform.transformScalePct) > 1e-6 ||
+      Math.abs(toNumber(current.transformRotateDeg, 0) - nextTransform.transformRotateDeg) > 1e-6;
+    if (!changed) {
+      applyMonitorMediaTransform(nextTransform);
+      updateMonitorTransformControls();
+      return false;
+    }
+    const placementMap = getPlacementMap(scopeKey);
+    const accepted = withCompositionHistory(scopeKey, () => {
+      const normalized = setPlacementRecord(placementMap, {
+        ...current,
+        ...nextTransform,
+      });
+      return Boolean(normalized);
+    });
+    if (!accepted) return false;
+    monitorCurrentPlacementTransform = nextTransform;
+    applyMonitorMediaTransform(nextTransform);
+    markMonitorDataDirty();
+    updateMonitorTransformControls();
+    return true;
+  };
+  const applySelectedPlacementTransformFromStore = () => {
+    const placement = resolveMonitorSelectedPlacement();
+    monitorCurrentPlacementTransform = normalizePlacementTransform(placement || null);
+    applyMonitorMediaTransform(monitorCurrentPlacementTransform);
+    updateMonitorTransformControls();
+  };
+  const commitMonitorWheelTransform = () => {
+    if (monitorWheelCommitTimer != null) {
+      clearTimeout(monitorWheelCommitTimer);
+      monitorWheelCommitTimer = null;
+    }
+    const pending = monitorWheelPendingTransform;
+    monitorWheelPendingTransform = null;
+    if (pending) {
+      commitMonitorTransformPatch(pending);
+    } else {
+      updateMonitorTransformInteractionState();
+    }
+  };
+  const scheduleMonitorWheelTransformCommit = () => {
+    if (monitorWheelCommitTimer != null) {
+      clearTimeout(monitorWheelCommitTimer);
+    }
+    monitorWheelCommitTimer = window.setTimeout(() => {
+      monitorWheelCommitTimer = null;
+      commitMonitorWheelTransform();
+    }, MONITOR_WHEEL_COMMIT_DEBOUNCE_MS);
+    updateMonitorTransformInteractionState();
+  };
+  const stopMonitorTransformDrag = (event = null) => {
+    const dragState = monitorTransformDragState;
+    if (!dragState) return;
+    if (event && dragState.pointerId != null && event.pointerId !== dragState.pointerId) return;
+    monitorTransformDragState = null;
+    try {
+      if (dragState.pointerId != null) {
+        monitorFrame.releasePointerCapture?.(dragState.pointerId);
+      }
+    } catch {}
+    if (dragState.moved) {
+      commitMonitorTransformPatch(monitorCurrentPlacementTransform);
+    } else {
+      updateMonitorTransformControls();
+    }
+    updateMonitorTransformInteractionState();
+  };
+  const onMonitorTransformPointerMove = (event) => {
+    const dragState = monitorTransformDragState;
+    if (!dragState) return;
+    if (dragState.pointerId != null && event.pointerId !== dragState.pointerId) return;
+    const deltaX = event.clientX - dragState.startClientX;
+    const deltaY = event.clientY - dragState.startClientY;
+    const mode = normalizeMonitorTransformMode(monitorTransformMode, "move");
+    const nextPatch = {};
+    if (mode === "scale") {
+      const scaleDeltaPct = (deltaX / dragState.frameWidth) * 180;
+      nextPatch.transformScalePct = dragState.startTransform.transformScalePct + scaleDeltaPct;
+    } else if (mode === "rotate") {
+      const rotateDeltaDeg = (deltaX / dragState.frameWidth) * 220;
+      nextPatch.transformRotateDeg = dragState.startTransform.transformRotateDeg + rotateDeltaDeg;
+    } else {
+      const deltaXPct = (deltaX / dragState.frameWidth) * 100;
+      const deltaYPct = (deltaY / dragState.frameHeight) * 100;
+      nextPatch.transformXPct = dragState.startTransform.transformXPct + deltaXPct;
+      nextPatch.transformYPct = dragState.startTransform.transformYPct + deltaYPct;
+    }
+    const nextTransform = normalizePlacementTransform({
+      ...dragState.startTransform,
+      ...nextPatch,
+    });
+    const moved = (
+      Math.abs(nextTransform.transformXPct - dragState.startTransform.transformXPct) > 0.01 ||
+      Math.abs(nextTransform.transformYPct - dragState.startTransform.transformYPct) > 0.01 ||
+      Math.abs(nextTransform.transformScalePct - dragState.startTransform.transformScalePct) > 0.01 ||
+      Math.abs(nextTransform.transformRotateDeg - dragState.startTransform.transformRotateDeg) > 0.01
+    );
+    monitorTransformDragState = {
+      ...dragState,
+      moved,
+    };
+    monitorCurrentPlacementTransform = nextTransform;
+    applyMonitorMediaTransform(nextTransform);
+    updateMonitorTransformControls();
+  };
+  const onMonitorTransformPointerDown = (event) => {
+    if (event.button !== 0) return;
+    if (!monitorSelectedClipId) return;
+    const current = resolveMonitorSelectedPlacement();
+    if (!current) return;
+    if (monitorEmpty && !monitorEmpty.hidden) return;
+    event.preventDefault();
+    event.stopPropagation();
+    commitMonitorWheelTransform();
+    const width = Math.max(1, Number(monitorFrame.clientWidth || 1));
+    const height = Math.max(1, Number(monitorFrame.clientHeight || 1));
+    monitorTransformDragState = {
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      frameWidth: width,
+      frameHeight: height,
+      startTransform: normalizePlacementTransform(current),
+      moved: false,
+    };
+    try {
+      monitorFrame.setPointerCapture?.(event.pointerId);
+    } catch {}
+    updateMonitorTransformInteractionState();
+  };
+  const onMonitorTransformWheel = (event) => {
+    if (!monitorSelectedClipId) return;
+    const current = resolveMonitorSelectedPlacement();
+    if (!current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const direction = Math.sign(Number(event.deltaY || 0));
+    if (!direction) return;
+    const baseTransform = normalizePlacementTransform(monitorWheelPendingTransform || current);
+    const nextTransform = { ...baseTransform };
+    if (event.shiftKey) {
+      const stepDeg = event.altKey ? MONITOR_WHEEL_ROTATE_FINE_STEP_DEG : MONITOR_WHEEL_ROTATE_STEP_DEG;
+      nextTransform.transformRotateDeg = clamp(
+        baseTransform.transformRotateDeg + (direction < 0 ? stepDeg : -stepDeg),
+        MONITOR_TRANSFORM_ROTATE_MIN_DEG,
+        MONITOR_TRANSFORM_ROTATE_MAX_DEG
+      );
+    } else {
+      const stepPct = event.altKey ? MONITOR_WHEEL_SCALE_FINE_STEP_PCT : MONITOR_WHEEL_SCALE_STEP_PCT;
+      nextTransform.transformScalePct = clamp(
+        baseTransform.transformScalePct + (direction < 0 ? stepPct : -stepPct),
+        MONITOR_TRANSFORM_SCALE_MIN_PCT,
+        MONITOR_TRANSFORM_SCALE_MAX_PCT
+      );
+    }
+    monitorWheelPendingTransform = normalizePlacementTransform(nextTransform);
+    monitorCurrentPlacementTransform = monitorWheelPendingTransform;
+    applyMonitorMediaTransform(monitorCurrentPlacementTransform);
+    updateMonitorTransformControls();
+    scheduleMonitorWheelTransformCommit();
+  };
+  const updateMonitorOutputControls = () => {
+    const size = resolveMonitorOutputSize(layoutState);
+    const fps = Math.max(1, Math.min(240, Math.round(toNumber(layoutState.outputFps, 30))));
+    const isCustom = String(layoutState.outputPreset || "hd_1080p") === "custom";
+    const durationSec = String(layoutState.outputDurationMode || "timeline") === "custom"
+      ? Math.max(0.1, toNumber(layoutState.outputDurationSec, studio.durationSec || 0.1))
+      : Math.max(0.1, toNumber(studio.durationSec, 0.1));
+    const safeRate = Math.max(8000, Math.min(192000, Math.round(toNumber(layoutState.outputAudioRate, 48000))));
+    const safeChannels = String(layoutState.outputAudioChannels || "stereo") === "mono" ? "mono" : "stereo";
+    const safeCodec = normalizeMonitorCodecId(layoutState.outputCodec, getMonitorCodecOptions());
+    monitorPresetSelect.value = String(layoutState.outputPreset || "hd_1080p");
+    monitorWidthInput.value = String(Math.max(16, Math.round(toNumber(layoutState.outputWidth, size.width))));
+    monitorHeightInput.value = String(Math.max(16, Math.round(toNumber(layoutState.outputHeight, size.height))));
+    monitorWidthInput.disabled = !isCustom;
+    monitorHeightInput.disabled = !isCustom;
+    monitorFpsSelect.value = String(fps);
+    monitorDurationModeSelect.value = String(layoutState.outputDurationMode || "timeline");
+    monitorDurationInput.value = durationSec.toFixed(2);
+    monitorDurationInput.disabled = String(layoutState.outputDurationMode || "timeline") !== "custom";
+    monitorAudioChannelsSelect.value = safeChannels;
+    monitorAudioRateSelect.value = String(safeRate);
+    if (monitorCodecSelect.value !== safeCodec) {
+      monitorCodecSelect.value = safeCodec;
+    }
+    monitorBackgroundSelect.value = String(layoutState.monitorBackground || "neutral");
+    monitorOutputSummary.textContent = `${size.width}x${size.height} · ${fps}fps · ${durationSec.toFixed(2)}s`;
+  };
+  let monitorFrameResizeObserver = null;
+  const applyMonitorOutputConfig = () => {
+    const size = resolveMonitorOutputSize(layoutState);
+    const ratio = Math.max(0.05, size.width / Math.max(1, size.height));
+    const stageRect = monitorStage.getBoundingClientRect();
+    let fitW = Math.max(1, Math.floor(stageRect.width || 1));
+    let fitH = Math.max(1, Math.floor(fitW / ratio));
+    const maxH = Math.max(1, Math.floor(stageRect.height || 1));
+    if (fitH > maxH) {
+      fitH = maxH;
+      fitW = Math.max(1, Math.floor(fitH * ratio));
+    }
+    monitorStage.style.setProperty("--lemouf-monitor-frame-ratio", String(ratio));
+    monitorFrame.style.width = `${fitW}px`;
+    monitorFrame.style.height = `${fitH}px`;
+    monitorFrame.dataset.outputWidth = String(size.width);
+    monitorFrame.dataset.outputHeight = String(size.height);
+    applyMonitorMediaTransform(monitorCurrentPlacementTransform);
+    updateMonitorOutputControls();
+  };
+  const persistAndApplyMonitorOutput = () => {
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorOutputConfig();
+  };
+  const applyMonitorPreviewControls = () => {
+    const fitOn = layoutState.monitorFit !== false;
+    const gridOn = Boolean(layoutState.monitorGrid);
+    const safeOn = Boolean(layoutState.monitorSafe);
+    const workAreaOn = layoutState.monitorWorkArea !== false;
+    const background = (() => {
+      const raw = String(layoutState.monitorBackground || "neutral").trim().toLowerCase();
+      return raw === "dark" || raw === "checker" ? raw : "neutral";
+    })();
+    const centerOn = Boolean(layoutState.monitorCenter);
+    const diagonalOn = Boolean(layoutState.monitorDiagonal);
+    const gridOpacity = clampOverlayOpacity(layoutState.monitorGridOpacity, 1);
+    const safeOpacity = clampOverlayOpacity(layoutState.monitorSafeOpacity, 1);
+    const centerOpacity = clampOverlayOpacity(layoutState.monitorCenterOpacity, 0.9);
+    const diagonalOpacity = clampOverlayOpacity(layoutState.monitorDiagonalOpacity, 0.85);
+    monitorStage.classList.toggle("is-fill", !fitOn);
+    monitorStage.classList.toggle("is-grid-on", gridOn);
+    monitorStage.classList.toggle("is-safe-on", safeOn);
+    monitorStage.classList.toggle("is-workarea-on", workAreaOn);
+    monitorStage.classList.toggle("is-center-on", centerOn);
+    monitorStage.classList.toggle("is-diagonal-on", diagonalOn);
+    monitorStage.setAttribute("data-bg", background);
+    monitorStage.style.setProperty("--lemouf-monitor-grid-opacity", String(gridOpacity));
+    monitorStage.style.setProperty("--lemouf-monitor-safe-opacity", String(safeOpacity));
+    monitorStage.style.setProperty("--lemouf-monitor-center-opacity", String(centerOpacity));
+    monitorStage.style.setProperty("--lemouf-monitor-diagonal-opacity", String(diagonalOpacity));
+    monitorFitBtn.classList.toggle("is-active", fitOn);
+    monitorGridBtn.classList.toggle("is-active", gridOn);
+    monitorSafeBtn.classList.toggle("is-active", safeOn);
+    monitorWorkAreaBtn.classList.toggle("is-active", workAreaOn);
+    monitorCenterBtn.classList.toggle("is-active", centerOn);
+    monitorDiagonalBtn.classList.toggle("is-active", diagonalOn);
+    monitorFitBtn.setAttribute("aria-pressed", fitOn ? "true" : "false");
+    monitorGridBtn.setAttribute("aria-pressed", gridOn ? "true" : "false");
+    monitorSafeBtn.setAttribute("aria-pressed", safeOn ? "true" : "false");
+    monitorWorkAreaBtn.setAttribute("aria-pressed", workAreaOn ? "true" : "false");
+    monitorCenterBtn.setAttribute("aria-pressed", centerOn ? "true" : "false");
+    monitorDiagonalBtn.setAttribute("aria-pressed", diagonalOn ? "true" : "false");
+    setButtonIcon(monitorFitBtn, {
+      icon: "fit",
+      title: fitOn ? "Fit preview: ON (switch to fill)" : "Fit preview: OFF (switch to fit)",
+    });
+    setButtonIcon(monitorGridBtn, {
+      icon: "view_grid",
+      title: gridOn ? "Grid guide: ON (toggle)" : "Grid guide: OFF (toggle)",
+    });
+    setButtonIcon(monitorSafeBtn, {
+      icon: safeOn ? "eye" : "eye_off",
+      title: safeOn ? "Safe-area guide: ON (toggle)" : "Safe-area guide: OFF (toggle)",
+    });
+    setButtonIcon(monitorWorkAreaBtn, {
+      icon: workAreaOn ? "monitor_workarea" : "eye_off",
+      title: workAreaOn ? "Work area frame: ON (toggle)" : "Work area frame: OFF (toggle)",
+    });
+    setButtonIcon(monitorCenterBtn, {
+      icon: centerOn ? "monitor_center" : "eye_off",
+      title: centerOn ? "Center cross: ON (toggle)" : "Center cross: OFF (toggle)",
+    });
+    setButtonIcon(monitorDiagonalBtn, {
+      icon: diagonalOn ? "monitor_diagonal" : "eye_off",
+      title: diagonalOn ? "Diagonals: ON (toggle)" : "Diagonals: OFF (toggle)",
+    });
+    monitorGridOpacityInput.value = String(gridOpacity);
+    monitorSafeOpacityInput.value = String(safeOpacity);
+    monitorCenterOpacityInput.value = String(centerOpacity);
+    monitorDiagonalOpacityInput.value = String(diagonalOpacity);
+    monitorOverlaySummary.textContent = `G ${Math.round(gridOpacity * 100)} · S ${Math.round(safeOpacity * 100)} · C ${Math.round(centerOpacity * 100)} · D ${Math.round(diagonalOpacity * 100)}`;
+  };
+  monitorFitBtn.addEventListener("click", () => {
+    layoutState.monitorFit = !(layoutState.monitorFit !== false);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorGridBtn.addEventListener("click", () => {
+    layoutState.monitorGrid = !Boolean(layoutState.monitorGrid);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorSafeBtn.addEventListener("click", () => {
+    layoutState.monitorSafe = !Boolean(layoutState.monitorSafe);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorWorkAreaBtn.addEventListener("click", () => {
+    layoutState.monitorWorkArea = !(layoutState.monitorWorkArea !== false);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorCenterBtn.addEventListener("click", () => {
+    layoutState.monitorCenter = !Boolean(layoutState.monitorCenter);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorDiagonalBtn.addEventListener("click", () => {
+    layoutState.monitorDiagonal = !Boolean(layoutState.monitorDiagonal);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorGridOpacityInput.addEventListener("input", () => {
+    layoutState.monitorGridOpacity = clampOverlayOpacity(monitorGridOpacityInput.value, layoutState.monitorGridOpacity);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorSafeOpacityInput.addEventListener("input", () => {
+    layoutState.monitorSafeOpacity = clampOverlayOpacity(monitorSafeOpacityInput.value, layoutState.monitorSafeOpacity);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorCenterOpacityInput.addEventListener("input", () => {
+    layoutState.monitorCenterOpacity = clampOverlayOpacity(monitorCenterOpacityInput.value, layoutState.monitorCenterOpacity);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorDiagonalOpacityInput.addEventListener("input", () => {
+    layoutState.monitorDiagonalOpacity = clampOverlayOpacity(monitorDiagonalOpacityInput.value, layoutState.monitorDiagonalOpacity);
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorPresetSelect.addEventListener("change", () => {
+    const value = String(monitorPresetSelect.value || "hd_1080p").trim().toLowerCase();
+    layoutState.outputPreset = MONITOR_OUTPUT_PRESETS.some((row) => row.id === value) ? value : "hd_1080p";
+    const presetSize = resolveMonitorOutputSize(layoutState);
+    if (layoutState.outputPreset !== "custom") {
+      layoutState.outputWidth = presetSize.width;
+      layoutState.outputHeight = presetSize.height;
+    }
+    persistAndApplyMonitorOutput();
+  });
+  monitorWidthInput.addEventListener("change", () => {
+    const value = Math.max(16, Math.round(toNumber(monitorWidthInput.value, layoutState.outputWidth || 1920)));
+    layoutState.outputPreset = "custom";
+    layoutState.outputWidth = value;
+    persistAndApplyMonitorOutput();
+  });
+  monitorHeightInput.addEventListener("change", () => {
+    const value = Math.max(16, Math.round(toNumber(monitorHeightInput.value, layoutState.outputHeight || 1080)));
+    layoutState.outputPreset = "custom";
+    layoutState.outputHeight = value;
+    persistAndApplyMonitorOutput();
+  });
+  monitorFpsSelect.addEventListener("change", () => {
+    layoutState.outputFps = Math.max(1, Math.min(240, Math.round(toNumber(monitorFpsSelect.value, layoutState.outputFps || 30))));
+    persistAndApplyMonitorOutput();
+  });
+  monitorDurationModeSelect.addEventListener("change", () => {
+    layoutState.outputDurationMode = String(monitorDurationModeSelect.value || "timeline").trim().toLowerCase() === "custom"
+      ? "custom"
+      : "timeline";
+    persistAndApplyMonitorOutput();
+  });
+  monitorDurationInput.addEventListener("change", () => {
+    layoutState.outputDurationSec = Math.max(0.1, toNumber(monitorDurationInput.value, layoutState.outputDurationSec || studio.durationSec || 0.1));
+    persistAndApplyMonitorOutput();
+  });
+  monitorAudioChannelsSelect.addEventListener("change", () => {
+    layoutState.outputAudioChannels = String(monitorAudioChannelsSelect.value || "stereo").trim().toLowerCase() === "mono"
+      ? "mono"
+      : "stereo";
+    persistAndApplyMonitorOutput();
+  });
+  monitorAudioRateSelect.addEventListener("change", () => {
+    layoutState.outputAudioRate = Math.max(8000, Math.min(192000, Math.round(toNumber(monitorAudioRateSelect.value, 48000))));
+    persistAndApplyMonitorOutput();
+  });
+  monitorCodecSelect.addEventListener("change", () => {
+    layoutState.outputCodec = normalizeMonitorCodecId(monitorCodecSelect.value, getMonitorCodecOptions());
+    persistAndApplyMonitorOutput();
+  });
+  monitorBackgroundSelect.addEventListener("change", () => {
+    const raw = String(monitorBackgroundSelect.value || "neutral").trim().toLowerCase();
+    layoutState.monitorBackground = raw === "dark" || raw === "checker" ? raw : "neutral";
+    persistCompositionLayoutState(scopeKey, layoutState);
+    applyMonitorPreviewControls();
+  });
+  monitorTransformXInput.addEventListener("change", () => {
+    commitMonitorTransformPatch({ transformXPct: toNumber(monitorTransformXInput.value, 0) });
+  });
+  monitorTransformYInput.addEventListener("change", () => {
+    commitMonitorTransformPatch({ transformYPct: toNumber(monitorTransformYInput.value, 0) });
+  });
+  monitorTransformScaleInput.addEventListener("change", () => {
+    commitMonitorTransformPatch({ transformScalePct: toNumber(monitorTransformScaleInput.value, 100) });
+  });
+  monitorTransformRotateInput.addEventListener("change", () => {
+    commitMonitorTransformPatch({ transformRotateDeg: toNumber(monitorTransformRotateInput.value, 0) });
+  });
+  monitorTransformResetBtn.addEventListener("click", () => {
+    commitMonitorTransformPatch({
+      transformXPct: 0,
+      transformYPct: 0,
+      transformScalePct: 100,
+      transformRotateDeg: 0,
+    });
+  });
+  monitorTransformModeBtnMove.addEventListener("click", () => applyMonitorTransformMode("move", { persist: true }));
+  monitorTransformModeBtnScale.addEventListener("click", () => applyMonitorTransformMode("scale", { persist: true }));
+  monitorTransformModeBtnRotate.addEventListener("click", () => applyMonitorTransformMode("rotate", { persist: true }));
+  const onMonitorTransformModeKeydown = (event) => {
+    const target = event.target;
+    if (target && typeof target === "object") {
+      const tag = String(target.tagName || "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (target.isContentEditable) return;
+    }
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const key = String(event.key || "").toLowerCase();
+    if (key === "v") {
+      applyMonitorTransformMode("move", { persist: true });
+      return;
+    }
+    if (key === "s") {
+      applyMonitorTransformMode("scale", { persist: true });
+      return;
+    }
+    if (key === "r") {
+      applyMonitorTransformMode("rotate", { persist: true });
+    }
+  };
+  monitorFrame.addEventListener("pointerdown", onMonitorTransformPointerDown);
+  monitorFrame.addEventListener("pointermove", onMonitorTransformPointerMove);
+  monitorFrame.addEventListener("pointerup", stopMonitorTransformDrag);
+  monitorFrame.addEventListener("pointercancel", stopMonitorTransformDrag);
+  monitorFrame.addEventListener("wheel", onMonitorTransformWheel, { passive: false });
+  document.addEventListener("keydown", onMonitorTransformModeKeydown, true);
+  applyMonitorTransformMode(monitorTransformMode, { persist: false });
+  applyMonitorPreviewControls();
+  applyMonitorOutputConfig();
+  loadMonitorCodecOptions().then((profiles) => {
+    const safeCodec = renderMonitorCodecOptions(monitorCodecSelect, profiles, layoutState.outputCodec);
+    if (layoutState.outputCodec !== safeCodec) {
+      layoutState.outputCodec = safeCodec;
+      persistCompositionLayoutState(scopeKey, layoutState);
+    }
+    updateMonitorOutputControls();
+  }).catch(() => {});
+  applyMonitorMediaTransform(monitorCurrentPlacementTransform);
+  updateMonitorTransformControls();
+  if (typeof ResizeObserver === "function") {
+    monitorFrameResizeObserver = new ResizeObserver(() => applyMonitorOutputConfig());
+    try {
+      monitorFrameResizeObserver.observe(monitorStage);
+    } catch {}
+  }
+  monitorPanel.__lemoufMonitorResizeObserver = monitorFrameResizeObserver;
+  monitorPanel.__lemoufMonitorInteractionDispose = () => {
+    stopMonitorTransformDrag();
+    if (monitorWheelCommitTimer != null) {
+      clearTimeout(monitorWheelCommitTimer);
+      monitorWheelCommitTimer = null;
+    }
+    monitorWheelPendingTransform = null;
+    monitorFrame.removeEventListener("pointerdown", onMonitorTransformPointerDown);
+    monitorFrame.removeEventListener("pointermove", onMonitorTransformPointerMove);
+    monitorFrame.removeEventListener("pointerup", stopMonitorTransformDrag);
+    monitorFrame.removeEventListener("pointercancel", stopMonitorTransformDrag);
+    monitorFrame.removeEventListener("wheel", onMonitorTransformWheel);
+    document.removeEventListener("keydown", onMonitorTransformModeKeydown, true);
+  };
+  const createMonitorActionGroup = (label, buttons) => el("div", {
+    class: "lemouf-loop-composition-monitor-actions-group",
+    "data-group": label,
+  }, buttons);
+  const monitorActions = el("div", { class: "lemouf-loop-composition-monitor-actions" }, [
+    createMonitorActionGroup("project", [monitorSaveBtn, monitorLoadBtn, monitorResetBtn]),
+    el("div", { class: "lemouf-loop-composition-monitor-actions-separator", "aria-hidden": "true" }),
+    createMonitorActionGroup("preview", [
+      monitorFitBtn,
+      monitorGridBtn,
+      monitorSafeBtn,
+      monitorWorkAreaBtn,
+      monitorCenterBtn,
+      monitorDiagonalBtn,
+    ]),
+    el("div", { class: "lemouf-loop-composition-monitor-actions-separator", "aria-hidden": "true" }),
+    createMonitorActionGroup("export", [monitorExportBtn]),
+  ]);
+  monitorPanel.append(monitorHead, monitorStage, monitorActions, monitorConfig, monitorLoadInput);
 
   const editorBody = el("div", {
     class: "lemouf-song2daw-studio-body lemouf-loop-composition-editor-body",
@@ -3423,11 +4718,12 @@ export function renderLoopCompositionStudioView({
     applyRowSplit();
   });
   panelBody.append(summary, mainSplit);
+  requestAnimationFrame(() => {
+    applyMonitorOutputConfig();
+  });
 
   let monitorCurrentKey = "";
   let monitorCurrentMediaKind = "";
-  let monitorSelectedTrackName = "";
-  let monitorSelectedClipId = "";
   let monitorPendingLocalTimeSec = 0;
   let monitorPendingPlay = false;
   let monitorPendingScrub = false;
@@ -3437,9 +4733,13 @@ export function renderLoopCompositionStudioView({
     const rows = Array.isArray(events) ? events : [];
     const time = Math.max(0, toNumber(playheadSec, 0));
     const eps = isPlaying || isScrubbing ? Math.max(MONITOR_EDGE_EPS_SEC, 1 / 30) : MONITOR_EDGE_EPS_SEC;
-    const active = rows.filter(
-      (event) => time >= event.start - eps && time <= event.end + eps
-    );
+    const active = rows.filter((event) => {
+      const start = Math.max(0, toNumber(event.start, 0));
+      const end = Math.max(start + MONITOR_EDGE_EPS_SEC * 0.25, toNumber(event.end, start));
+      // Keep a small start tolerance for transport jitter, but make end exclusive
+      // so visual gaps never leak the previous clip frame.
+      return time >= start - eps && time < end;
+    });
     if (active.length) {
       active.sort((a, b) => {
         if (a.trackOrder !== b.trackOrder) return b.trackOrder - a.trackOrder;
@@ -3449,6 +4749,43 @@ export function renderLoopCompositionStudioView({
       return active[0] || null;
     }
     return null;
+  };
+  const findMonitorEventByRef = (events, ref = null) => {
+    const rows = Array.isArray(events) ? events : [];
+    if (!rows.length || !ref || typeof ref !== "object") return null;
+    const clipId = String(ref.clipId || "").trim();
+    const trackName = String(ref.trackName || "").trim();
+    const resourceId = String(ref.resourceId || "").trim();
+    const linkGroupId = String(ref.linkGroupId || "").trim();
+    if (!clipId && !resourceId && !linkGroupId) return null;
+    const pick = ({ strictTrack = true } = {}) => {
+      let best = null;
+      let bestScore = Number.NEGATIVE_INFINITY;
+      for (const row of rows) {
+        if (!row || typeof row !== "object") continue;
+        const rowTrackName = String(row.trackName || "").trim();
+        const rowClipId = String(row.clipId || "").trim();
+        const rowResourceId = String(row.resourceId || "").trim();
+        const rowLinkGroupId = String(row.linkGroupId || "").trim();
+        if (clipId && rowClipId !== clipId) continue;
+        if (resourceId && rowResourceId !== resourceId) continue;
+        if (linkGroupId && rowLinkGroupId !== linkGroupId) continue;
+        if (strictTrack && trackName && rowTrackName !== trackName) continue;
+        let score = Number(row.trackOrder || 0) * 1000;
+        if (trackName && rowTrackName === trackName) score += 50;
+        if (clipId && rowClipId === clipId) score += 10;
+        if (resourceId && rowResourceId === resourceId) score += 6;
+        if (linkGroupId && rowLinkGroupId === linkGroupId) score += 4;
+        if (score > bestScore) {
+          best = row;
+          bestScore = score;
+        }
+      }
+      return best;
+    };
+    // Prefer strict track resolution, then fallback to id-based matching so monitor
+    // stays synced while a clip is preview-moved between tracks.
+    return pick({ strictTrack: true }) || pick({ strictTrack: false });
   };
   const applyMonitorTransport = () => {
     const duration = Number(monitorVideo.duration || 0);
@@ -3511,6 +4848,7 @@ export function renderLoopCompositionStudioView({
     isScrubbing = false,
     mutedTracks = [],
     hasAudibleTimelineAudio = false,
+    selection = null,
     previewClipEdits = null,
   } = {}) => {
     if (monitorDataDirty) rebuildMonitorData();
@@ -3540,6 +4878,9 @@ export function renderLoopCompositionStudioView({
       };
     });
     const mutedTrackSet = new Set((Array.isArray(mutedTracks) ? mutedTracks : []).map((name) => String(name || "").trim()));
+    const selectionPayload = selection && typeof selection === "object" ? selection : {};
+    const selectionRefs = Array.isArray(selectionPayload.selectedClipRefs) ? selectionPayload.selectedClipRefs : [];
+    const selectedClipCount = Math.max(0, Math.round(toNumber(selectionPayload.selectedClipCount, selectionRefs.length)));
     if (!materializedEvents.length) {
       monitorAllowAudio = false;
       monitorPendingScrub = false;
@@ -3548,22 +4889,45 @@ export function renderLoopCompositionStudioView({
       monitorCurrentMediaKind = "";
       monitorSelectedTrackName = "";
       monitorSelectedClipId = "";
+      monitorSelectedResourceId = "";
+      monitorSelectedClipCount = 0;
       clearMonitorVideoSource();
       clearMonitorImageSource();
       setMonitorStageState("empty", { isGap: false, emptyText: "No visual clip at current position." });
       monitorStatus.textContent = "No visual resource loaded.";
       monitorInfo.textContent = "No audio";
+      monitorPanel.classList.remove("is-selection-solo", "is-selection-group");
+      applySelectedPlacementTransformFromStore();
       return;
     }
-    const selected = pickMonitorEvent(materializedEvents, playheadSec, {
+    const selectedByPrimary = findMonitorEventByRef(materializedEvents, selectionPayload.primaryClip);
+    let selectedByGroup = null;
+    if (!selectedByPrimary) {
+      for (const row of selectionRefs) {
+        selectedByGroup = findMonitorEventByRef(materializedEvents, row);
+        if (selectedByGroup) break;
+      }
+    }
+    const activeByPlayhead = pickMonitorEvent(materializedEvents, playheadSec, {
       isPlaying: Boolean(isPlaying),
       isScrubbing: Boolean(isScrubbing),
     });
+    const selectionOverrideAllowed =
+      !Boolean(isPlaying) &&
+      !Boolean(isScrubbing) &&
+      !Boolean(monitorTransformDragState) &&
+      monitorWheelCommitTimer == null;
+    const selectedBySelection = selectedByPrimary || selectedByGroup || null;
+    const selected = selectionOverrideAllowed
+      ? (selectedBySelection || activeByPlayhead)
+      : (activeByPlayhead || selectedBySelection);
     if (!selected) {
       monitorCurrentKey = "";
       monitorCurrentMediaKind = "";
       monitorSelectedTrackName = "";
       monitorSelectedClipId = "";
+      monitorSelectedResourceId = "";
+      monitorSelectedClipCount = 0;
       monitorAllowAudio = false;
       monitorPendingPlay = false;
       monitorPendingScrub = false;
@@ -3572,6 +4936,8 @@ export function renderLoopCompositionStudioView({
       setMonitorStageState("empty", { isGap: true, emptyText: "" });
       monitorStatus.textContent = "No visual clip at playhead.";
       monitorInfo.textContent = `${modeLabel} · ${Number(playheadSec || 0).toFixed(2)}s`;
+      monitorPanel.classList.remove("is-selection-solo", "is-selection-group");
+      applySelectedPlacementTransformFromStore();
       return;
     }
     const eventKey = `${selected.trackName}:${selected.clipId || selected.resourceId}:${selected.start.toFixed(4)}`;
@@ -3607,6 +4973,10 @@ export function renderLoopCompositionStudioView({
     monitorCurrentMediaKind = String(selected.mediaKind || "video");
     monitorSelectedTrackName = String(selected.trackName || "");
     monitorSelectedClipId = String(selected.clipId || "");
+    monitorSelectedResourceId = String(selected.resourceId || "");
+    monitorSelectedClipCount = selectedClipCount;
+    monitorPanel.classList.toggle("is-selection-group", selectedClipCount > 1);
+    monitorPanel.classList.toggle("is-selection-solo", selectedClipCount <= 1);
     if (monitorIsVideo) {
       clearMonitorImageSource();
       if (mediaKindChanged || sourceChanged) {
@@ -3628,11 +4998,12 @@ export function renderLoopCompositionStudioView({
       applyMonitorTransport();
     }
     setMonitorStageState(selected.mediaKind === "image" ? "image" : "video");
-    monitorStatus.textContent = `${selected.trackName} · ${selected.label}`;
+    monitorStatus.textContent = `${selected.trackName} · ${selected.label}${selectedClipCount > 1 ? ` · group ${selectedClipCount}` : ""}`;
     monitorInfo.textContent =
       `${modeLabel} · clip ${selected.start.toFixed(2)}-${selected.end.toFixed(2)}s · local ${localTime.toFixed(2)}s${
         monitorAllowAudio ? " · monitor audio" : ""
       }`;
+    applySelectedPlacementTransformFromStore();
   };
 
   renderStudioTimeline({
@@ -3674,40 +5045,27 @@ export function renderLoopCompositionStudioView({
       const requestedInsertMode = Boolean(insertMode);
       const requestedInsertIndexRaw = Number(insertIndex);
       const hasRequestedInsertIndex = Number.isFinite(requestedInsertIndexRaw);
-      const existingTracks = (Array.isArray(studio?.tracks) ? studio.tracks : []).filter((item) => {
-        const name = String(item?.name || "").trim();
-        const trackKind = String(item?.kind || "").trim().toLowerCase();
-        return Boolean(name) && trackKind !== "dropzone" && !isCompositionDropzoneTrackName(name);
-      });
+      const studioTracks = Array.isArray(studio?.tracks) ? studio.tracks : [];
+      const existingTracks = listNonDropTracks(studioTracks);
       let trackInfo = track
-        ? (Array.isArray(studio?.tracks) ? studio.tracks : []).find((item) => String(item?.name || "").trim() === track)
+        ? studioTracks.find((item) => String(item?.name || "").trim() === track)
         : null;
       const dropzoneTarget = isCompositionDropzoneTrackName(track) || String(trackInfo?.kind || "").trim().toLowerCase() === "dropzone";
       if (dropzoneTarget) {
         track = "";
         trackInfo = null;
       }
-      let resolvedInsertIndex = null;
-      if (hasRequestedInsertIndex) {
-        const totalTracks = Array.isArray(studio?.tracks) ? studio.tracks.length : 0;
-        resolvedInsertIndex = clamp(Math.round(requestedInsertIndexRaw), 1, Math.max(1, totalTracks - 1));
-      } else if (dropzoneTarget) {
-        const allTracks = Array.isArray(studio?.tracks) ? studio.tracks : [];
-        if (String(trackName || "").trim() === COMPOSITION_DROPZONE_TOP_TRACK) {
-          resolvedInsertIndex = 1;
-        } else {
-          const bottomIndex = allTracks.findIndex(
-            (item) => String(item?.name || "").trim() === COMPOSITION_DROPZONE_BOTTOM_TRACK
-          );
-          resolvedInsertIndex = bottomIndex >= 0 ? bottomIndex : Math.max(1, allTracks.length - 1);
-        }
-      }
+      const resolvedInsertIndex = resolveCompositionInsertIndex(studioTracks, {
+        requestedInsertIndex: requestedInsertIndexRaw,
+        hasRequestedInsertIndex,
+        targetTrackName: String(trackName || "").trim(),
+      });
       const forceCreateLane = requestedInsertMode || dropzoneTarget;
       const desiredKind = kind === "audio" ? "audio" : (kind === "video" ? "video" : "image");
       if (forceCreateLane) {
         track = createNextTrackNameByKind(
           desiredKind,
-          existingTracks.map((item) => String(item?.name || "").trim()).filter(Boolean)
+          listNonDropTrackNames(studioTracks)
         );
         trackInfo = null;
       }
@@ -3717,7 +5075,7 @@ export function renderLoopCompositionStudioView({
         );
         track = String(candidate?.name || "").trim() || createNextTrackNameByKind(
           desiredKind,
-          existingTracks.map((item) => String(item?.name || "").trim()).filter(Boolean)
+          listNonDropTrackNames(studioTracks)
         );
       }
       if (!track) return false;
@@ -3904,18 +5262,25 @@ export function renderLoopCompositionStudioView({
       const normalizedMode = String(mode || "").trim().toLowerCase();
       if (normalizedMode === "move" && requestedInsertMode) {
         reconcileLocalTracks();
-        const existingTracks = (Array.isArray(studio?.tracks) ? studio.tracks : []).filter((item) => {
-          const name = String(item?.name || "").trim();
-          const kind = String(item?.kind || "").trim().toLowerCase();
-          return Boolean(name) && kind !== "dropzone" && !isCompositionDropzoneTrackName(name);
-        });
+        const studioTracks = Array.isArray(studio?.tracks) ? studio.tracks : [];
+        const existingTracks = listNonDropTracks(studioTracks);
         const desiredKind = resourceKind === "audio"
           ? "audio"
           : (resourceKind === "video" ? "video" : (resourceKind === "image" ? "image" : editedTrackKind || "video"));
-        let generatedTrackName = createNextTrackNameByKind(
-          desiredKind,
-          existingTracks.map((item) => String(item?.name || "").trim()).filter(Boolean)
-        );
+        // Reuse timeline-provided insert lane when possible (already resolved from drop target),
+        // to keep linked video+audio moves deterministic across top/bottom insert dropzones.
+        const providedInsertTrackName = String(canonicalTrackName || "").trim();
+        const providedInsertTrackKind = String(inferTrackKindFromName(providedInsertTrackName) || "").trim().toLowerCase();
+        const canReuseProvidedInsertTrack =
+          Boolean(providedInsertTrackName) &&
+          !isCompositionDropzoneTrackName(providedInsertTrackName) &&
+          providedInsertTrackKind === desiredKind;
+        let generatedTrackName = canReuseProvidedInsertTrack
+          ? providedInsertTrackName
+          : createNextTrackNameByKind(
+              desiredKind,
+              listNonDropTrackNames(studioTracks)
+            );
         let generatedAudioChannelMode = "";
         if (desiredKind === "audio") {
           generatedAudioChannelMode = resolveAudioChannelModeFromResource(resource, track);
@@ -3925,11 +5290,11 @@ export function renderLoopCompositionStudioView({
             1
           );
         }
-        let resolvedInsertIndex = null;
-        if (hasRequestedInsertIndex) {
-          const totalTracks = Array.isArray(studio?.tracks) ? studio.tracks.length : 0;
-          resolvedInsertIndex = clamp(Math.round(requestedInsertIndexRaw), 1, Math.max(1, totalTracks - 1));
-        }
+        const resolvedInsertIndex = resolveCompositionInsertIndex(studioTracks, {
+          requestedInsertIndex: requestedInsertIndexRaw,
+          hasRequestedInsertIndex,
+          targetTrackName: String(trackName || "").trim(),
+        });
         const audioPatch = desiredKind === "audio" && generatedAudioChannelMode
           ? { channelMode: generatedAudioChannelMode, preserveEventDuration: true }
           : {};

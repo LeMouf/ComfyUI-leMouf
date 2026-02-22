@@ -17,6 +17,8 @@ features/song2daw/tests/_tmp_media_cache_dbg2/
 features/song2daw/tests/_tmp_media_cache_dbg3/
 backend/loop/runtime_state.json
 backend/loop/media_cache/
+backend/composition/render_exports/
+backend/composition/renders/
 .tmp/
 .version_bump_next
 .feature_bump_next.json

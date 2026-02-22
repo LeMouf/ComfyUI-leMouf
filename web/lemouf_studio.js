@@ -2749,13 +2749,38 @@ app.registerExtension({
       } catch {}
     };
 
+    const collectActiveCompositionScopeKeys = () => {
+      const keys = new Set();
+      const push = (value) => {
+        const key = String(value || "").trim();
+        if (!key) return;
+        keys.add(key);
+      };
+      const loopId = String(currentLoopId || "").trim();
+      push(loopId);
+      const selectedWorkflow = String(selectedPipelineWorkflowName || pipelineSelect?.value || "").trim();
+      if (selectedWorkflow) push(`composition:${selectedWorkflow}`);
+      if (loopId.startsWith("composition:")) push("composition:manual");
+      const aliases = Array.isArray(currentLoopDetail?.composition_scope_aliases)
+        ? currentLoopDetail.composition_scope_aliases
+        : [];
+      for (const alias of aliases) push(alias);
+      const runtimeAliases = Array.isArray(currentLoopDetail?.runtime_state?.composition_scope_aliases)
+        ? currentLoopDetail.runtime_state.composition_scope_aliases
+        : [];
+      for (const alias of runtimeAliases) push(alias);
+      return keys;
+    };
+
     let compositionStateRuntimePersistBound = false;
     const ensureCompositionStateRuntimePersist = () => {
       if (compositionStateRuntimePersistBound) return;
       compositionStateRuntimePersistBound = true;
       setCompositionStateChangeListener((scopeKey) => {
         const key = String(scopeKey || "").trim();
-        if (!key || !currentLoopId || key !== String(currentLoopId)) return;
+        if (!key || !currentLoopId) return;
+        const activeScopeKeys = collectActiveCompositionScopeKeys();
+        if (!activeScopeKeys.has(key)) return;
         persistPipelineRuntimeState();
       });
     };

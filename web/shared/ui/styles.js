@@ -819,9 +819,97 @@ export function injectStyles() {
       display: flex;
       align-items: center;
       justify-content: center;
+      --lemouf-monitor-pasteboard-bg: #ece0d1;
+      --lemouf-monitor-pasteboard-accent: rgba(86, 70, 56, 0.08);
+      --lemouf-monitor-frame-bg: #0f0f0f;
+      --lemouf-monitor-frame-outline: rgba(240, 230, 214, 0.16);
+      --lemouf-monitor-frame-shadow: rgba(83, 64, 46, 0.16);
     }
-    .lemouf-loop-composition-monitor-stage.is-gap {
+    .lemouf-loop-composition-monitor-stage[data-bg="dark"] {
+      --lemouf-monitor-pasteboard-bg: #1f1b18;
+      --lemouf-monitor-pasteboard-accent: rgba(250, 238, 219, 0.08);
+      --lemouf-monitor-frame-bg: #0b0a09;
+      --lemouf-monitor-frame-outline: rgba(220, 200, 176, 0.24);
+      --lemouf-monitor-frame-shadow: rgba(0, 0, 0, 0.45);
+    }
+    .lemouf-loop-composition-monitor-stage[data-bg="checker"] {
+      --lemouf-monitor-pasteboard-bg:
+        linear-gradient(45deg, rgba(247, 238, 225, 0.95) 25%, transparent 25%),
+        linear-gradient(-45deg, rgba(247, 238, 225, 0.95) 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, rgba(239, 226, 208, 0.92) 75%),
+        linear-gradient(-45deg, transparent 75%, rgba(239, 226, 208, 0.92) 75%);
+      --lemouf-monitor-pasteboard-accent: rgba(130, 106, 83, 0.08);
+      --lemouf-monitor-frame-bg: #11110f;
+      --lemouf-monitor-frame-outline: rgba(200, 176, 149, 0.28);
+      --lemouf-monitor-frame-shadow: rgba(76, 60, 45, 0.26);
+    }
+    .lemouf-loop-composition-monitor-pasteboard {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background: var(--lemouf-monitor-pasteboard-bg);
+      background-size: 24px 24px;
+    }
+    .lemouf-loop-composition-monitor-pasteboard::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(
+        135deg,
+        transparent 0 48%,
+        var(--lemouf-monitor-pasteboard-accent) 48% 52%,
+        transparent 52% 100%
+      );
+      opacity: 0.66;
+    }
+    .lemouf-loop-composition-monitor-frame {
+      position: relative;
+      z-index: 1;
+      width: min(100%, 960px);
+      height: min(100%, 540px);
+      max-width: 100%;
+      max-height: 100%;
+      border-radius: 4px;
+      overflow: hidden;
+      background: var(--lemouf-monitor-frame-bg);
+      box-shadow:
+        0 0 0 1px var(--lemouf-monitor-frame-outline),
+        0 6px 20px -10px var(--lemouf-monitor-frame-shadow);
+    }
+    .lemouf-loop-composition-monitor-stage:not(.is-workarea-on) .lemouf-loop-composition-monitor-frame {
+      box-shadow: 0 0 0 1px rgba(240, 230, 214, 0.12);
+      border-radius: 2px;
+    }
+    .lemouf-loop-composition-monitor-stage:not(.is-workarea-on) .lemouf-loop-composition-monitor-pasteboard {
+      opacity: 0.22;
+    }
+    .lemouf-loop-composition-monitor-frame.is-transform-enabled {
+      cursor: grab;
+      touch-action: none;
+    }
+    .lemouf-loop-composition-monitor-frame.is-transform-enabled.is-transform-mode-scale {
+      cursor: ew-resize;
+    }
+    .lemouf-loop-composition-monitor-frame.is-transform-enabled.is-transform-mode-rotate {
+      cursor: crosshair;
+    }
+    .lemouf-loop-composition-monitor-frame.is-transform-dragging {
+      cursor: grabbing;
+    }
+    .lemouf-loop-composition-monitor-frame.is-transform-wheeling {
+      box-shadow: 0 0 0 1px rgba(167, 142, 117, 0.52), 0 0 0 2px rgba(167, 142, 117, 0.24);
+    }
+    .lemouf-loop-composition-monitor.is-selection-solo .lemouf-loop-composition-monitor-frame {
+      box-shadow: 0 0 0 1px rgba(119, 162, 126, 0.52), 0 0 0 2px rgba(119, 162, 126, 0.24);
+    }
+    .lemouf-loop-composition-monitor.is-selection-group .lemouf-loop-composition-monitor-frame {
+      box-shadow: 0 0 0 1px rgba(112, 132, 186, 0.54), 0 0 0 2px rgba(112, 132, 186, 0.24);
+    }
+    .lemouf-loop-composition-monitor-stage.is-gap .lemouf-loop-composition-monitor-pasteboard {
       background: #090909;
+      opacity: 1;
     }
     .lemouf-loop-composition-monitor-video {
       position: relative;
@@ -857,10 +945,111 @@ export function injectStyles() {
       visibility: visible;
       opacity: 1;
     }
+    .lemouf-loop-composition-monitor-stage.is-fill .lemouf-loop-composition-monitor-video,
+    .lemouf-loop-composition-monitor-stage.is-fill .lemouf-loop-composition-monitor-image {
+      object-fit: cover;
+    }
+    .lemouf-loop-composition-monitor-guide {
+      position: absolute;
+      inset: 0;
+      z-index: 3;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+    .lemouf-loop-composition-monitor-stage.is-grid-on .lemouf-loop-composition-monitor-guide-grid {
+      opacity: var(--lemouf-monitor-grid-opacity, 1);
+      background-image:
+        linear-gradient(
+          to right,
+          transparent 33.2%,
+          rgba(235, 224, 205, 0.62) 33.2%,
+          rgba(235, 224, 205, 0.62) 33.8%,
+          transparent 33.8%,
+          transparent 66.2%,
+          rgba(235, 224, 205, 0.62) 66.2%,
+          rgba(235, 224, 205, 0.62) 66.8%,
+          transparent 66.8%
+        ),
+        linear-gradient(
+          to bottom,
+          transparent 33.2%,
+          rgba(235, 224, 205, 0.62) 33.2%,
+          rgba(235, 224, 205, 0.62) 33.8%,
+          transparent 33.8%,
+          transparent 66.2%,
+          rgba(235, 224, 205, 0.62) 66.2%,
+          rgba(235, 224, 205, 0.62) 66.8%,
+          transparent 66.8%
+        );
+    }
+    .lemouf-loop-composition-monitor-guide-safe::before,
+    .lemouf-loop-composition-monitor-guide-safe::after {
+      content: "";
+      position: absolute;
+      border: 1px dashed rgba(242, 230, 210, 0.78);
+      border-radius: 1px;
+    }
+    .lemouf-loop-composition-monitor-guide-safe::before {
+      inset: 8% 10%;
+    }
+    .lemouf-loop-composition-monitor-guide-safe::after {
+      inset: 14% 16%;
+      border-color: rgba(248, 236, 218, 0.54);
+    }
+    .lemouf-loop-composition-monitor-stage.is-safe-on .lemouf-loop-composition-monitor-guide-safe {
+      opacity: var(--lemouf-monitor-safe-opacity, 1);
+    }
+    .lemouf-loop-composition-monitor-guide-center::before,
+    .lemouf-loop-composition-monitor-guide-center::after {
+      content: "";
+      position: absolute;
+      background: rgba(236, 225, 206, 0.86);
+      box-shadow: 0 0 0 1px rgba(109, 89, 69, 0.16);
+    }
+    .lemouf-loop-composition-monitor-guide-center::before {
+      left: 50%;
+      top: 0;
+      width: 1px;
+      height: 100%;
+      transform: translateX(-0.5px);
+    }
+    .lemouf-loop-composition-monitor-guide-center::after {
+      left: 0;
+      top: 50%;
+      width: 100%;
+      height: 1px;
+      transform: translateY(-0.5px);
+    }
+    .lemouf-loop-composition-monitor-stage.is-center-on .lemouf-loop-composition-monitor-guide-center {
+      opacity: var(--lemouf-monitor-center-opacity, 0.9);
+    }
+    .lemouf-loop-composition-monitor-guide-diagonal::before,
+    .lemouf-loop-composition-monitor-guide-diagonal::after {
+      content: "";
+      position: absolute;
+      left: -8%;
+      width: 116%;
+      height: 1px;
+      transform-origin: 50% 50%;
+      background: rgba(236, 225, 206, 0.8);
+      box-shadow: 0 0 0 1px rgba(109, 89, 69, 0.12);
+    }
+    .lemouf-loop-composition-monitor-guide-diagonal::before {
+      top: 50%;
+      transform: rotate(32deg);
+    }
+    .lemouf-loop-composition-monitor-guide-diagonal::after {
+      top: 50%;
+      transform: rotate(-32deg);
+    }
+    .lemouf-loop-composition-monitor-stage.is-diagonal-on .lemouf-loop-composition-monitor-guide-diagonal {
+      opacity: var(--lemouf-monitor-diagonal-opacity, 0.85);
+    }
     .lemouf-loop-composition-monitor-empty {
       position: absolute;
       inset: 0;
-      z-index: 1;
+      z-index: 4;
       pointer-events: none;
       width: 100%;
       height: 100%;
@@ -881,18 +1070,35 @@ export function injectStyles() {
       display: flex;
       align-items: center;
       justify-content: flex-end;
-      gap: 8px;
+      flex-wrap: wrap;
+      gap: 10px;
       min-height: 30px;
     }
     .lemouf-loop-composition-monitor-actions-group {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
       min-width: 0;
+    }
+    .lemouf-loop-composition-monitor-actions-group[data-group]::before {
+      content: attr(data-group);
+      display: inline-block;
+      margin-right: 2px;
+      padding: 0 3px;
+      border-radius: 999px;
+      border: 1px solid rgba(147, 124, 104, 0.34);
+      background: rgba(248, 240, 228, 0.9);
+      font-size: 8px;
+      line-height: 1.45;
+      letter-spacing: 0.28px;
+      text-transform: uppercase;
+      color: #7b6552;
+      white-space: nowrap;
     }
     .lemouf-loop-composition-monitor-actions-separator {
       flex: 0 0 1px;
-      align-self: stretch;
+      align-self: center;
+      min-height: 24px;
       background: linear-gradient(
         180deg,
         rgba(145, 121, 98, 0),
@@ -913,6 +1119,96 @@ export function injectStyles() {
     .lemouf-loop-composition-monitor-action-btn .lemouf-btn-icon {
       width: 14px;
       height: 14px;
+    }
+    .lemouf-loop-composition-monitor-config {
+      border: 1px solid rgba(151, 126, 102, 0.32);
+      border-radius: 7px;
+      background: rgba(250, 243, 232, 0.86);
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .lemouf-loop-composition-monitor-config-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 14px;
+    }
+    .lemouf-loop-composition-monitor-transform-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      min-height: 14px;
+      margin-top: 2px;
+    }
+    .lemouf-loop-composition-monitor-config-title {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.24px;
+      color: #6f5b49;
+      white-space: nowrap;
+    }
+    .lemouf-loop-composition-monitor-transform-summary {
+      font-size: 9px;
+      color: #7d6753;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .lemouf-loop-composition-monitor-config-summary {
+      font-size: 9px;
+      color: #7d6753;
+      text-align: right;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
+    .lemouf-loop-composition-monitor-config-row {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 4px;
+      min-width: 0;
+    }
+    .lemouf-loop-composition-monitor-config-row:first-of-type {
+      grid-template-columns: minmax(0, 1.15fr) repeat(3, minmax(0, 0.8fr));
+    }
+    .lemouf-loop-composition-monitor-workspace-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .lemouf-loop-composition-monitor-overlay-row {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .lemouf-loop-composition-monitor-mode-row {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .lemouf-loop-composition-monitor-transform-row {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+    .lemouf-loop-composition-monitor-transform-reset {
+      min-height: 22px;
+      padding: 0 8px;
+      font-size: 10px;
+      line-height: 1.1;
+    }
+    .lemouf-loop-composition-monitor-config .lemouf-loop-input {
+      height: 22px;
+      min-height: 22px;
+      padding: 0 6px;
+      font-size: 10px;
+      line-height: 1.15;
+    }
+    .lemouf-loop-composition-monitor-config .lemouf-loop-input:disabled {
+      opacity: 0.54;
+    }
+    .lemouf-loop-composition-monitor-config .lemouf-loop-composition-monitor-config-range {
+      padding: 0 2px;
+      height: 22px;
     }
     .lemouf-loop-composition-editor-body {
       flex: 1 1 auto;
@@ -937,6 +1233,10 @@ export function injectStyles() {
       }
       .lemouf-loop-composition-resources-actions {
         justify-content: flex-start;
+      }
+      .lemouf-loop-composition-monitor-config-row,
+      .lemouf-loop-composition-monitor-config-row:first-of-type {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
     }
     .lemouf-loop-row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
