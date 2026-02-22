@@ -40,10 +40,13 @@ Current canonical snapshot:
   - hardened audio event-edge picking for seek/scrub reliability
   - backend export profiles catalog wired (`backend/composition/export_profiles.py` + `GET /lemouf/composition/export_profiles`)
   - backend codec/container execution path wired (`backend/composition/render_execute.py` + `POST /lemouf/composition/export_execute`)
+  - backend execution now resolves timeline/layer sources and builds deterministic ffmpeg compositor graph (video overlays + audio mix), with fallback mode when sources are missing
+  - execution diagnostics enriched (`skipped_visual_events`, `skipped_audio_events`, notes) for export troubleshooting
+  - advanced clip compositing support added (per-clip opacity + explicit z-index layer ordering)
   - composition monitor codec config now hydrates from backend profiles with resilient local fallback
   - documentation/status synchronization pass across planning + changelog docs
 - Remaining priorities:
-  - full compositor execution integration (timeline/layer source mixing path)
+  - execution polish pass (error surfacing + advanced compositing behaviors)
   - render consistency closure (filmstrip edge placeholders + static/drag parity)
   - persistence parity after reload (full composition state recovery)
 
@@ -96,7 +99,7 @@ Execution order agreed for implementation:
     - backend execution endpoint wired (`POST /lemouf/composition/export_execute`) with deterministic ffmpeg plan + optional run
     - timeline/custom duration export resolution hardened against stale duration hints
   - remaining:
-    - final compositor-level timeline/layer render integration (beyond black-frame execution path)
+    - execution polish (detailed diagnostics + optional advanced transitions/effects layer)
 - [~] Phase 5 - Layer Transform Controls
   - done/partial:
     - per-clip transform fields persisted (`x/y/scale/rotate`)

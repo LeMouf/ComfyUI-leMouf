@@ -3639,8 +3639,8 @@ export function renderLoopCompositionStudioView({
     class: "lemouf-loop-btn alt icon lemouf-loop-composition-monitor-action-btn",
     type: "button",
   });
-  setButtonIcon(monitorExportBtn, { icon: "export_render", title: "Export render manifest (.json)" });
-  const exportRenderManifest = async () => {
+  setButtonIcon(monitorExportBtn, { icon: "export_render", title: "Export render manifest (.json). Shift+click: execute render." });
+  const exportRenderManifest = async (clickEvent) => {
     const snapshot = getCompositionScopeSnapshotInStore(scopeKey);
     const placements = Array.isArray(snapshot?.placements) ? snapshot.placements : [];
     if (!placements.length) {
@@ -3694,6 +3694,8 @@ export function renderLoopCompositionStudioView({
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `lemouf_render_manifest_${safeScope}_${stamp}.json`;
     let persistedRemotely = false;
+    let executeResult = null;
+    const executeNow = Boolean(clickEvent?.shiftKey);
     try {
       const res = await api.fetchApi("/lemouf/composition/export_manifest", {
         method: "POST",
@@ -3704,6 +3706,24 @@ export function renderLoopCompositionStudioView({
         }),
       });
       persistedRemotely = Boolean(res?.ok);
+      if (res?.ok) {
+        try {
+          const execRes = await api.fetchApi("/lemouf/composition/export_execute", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              scope_key: String(scopeKey || "default"),
+              manifest,
+              execute: executeNow,
+            }),
+          });
+          let execJson = null;
+          try {
+            execJson = await execRes?.json?.();
+          } catch {}
+          executeResult = (execRes?.ok && execJson && typeof execJson === "object") ? execJson : null;
+        } catch {}
+      }
     } catch {}
     try {
       const blob = new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" });
@@ -3717,8 +3737,45 @@ export function renderLoopCompositionStudioView({
       anchor.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 250);
     } catch {}
+    if (executeResult?.execution && typeof executeResult.execution === "object") {
+      const execution = executeResult.execution;
+      const renderMode = String(execution.render_mode || "fallback").trim();
+      const visualUsed = Math.max(0, Number(execution.visual_events_used || 0));
+      const audioUsed = Math.max(0, Number(execution.audio_events_used || 0));
+      const diagnostics = execution.diagnostics && typeof execution.diagnostics === "object" ? execution.diagnostics : {};
+      const skippedVisual = Array.isArray(diagnostics.skipped_visual_events) ? diagnostics.skipped_visual_events.length : 0;
+      const skippedAudio = Array.isArray(diagnostics.skipped_audio_events) ? diagnostics.skipped_audio_events.length : 0;
+      const status = String(execution.status || "planned").trim().toLowerCase();
+      const errorText = String(execution.error || "").trim();
+      if (status === "ok") {
+        monitorStatus.textContent = `Render OK · ${renderMode} · v${visualUsed}/a${audioUsed}`;
+        monitorInfo.textContent = `Skipped v${skippedVisual} · a${skippedAudio}`;
+      } else if (status === "planned") {
+        monitorStatus.textContent = `Render plan ready · ${renderMode} · v${visualUsed}/a${audioUsed}`;
+        monitorInfo.textContent = `Skipped v${skippedVisual} · a${skippedAudio}${executeNow ? " · execute pending" : ""}`;
+      } else {
+        monitorStatus.textContent = `Render failed${errorText ? ` · ${errorText}` : ""}`;
+        monitorInfo.textContent = `Mode ${renderMode} · used v${visualUsed}/a${audioUsed} · skipped v${skippedVisual}/a${skippedAudio}`;
+      }
+      if (executeNow && status === "ok" && executeResult.download_url) {
+        try {
+          const anchor = document.createElement("a");
+          anchor.href = String(executeResult.download_url);
+          anchor.download = "";
+          anchor.style.display = "none";
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+        } catch {}
+      }
+    } else if (persistedRemotely) {
+      monitorStatus.textContent = "Render manifest exported.";
+      monitorInfo.textContent = executeNow ? "Execution request sent." : "Backend plan unavailable.";
+    }
     if (!persistedRemotely) {
       console.warn("[LeMouf Composition] backend manifest export unavailable, local fallback used.");
+      monitorStatus.textContent = "Manifest exported locally.";
+      monitorInfo.textContent = "Backend export service unavailable.";
     }
   };
   monitorExportBtn.addEventListener("click", exportRenderManifest);

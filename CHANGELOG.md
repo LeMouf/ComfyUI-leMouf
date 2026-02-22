@@ -16,10 +16,13 @@
   - backend export profile catalog wired (`backend/composition/export_profiles.py` + `GET /lemouf/composition/export_profiles`)
   - composition monitor codec selector now hydrates from backend profiles with local fallback
   - backend execution endpoint wired (`POST /lemouf/composition/export_execute`) with ffmpeg command planning + optional run mode
+  - backend execution upgraded to timeline/layer compositor graph (video overlays + audio mix), with deterministic fallback when sources are missing
+  - execution diagnostics enriched (`skipped_visual_events`, `skipped_audio_events`, notes) for export troubleshooting
+  - advanced clip compositing support added (per-clip opacity + explicit z-index ordering)
   - export duration mode now resolves timeline length from actual placement span
   - synchronized status wording/template across planning and changelog docs
 - Remaining priorities:
-  - output/export compositor-level execution integration (timeline/layer source render path)
+  - output/export execution polish (diagnostics + advanced compositing behavior)
   - transform ergonomics/keybind polish (`V/R/S`)
   - phase-6 final closure (gap rendering consistency + crash/reload parity)
 

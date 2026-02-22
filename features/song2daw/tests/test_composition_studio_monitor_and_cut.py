@@ -127,9 +127,12 @@ def test_monitor_export_manifest_action_is_wired():
     studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
     nodes_py = (_repo_root() / "nodes.py").read_text(encoding="utf-8")
     assert "schema: \"lemouf.composition.render_manifest.v1\"" in studio_view
-    assert "setButtonIcon(monitorExportBtn, { icon: \"export_render\", title: \"Export render manifest (.json)\" });" in studio_view
+    assert "setButtonIcon(monitorExportBtn, { icon: \"export_render\", title: \"Export render manifest (.json). Shift+click: execute render.\" });" in studio_view
     assert "const fileName = `lemouf_render_manifest_${safeScope}_${stamp}.json`;" in studio_view
     assert "await api.fetchApi(\"/lemouf/composition/export_manifest\"" in studio_view
+    assert "await api.fetchApi(\"/lemouf/composition/export_execute\"" in studio_view
+    assert "const executeNow = Boolean(clickEvent?.shiftKey);" in studio_view
+    assert "monitorStatus.textContent = `Render plan ready · ${renderMode} · v${visualUsed}/a${audioUsed}`;" in studio_view
     assert "monitorExportBtn.addEventListener(\"click\", exportRenderManifest);" in studio_view
     assert "\"POST\", \"/lemouf/composition/export_manifest\", composition_export_manifest_post" in nodes_py
 
