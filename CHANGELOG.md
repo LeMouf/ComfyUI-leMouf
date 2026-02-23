@@ -19,12 +19,18 @@
   - backend execution upgraded to timeline/layer compositor graph (video overlays + audio mix), with deterministic fallback when sources are missing
   - execution diagnostics enriched (`skipped_visual_events`, `skipped_audio_events`, notes) for export troubleshooting
   - advanced clip compositing support added (per-clip opacity + explicit z-index ordering)
+  - export execution polish completed with optional effects/transitions layer:
+    - video: fade in/out, blur, EQ
+    - audio: fade in/out, gain
+  - execution diagnostics now include `diagnostics.execution` runtime details (mode/status/error/input counts)
   - export duration mode now resolves timeline length from actual placement span
   - synchronized status wording/template across planning and changelog docs
+  - runtime restore hardening for composition:
+    - runtime payload now restores snapshot/resources across loop + workflow alias scopes
+    - persisted runtime state now includes composition scope aliases for deterministic reload hydration
 - Remaining priorities:
-  - output/export execution polish (diagnostics + advanced compositing behavior)
-  - transform ergonomics/keybind polish (`V/R/S`)
-  - phase-6 final closure (gap rendering consistency + crash/reload parity)
+  - phase-6 reliability soak on mixed edit/playback sessions
+  - precommit gate closure (docs/version/worktree hygiene)
 
 ## 0.3.1 - 2026-02-16
 

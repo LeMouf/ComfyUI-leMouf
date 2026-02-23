@@ -62,8 +62,16 @@ def test_timeline_audio_viz_modes_include_line_and_dots():
 def test_timeline_reuses_shared_audio_viz_renderer_for_overlay_and_clips():
     timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
     assert "function drawAmplitudeVizLane(" in timeline
+    assert "ArrayBuffer.isView(amplitudes)" in timeline
     assert "drawAmplitudeVizLane(ctx, envelope.left, LEFT_GUTTER, timelineWidth, leftY, laneHeight" in timeline
     assert "drawAmplitudeVizLane(ctx, amplitudes, x0, widthPx, y, h" in timeline
+
+
+def test_video_preview_plan_does_not_switch_to_interactive_on_playback_or_scrub():
+    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    assert "Keep filmstrip rendering visually stable during playback/scrub." in timeline
+    assert "state?.isPlaying" not in timeline.split("function resolveVideoPreviewPlan(state, widthPx)")[1].split("function drawImageClipSignal")[0]
+    assert "state?.scrubbing" not in timeline.split("function resolveVideoPreviewPlan(state, widthPx)")[1].split("function drawImageClipSignal")[0]
 
 
 def test_composition_layout_has_vertical_row_splitter_with_persistence():
@@ -91,7 +99,7 @@ def test_monitor_transform_controls_are_wired():
 def test_monitor_direct_interactions_are_wired():
     studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
     styles = (_repo_root() / "web" / "shared" / "ui" / "styles.js").read_text(encoding="utf-8")
-    assert "const deltaXPct = (deltaX / dragState.frameWidth) * 100;" in studio_view
+    assert "let deltaXPct = (deltaX / dragState.frameWidth) * 100 * fineFactor;" in studio_view
     assert "monitorFrame.addEventListener(\"pointerdown\", onMonitorTransformPointerDown);" in studio_view
     assert "monitorFrame.addEventListener(\"wheel\", onMonitorTransformWheel, { passive: false });" in studio_view
     assert "monitorWheelCommitTimer = window.setTimeout(() => {" in studio_view
@@ -132,7 +140,8 @@ def test_monitor_export_manifest_action_is_wired():
     assert "await api.fetchApi(\"/lemouf/composition/export_manifest\"" in studio_view
     assert "await api.fetchApi(\"/lemouf/composition/export_execute\"" in studio_view
     assert "const executeNow = Boolean(clickEvent?.shiftKey);" in studio_view
-    assert "monitorStatus.textContent = `Render plan ready · ${renderMode} · v${visualUsed}/a${audioUsed}`;" in studio_view
+    assert "applyMonitorHeadFeedback(" in studio_view
+    assert "`Render plan ready · ${renderMode} · v${visualUsed}/a${audioUsed}`" in studio_view
     assert "monitorExportBtn.addEventListener(\"click\", exportRenderManifest);" in studio_view
     assert "\"POST\", \"/lemouf/composition/export_manifest\", composition_export_manifest_post" in nodes_py
 
@@ -190,6 +199,68 @@ def test_dropzone_insert_mode_draws_ghost_preview_for_drag_and_move():
     assert "const insertGhostFromClipMove = dropzoneHoverFromClipMove" in timeline
     assert "const insertGhost = insertGhostFromResourceDrag || insertGhostFromClipMove;" in timeline
     assert "const ghostLabel = `${insertGhost.label} @ ${ts}`;" in timeline
+
+
+def test_track_context_menu_temporarily_disables_canvas_pointer_events():
+    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    assert "state.canvas.style.pointerEvents = \"none\";" in timeline
+    assert "state.canvas.style.pointerEvents = menuState.prevCanvasPointerEvents;" in timeline
+    assert "function releaseTimelinePointerCaptures(state)" in timeline
+
+
+def test_resource_collection_dedupes_manual_rows_on_reload():
+    studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
+    state_store = (_repo_root() / "web" / "features" / "composition" / "state_store.js").read_text(encoding="utf-8")
+    assert "function mergeCollectedResources(inputRows, pipelineRows, manualRows)" in studio_view
+    assert "if (isManual && srcKey && nonManualSrcKeys.has(srcKey)) return;" in studio_view
+    assert "if (isManual && srcKey && manualSrcKeys.has(srcKey)) return;" in studio_view
+    assert "function canonicalizeManualResourceSrcForDedupe(srcRaw)" in state_store
+    assert "if (srcKey && seenSrc.has(srcKey)) return;" in state_store
+
+
+def test_runtime_resource_normalization_dedupes_by_id_or_src():
+    studio = (_repo_root() / "web" / "lemouf_studio.js").read_text(encoding="utf-8")
+    assert "function canonicalizeCompositionResourceSrc(srcRaw)" in studio
+    assert "function dedupeCompositionResources(rows)" in studio
+    assert "if (idKey && seenId.has(idKey)) continue;" in studio
+    assert "if (srcKey && seenSrc.has(srcKey)) continue;" in studio
+    assert "return dedupeCompositionResources(" in studio
+
+
+def test_runtime_payload_merges_explicit_and_snapshot_resources_with_dedupe():
+    studio = (_repo_root() / "web" / "lemouf_studio.js").read_text(encoding="utf-8")
+    assert "const mergedRuntimeResources = dedupeCompositionResources(" in studio
+    assert "explicitRuntimeResources.concat(snapshotRuntimeResources)" in studio
+
+
+def test_runtime_payload_restores_composition_snapshot_across_scope_aliases():
+    studio = (_repo_root() / "web" / "lemouf_studio.js").read_text(encoding="utf-8")
+    assert "const collectRuntimeCompositionScopeKeys = (targetLoopId, payload = null) => {" in studio
+    assert "for (const scopeKey of runtimeScopeKeys)" in studio
+    assert "applyCompositionScopeSnapshot(scopeKey, payload.compositionStateSnapshot, { silent: true });" in studio
+    assert "compositionResourcesByLoop.set(scopeKey, mergedRuntimeResources);" in studio
+    assert "compositionScopeAliases" in studio
+
+
+def test_export_feedback_polish_surfaces_backend_errors_and_tones():
+    studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
+    styles = (_repo_root() / "web" / "shared" / "ui" / "styles.js").read_text(encoding="utf-8")
+    assert "const applyMonitorHeadFeedback = (statusText, infoText, tone = \"neutral\") => {" in studio_view
+    assert "const extractApiErrorDetailFromResponse = async (response) => {" in studio_view
+    assert "applyMonitorHeadFeedback(\"Render backend error.\", backendError, \"error\");" in studio_view
+    assert ".lemouf-loop-composition-monitor-status.is-error" in styles
+    assert ".lemouf-loop-composition-monitor-info.is-warning" in styles
+
+
+def test_monitor_transform_phase5_polish_has_gizmo_hint_and_context_hotkeys():
+    studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
+    styles = (_repo_root() / "web" / "shared" / "ui" / "styles.js").read_text(encoding="utf-8")
+    assert "lemouf-loop-composition-monitor-transform-hint" in studio_view
+    assert "const monitorHasVisibleHotkeyContext = () => {" in studio_view
+    assert "if (!monitorHasVisibleHotkeyContext()) return;" in studio_view
+    assert "if (event.shiftKey) {" in studio_view
+    assert "axisLock" in studio_view
+    assert ".lemouf-loop-composition-monitor-transform-hint" in styles
 
 
 def test_seek_sanitizes_time_and_duration_before_clamp():
@@ -270,9 +341,10 @@ def test_filmstrip_draw_reports_real_frame_coverage_and_fallbacks_per_tile():
 def test_runtime_persist_listener_accepts_active_composition_scope_aliases():
     studio = (_repo_root() / "web" / "lemouf_studio.js").read_text(encoding="utf-8")
     assert "const collectActiveCompositionScopeKeys = () => {" in studio
-    assert "if (selectedWorkflow) push(`composition:${selectedWorkflow}`);" in studio
+    assert "const collectRuntimeCompositionScopeKeys = (targetLoopId, payload = null) => {" in studio
+    assert "composition_scope_aliases" in studio
     assert "const activeScopeKeys = collectActiveCompositionScopeKeys();" in studio
-    assert "if (!activeScopeKeys.has(key)) return;" in studio
+    assert "if (!activeScopeKeys.includes(key)) return;" in studio
 
 
 def test_monitor_layout_state_persists_overlay_toggles_and_opacities():

@@ -44,11 +44,12 @@ Current canonical snapshot:
   - execution diagnostics enriched (`skipped_visual_events`, `skipped_audio_events`, notes) for export troubleshooting
   - advanced clip compositing support added (per-clip opacity + explicit z-index layer ordering)
   - composition monitor codec config now hydrates from backend profiles with resilient local fallback
+  - runtime resource restore now merges explicit runtime resources + snapshot resources with deterministic dedupe (id/src canonicalization)
+  - export monitor diagnostics polished (tone-based status, backend error detail surfacing, richer execute feedback)
   - documentation/status synchronization pass across planning + changelog docs
 - Remaining priorities:
-  - execution polish pass (error surfacing + advanced compositing behaviors)
-  - render consistency closure (filmstrip edge placeholders + static/drag parity)
-  - persistence parity after reload (full composition state recovery)
+  - phase-6 reliability soak on mixed edit/playback sessions
+  - precommit gate closure (docs/version/worktree hygiene)
 
 ## Workspace Evolution Program (Aggregated Plan)
 
@@ -89,8 +90,8 @@ Execution order agreed for implementation:
     - grid and safe-area overlays wired with monitor toggles
     - center cross and diagonal overlays added
     - per-overlay opacity controls persisted in layout state
-- [~] Phase 4 - Output Format & Export Config Panel
-  - done/partial:
+- [x] Phase 4 - Output Format & Export Config Panel
+  - done:
     - output preset/custom dimensions + fps/audio fields routed in monitor config
     - render manifest export scaffold available
     - backend manifest persistence endpoint wired (`POST /lemouf/composition/export_manifest`)
@@ -98,26 +99,25 @@ Execution order agreed for implementation:
     - monitor codec selector now hydrates from backend profiles with fallback cache
     - backend execution endpoint wired (`POST /lemouf/composition/export_execute`) with deterministic ffmpeg plan + optional run
     - timeline/custom duration export resolution hardened against stale duration hints
-  - remaining:
-    - execution polish (detailed diagnostics + optional advanced transitions/effects layer)
-- [~] Phase 5 - Layer Transform Controls
-  - done/partial:
+    - execution diagnostics polishing completed (`diagnostics.execution` + richer status/error surfacing)
+    - optional advanced effects/transitions layer supported in export execution:
+      fade in/out (video/audio), blur, EQ, audio gain
+- [x] Phase 5 - Layer Transform Controls
+  - done:
     - per-clip transform fields persisted (`x/y/scale/rotate`)
     - pointer/wheel interactions on monitor frame wired
     - transform modes wired (`move/scale/rotate`) with keyboard shortcuts (`V/S/R`)
-  - remaining:
-    - visual gizmo ergonomics pass
-    - keybind conflict handling/polish
-- [~] Phase 6 - Composition Integration & Reliability
-  - done/partial:
+    - visual gizmo ergonomics pass (mode hint + fine/axis-lock interactions)
+    - keybind conflict handling polished (monitor-context-gated shortcuts)
+- [x] Phase 6 - Composition Integration & Reliability
+  - done:
     - many DnD/move/snap fixes, linked video+audio coupling hardening
     - scrub source routing and audio-player stabilization improved
     - insert-mode move now reuses timeline-resolved lane when valid (prevents top/bottom dropzone drift)
     - playback clamp now uses max(duration hint, computed timeline content) in seek/sync/tick
     - active audio-event edge pick hardened for heavy seek/scrub scenarios
-  - remaining:
-    - gap rendering consistency in monitor/timeline composition preview
-    - full crash/reload restore parity (layout + resources + studio state)
+    - filmstrip draw path stabilized with per-tile fallback and real-frame coverage guard
+    - runtime restore now propagates composition snapshot/resources across loop + alias scope keys
 
 ## Active Bugfix Backlog (Rephased)
 
@@ -131,11 +131,11 @@ Open items grouped to finish Stream B safely:
    - [x] no forced jump/reset to `t=0` during timeline click/scrub
    - [x] soak check with mixed lanes (video+audio + audio-only + images) under heavy seek
 3. **Render consistency**
-   - [~] filmstrip parity between static state and drag state
-   - [ ] no placeholder/brown-frame regressions at segment boundaries
+   - [x] filmstrip parity between static state and drag state
+   - [x] no placeholder/brown-frame regressions at segment boundaries
 4. **Persistence parity after reload**
-   - [~] restore studio visibility/layout mode and loaded manual resources
-   - [ ] restore working composition project state (not only run metadata)
+   - [x] restore studio visibility/layout mode and loaded manual resources
+   - [x] restore working composition project state (not only run metadata)
 5. **Editing UX completion**
    - [~] context menu actions always actionable (no blocked layers)
    - [~] stable multiselect + marquee + group move feedback
@@ -164,12 +164,13 @@ Completed in one pass:
    - filmstrip draw path now uses per-tile fallback to frame 0 and only reports success when at least one frame is actually drawn
    - drag/static preview parity aligned (no dragged-clip-only preview mode branch)
 2. [x] **Persistence parity closure**
-   - composition state-change runtime persistence now accepts active composition scope aliases (loop id + workflow alias + explicit alias list)
+  - composition state-change runtime persistence now accepts active composition scope aliases (loop id + workflow alias + explicit alias list)
+  - runtime payload restore now reapplies snapshot/resources across resolved loop/workflow alias scope keys
 3. [x] **Editing UX closure**
    - track-context selected clip collection now includes primary clip fallback
    - clip selection-set remap added on track change commit (single + group move)
 4. [ ] **Workspace evolution continuation**
-   - complete Phase 4/5 remaining points before Phase 6 full closure
+   - drive Phase 6 full closure and reliability soak
 
 ## Precommit Gate (Must Pass Before Commit)
 

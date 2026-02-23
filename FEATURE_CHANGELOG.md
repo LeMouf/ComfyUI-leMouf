@@ -29,12 +29,18 @@ _Source of truth for execution status: `docs/feature-design.md`._
   - backend execution upgraded to timeline/layer compositor graph (video overlays + audio mix), with deterministic fallback when manifest sources are missing
   - execution diagnostics enriched (`skipped_visual_events`, `skipped_audio_events`, notes) for export troubleshooting
   - advanced clip compositing support added (per-clip opacity + explicit z-index ordering)
+  - execution polish completed with optional transitions/effects in backend export:
+    - video fade in/out + blur + EQ
+    - audio fade in/out + gain
+  - execution diagnostics extended with `diagnostics.execution` runtime metadata
   - export duration mode now resolves timeline length from actual placement span
   - synchronized status wording/template across planning and changelog docs
+  - runtime restore hardening for composition:
+    - runtime payload now restores snapshot/resources across loop + workflow alias scopes
+    - persisted runtime state now includes composition scope aliases for deterministic reload hydration
 - Remaining priorities:
-  - output/export execution polish (diagnostics + advanced compositing behavior)
-  - transform ergonomics/keybind polish (`V/R/S`)
-  - phase-6 final closure (gap rendering consistency + crash/reload parity)
+  - phase-6 reliability soak on mixed edit/playback sessions
+  - precommit gate closure (docs/version/worktree hygiene)
 
 ### composition (0.3.3-wip)
 - Unified insert/drop lane resolution between resource drop and clip move paths.
@@ -50,10 +56,12 @@ _Source of truth for execution status: `docs/feature-design.md`._
 - Transform mode controls completed:
   - mode buttons in monitor config (`move/scale/rotate`),
   - keyboard shortcuts (`V/S/R`) wired to mode switch.
+- Export execution polish completed:
+  - optional effect hooks in render execution (video/audio fades, blur/EQ, gain),
+  - richer diagnostics payload for execution troubleshooting.
 - Remaining focus:
-  - full reload parity of active composition project state,
-  - transform UX polish (gizmo ergonomics + keybind conflict handling),
-  - execution polish (diagnostics + advanced compositing behavior).
+  - reliability soak under mixed edit/playback stress,
+  - precommit gate closure for release readiness.
 
 ### studio_engine (0.3.3-wip)
 - Audio timeline robustness pass:

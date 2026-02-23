@@ -255,6 +255,52 @@ function inferCompositionResourceKind(value) {
   return "image";
 }
 
+function canonicalizeCompositionResourceSrc(srcRaw) {
+  const raw = String(srcRaw || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(
+      raw,
+      typeof window !== "undefined" ? window.location.origin : "http://localhost"
+    );
+    const pathname = String(parsed.pathname || "").trim();
+    if (pathname === "/view") {
+      const filename = String(parsed.searchParams.get("filename") || "").trim();
+      const type = String(parsed.searchParams.get("type") || "").trim();
+      const subfolder = String(parsed.searchParams.get("subfolder") || "").trim();
+      if (filename) return `/view?filename=${filename}&type=${type}&subfolder=${subfolder}`;
+    }
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return raw;
+  }
+}
+
+function dedupeCompositionResources(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const out = [];
+  const seenId = new Set();
+  const seenSrc = new Set();
+  for (const row of list) {
+    const safe = row && typeof row === "object" ? row : null;
+    if (!safe) continue;
+    const kind = String(safe.kind || "").trim().toLowerCase();
+    const id = String(safe.id || "").trim();
+    const idKey = kind && id ? `${kind}:${id}` : "";
+    const canonicalSrc = canonicalizeCompositionResourceSrc(
+      safe.src || safe.previewSrc || safe.uri || safe.path || ""
+    );
+    const srcKey = kind && canonicalSrc ? `${kind}:${canonicalSrc}` : "";
+    if (idKey && seenId.has(idKey)) continue;
+    if (srcKey && seenSrc.has(srcKey)) continue;
+    out.push(safe);
+    if (idKey) seenId.add(idKey);
+    if (srcKey) seenSrc.add(srcKey);
+  }
+  return out;
+}
+
 function parseCompositionResourcesInput(rawResources) {
   const sourceText = String(rawResources || "").trim();
   if (!sourceText) return [];
@@ -338,7 +384,9 @@ function normalizeCompositionResourcesList(rawResources) {
   const rows = Array.isArray(rawResources) ? rawResources : [];
   if (!rows.length) return [];
   try {
-    return parseCompositionResourcesInput(JSON.stringify(rows));
+    return dedupeCompositionResources(
+      parseCompositionResourcesInput(JSON.stringify(rows))
+    );
   } catch {
     return [];
   }
@@ -941,6 +989,9 @@ app.registerExtension({
       song2dawDockToggleBtn,
       song2dawDockExpandBtn,
       song2dawRunDetailBlock,
+      song2dawSidebarDockHosts,
+      song2dawSidebarMonitorHost,
+      song2dawSidebarConfigHost,
       song2dawAudioPreviewAsset,
       song2dawAudioPreviewPlayer,
       song2dawOverview,
@@ -1039,10 +1090,16 @@ app.registerExtension({
     let song2dawDetailPrevBtn = null;
     let song2dawDetailNextBtn = null;
     let song2dawDetailMonitorDockBtn = null;
+    let song2dawDetailConfigDockBtn = null;
+    let song2dawDetailDockActions = null;
+    let song2dawDetailActionSeparator = null;
     let song2dawDetailBalanceRaf = 0;
     let detailScreenMode = "song2daw";
     let compositionStepMonitorDockTarget = "studio";
+    let compositionStepMonitorConfigDockTarget = "sidebar";
     let compositionStepMonitorHost = null;
+    let compositionStepMonitorConfigHost = null;
+    let compositionStepDockHosts = null;
     let pipelineActiveStepId = null;
     let pipelineSelectedStepId = null;
     const pipelineState = {
@@ -2202,24 +2259,92 @@ app.registerExtension({
       if (compositionStepMonitorHost) {
         compositionStepMonitorHost.replaceChildren();
       }
+      if (compositionStepMonitorConfigHost) {
+        compositionStepMonitorConfigHost.replaceChildren();
+      }
       if (song2dawDetailMonitorDockBtn) {
         song2dawDetailMonitorDockBtn.style.display = "none";
+      }
+      if (song2dawDetailConfigDockBtn) {
+        song2dawDetailConfigDockBtn.style.display = "none";
+      }
+      if (song2dawDetailDockActions) {
+        song2dawDetailDockActions.style.display = "none";
+      }
+      if (song2dawDetailActionSeparator) {
+        song2dawDetailActionSeparator.style.display = "none";
+      }
+      if (song2dawSidebarDockHosts) {
+        song2dawSidebarDockHosts.style.display = "none";
+      }
+      if (song2dawSidebarMonitorHost) {
+        song2dawSidebarMonitorHost.style.display = "none";
+        song2dawSidebarMonitorHost.replaceChildren();
+      }
+      if (song2dawSidebarConfigHost) {
+        song2dawSidebarConfigHost.style.display = "none";
+        song2dawSidebarConfigHost.replaceChildren();
       }
     };
 
     const updateCompositionMonitorDockButton = () => {
-      if (!song2dawDetailMonitorDockBtn) return;
       const isToolComposition = detailScreenMode === "tool_composition";
-      song2dawDetailMonitorDockBtn.style.display = isToolComposition ? "" : "none";
-      if (!isToolComposition) return;
-      const target = normalizeCompositionMonitorDockTarget(compositionStepMonitorDockTarget);
-      const inSidebar = target === "sidebar";
-      song2dawDetailMonitorDockBtn.textContent = inSidebar
-        ? "Monitor: Sidebar"
-        : "Monitor: Studio";
-      song2dawDetailMonitorDockBtn.title = inSidebar
-        ? "Switch monitor to studio dock"
-        : "Switch monitor to step sidebar";
+      if (song2dawDetailDockActions) {
+        song2dawDetailDockActions.style.display = isToolComposition ? "" : "none";
+      }
+      if (song2dawDetailActionSeparator) {
+        song2dawDetailActionSeparator.style.display = isToolComposition ? "" : "none";
+      }
+      if (song2dawDetailMonitorDockBtn) {
+        song2dawDetailMonitorDockBtn.style.display = isToolComposition ? "" : "none";
+        if (isToolComposition) {
+          const target = normalizeCompositionMonitorDockTarget(compositionStepMonitorDockTarget);
+          const inSidebar = target === "sidebar";
+          song2dawDetailMonitorDockBtn.textContent = inSidebar
+            ? "Monitor: Sidebar"
+            : "Monitor: Studio";
+          song2dawDetailMonitorDockBtn.title = inSidebar
+            ? "Switch monitor to studio dock"
+            : "Switch monitor to step sidebar";
+        }
+      }
+      if (song2dawDetailConfigDockBtn) {
+        song2dawDetailConfigDockBtn.style.display = isToolComposition ? "" : "none";
+        if (isToolComposition) {
+          const target = normalizeCompositionMonitorDockTarget(compositionStepMonitorConfigDockTarget);
+          const inSidebar = target === "sidebar";
+          song2dawDetailConfigDockBtn.textContent = inSidebar
+            ? "Config: Sidebar"
+            : "Config: Studio";
+          song2dawDetailConfigDockBtn.title = inSidebar
+            ? "Switch monitor config to studio dock"
+            : "Switch monitor config to step sidebar";
+        }
+      }
+    };
+
+    const rerenderLoopCompositionStudio = () => {
+      if (currentLoopDetail) {
+        renderLoopCompositionStudio(currentLoopDetail);
+      } else {
+        renderLoopCompositionStudio(buildMinimalCompositionDetail());
+      }
+      scheduleSong2DawDetailBalance();
+    };
+
+    const toggleCompositionMonitorDockTarget = (target = "monitor") => {
+      if (target === "config") {
+        compositionStepMonitorConfigDockTarget = normalizeCompositionMonitorDockTarget(
+          compositionStepMonitorConfigDockTarget === "sidebar" ? "studio" : "sidebar"
+        );
+      } else {
+        compositionStepMonitorDockTarget = normalizeCompositionMonitorDockTarget(
+          compositionStepMonitorDockTarget === "sidebar" ? "studio" : "sidebar"
+        );
+      }
+      updateCompositionMonitorDockButton();
+      persistPipelineRuntimeState();
+      rerenderLoopCompositionStudio();
     };
 
     const formatCompositionStepSummary = (step) => {
@@ -2259,7 +2384,20 @@ app.registerExtension({
       if (!compositionStepMonitorHost) {
         compositionStepMonitorHost = el("div", { class: "lemouf-tool-step-monitor-host" });
       }
+      if (!compositionStepMonitorConfigHost) {
+        compositionStepMonitorConfigHost = el("div", { class: "lemouf-tool-step-monitor-host" });
+      }
+      if (!compositionStepDockHosts) {
+        compositionStepDockHosts = el("div", { class: "lemouf-tool-step-dock-hosts" });
+      }
+      if (!compositionStepDockHosts.contains(compositionStepMonitorHost)) {
+        compositionStepDockHosts.appendChild(compositionStepMonitorHost);
+      }
+      if (!compositionStepDockHosts.contains(compositionStepMonitorConfigHost)) {
+        compositionStepDockHosts.appendChild(compositionStepMonitorConfigHost);
+      }
       const monitorTarget = normalizeCompositionMonitorDockTarget(compositionStepMonitorDockTarget);
+      const configTarget = normalizeCompositionMonitorDockTarget(compositionStepMonitorConfigDockTarget);
       if (monitorTarget !== "sidebar") {
         compositionStepMonitorHost.replaceChildren(
           el("div", {
@@ -2268,9 +2406,17 @@ app.registerExtension({
           })
         );
       }
-      if (song2dawStepTitle) song2dawStepTitle.textContent = "Video monitor";
+      if (configTarget !== "sidebar") {
+        compositionStepMonitorConfigHost.replaceChildren(
+          el("div", {
+            class: "lemouf-tool-step-monitor-placeholder",
+            text: "Monitor config docked in studio.",
+          })
+        );
+      }
+      if (song2dawStepTitle) song2dawStepTitle.textContent = "Composition tools";
       if (song2dawStepPanel) {
-        song2dawStepPanel.replaceChildren(song2dawStepTitle, compositionStepMonitorHost);
+        song2dawStepPanel.replaceChildren(song2dawStepTitle, compositionStepDockHosts);
       }
       if (song2dawRunSummaryTitle) {
         song2dawRunSummaryTitle.textContent = "Step summary";
@@ -2353,6 +2499,26 @@ app.registerExtension({
       );
 
       const minPanel = 110;
+      if (detailScreenMode === "tool_composition") {
+        const contentNode = compositionStepDockHosts || compositionStepMonitorHost;
+        const contentClientHeight = Math.max(0, Number(contentNode?.clientHeight || 0));
+        const contentScrollHeight = Math.max(0, Number(contentNode?.scrollHeight || 0));
+        const contentChrome = Math.max(28, song2dawStepPanel.offsetHeight - contentClientHeight);
+        const contentNeed = Math.max(minPanel, Math.ceil(contentScrollHeight + contentChrome));
+        const maxContent = Math.max(minPanel, available - minPanel);
+        const contentTarget = clampPanelHeight(contentNeed, minPanel, maxContent);
+        song2dawStepPanel.style.flex = "0 0 auto";
+        song2dawStepPanel.style.maxHeight = `${contentTarget}px`;
+        song2dawStepPanel.style.overflow = "auto";
+        song2dawRunSummaryPanel.style.flex = "1 1 auto";
+        song2dawRunSummaryPanel.style.minHeight = `${minPanel}px`;
+        song2dawRunSummaryPanel.style.maxHeight = "";
+        return;
+      }
+
+      song2dawStepPanel.style.maxHeight = "";
+      song2dawStepPanel.style.overflow = "hidden";
+      song2dawRunSummaryPanel.style.minHeight = "";
       if (available <= minPanel * 2) {
         const half = Math.max(80, Math.floor(available / 2));
         song2dawStepPanel.style.flex = `0 0 ${half}px`;
@@ -2361,7 +2527,7 @@ app.registerExtension({
       }
 
       const contentNode = detailScreenMode === "tool_composition"
-        ? compositionStepMonitorHost
+        ? (compositionStepDockHosts || compositionStepMonitorHost)
         : song2dawStepDetail;
       const contentClientHeight = Math.max(0, Number(contentNode?.clientHeight || 0));
       const contentScrollHeight = Math.max(0, Number(contentNode?.scrollHeight || 0));
@@ -2621,10 +2787,45 @@ app.registerExtension({
       return normalizeCompositionResourcesList(rows);
     };
 
+    const collectRuntimeCompositionScopeKeys = (targetLoopId, payload = null) => {
+      const keys = new Set();
+      const pushKey = (value) => {
+        const key = String(value || "").trim();
+        if (!key) return;
+        keys.add(key);
+      };
+      const runtime = payload && typeof payload === "object" ? payload : {};
+      pushKey(targetLoopId);
+      pushKey(runtime.loopId);
+      pushKey(runtime.loop_id);
+      const workflowCandidates = [
+        runtime.workflowName,
+        runtime.workflow_name,
+        runtime.uiState?.workflowName,
+        selectedPipelineWorkflowName,
+        pipelineSelect?.value,
+      ];
+      for (const candidate of workflowCandidates) {
+        const workflowName = String(candidate || "").trim();
+        if (!workflowName) continue;
+        pushKey(`composition:${workflowName}`);
+      }
+      const aliasCandidates = [
+        ...(Array.isArray(runtime.compositionScopeAliases) ? runtime.compositionScopeAliases : []),
+        ...(Array.isArray(runtime.composition_scope_aliases) ? runtime.composition_scope_aliases : []),
+        ...(Array.isArray(runtime.uiState?.compositionScopeAliases) ? runtime.uiState.compositionScopeAliases : []),
+        ...(Array.isArray(runtime.uiState?.composition_scope_aliases) ? runtime.uiState.composition_scope_aliases : []),
+      ];
+      for (const alias of aliasCandidates) pushKey(alias);
+      if (String(targetLoopId || "").startsWith("composition:")) pushKey("composition:manual");
+      return Array.from(keys.values());
+    };
+
     const applyPipelineRuntimePayload = (payload, targetLoopId) => {
       if (!payload || typeof payload !== "object") return false;
       const payloadLoopId = String(payload.loopId || payload.loop_id || "").trim();
       if (payloadLoopId && payloadLoopId !== targetLoopId) return false;
+      const runtimeScopeKeys = collectRuntimeCompositionScopeKeys(targetLoopId, payload);
       const steps = sanitizePipelineSteps(payload.steps);
       if (!steps.length) return false;
       pipelineState.steps = steps;
@@ -2639,19 +2840,25 @@ app.registerExtension({
         ? selectedId
         : (pipelineActiveStepId || steps[0]?.id || null);
       if (payload.compositionStateSnapshot && typeof payload.compositionStateSnapshot === "object") {
-        applyCompositionScopeSnapshot(targetLoopId, payload.compositionStateSnapshot, { silent: true });
+        for (const scopeKey of runtimeScopeKeys) {
+          applyCompositionScopeSnapshot(scopeKey, payload.compositionStateSnapshot, { silent: true });
+        }
       }
       const explicitRuntimeResources = Array.isArray(payload.compositionResources)
         ? normalizeCompositionResourcesList(payload.compositionResources)
         : [];
       const snapshotRuntimeResources = runtimeSnapshotResources(payload);
-      const mergedRuntimeResources = explicitRuntimeResources.length
-        ? explicitRuntimeResources
-        : snapshotRuntimeResources;
+      const mergedRuntimeResources = dedupeCompositionResources(
+        explicitRuntimeResources.concat(snapshotRuntimeResources)
+      );
       if (mergedRuntimeResources.length) {
-        compositionResourcesByLoop.set(targetLoopId, mergedRuntimeResources);
+        for (const scopeKey of runtimeScopeKeys) {
+          compositionResourcesByLoop.set(scopeKey, mergedRuntimeResources);
+        }
       } else {
-        compositionResourcesByLoop.delete(targetLoopId);
+        for (const scopeKey of runtimeScopeKeys) {
+          compositionResourcesByLoop.delete(scopeKey);
+        }
         const compositionStep = steps.find(
           (entry) => String(entry?.role || "").toLowerCase() === "composition"
         );
@@ -2659,7 +2866,9 @@ app.registerExtension({
           ? normalizeCompositionResourcesList(parseCompositionResourcesInput(compositionStep.resourcesJson))
           : [];
         if (fallbackResources.length) {
-          compositionResourcesByLoop.set(targetLoopId, fallbackResources);
+          for (const scopeKey of runtimeScopeKeys) {
+            compositionResourcesByLoop.set(scopeKey, fallbackResources);
+          }
         }
       }
       const uiState = payload.uiState && typeof payload.uiState === "object" ? payload.uiState : {};
@@ -2679,6 +2888,9 @@ app.registerExtension({
         detailScreenMode: String(uiState.detailScreenMode || "song2daw"),
         compositionMonitorDockTarget: normalizeCompositionMonitorDockTarget(
           uiState.compositionMonitorDockTarget
+        ),
+        compositionMonitorConfigDockTarget: normalizeCompositionMonitorDockTarget(
+          uiState.compositionMonitorConfigDockTarget || "sidebar"
         ),
         dockContentMode: String(uiState.dockContentMode || "song2daw"),
         dockExpanded: Boolean(uiState.dockExpanded),
@@ -2700,6 +2912,20 @@ app.registerExtension({
       return true;
     };
 
+    const collectActiveCompositionScopeKeys = () => {
+      return collectRuntimeCompositionScopeKeys(currentLoopId, {
+        workflowName: selectedPipelineWorkflowName || pipelineSelect?.value || "",
+        composition_scope_aliases: Array.isArray(currentLoopDetail?.composition_scope_aliases)
+          ? currentLoopDetail.composition_scope_aliases
+          : [],
+        uiState: {
+          composition_scope_aliases: Array.isArray(currentLoopDetail?.runtime_state?.composition_scope_aliases)
+            ? currentLoopDetail.runtime_state.composition_scope_aliases
+            : [],
+        },
+      });
+    };
+
     const persistPipelineRuntimeState = ({ clearWhenNoLoop = false } = {}) => {
       try {
         if (!currentLoopId) {
@@ -2718,10 +2944,13 @@ app.registerExtension({
           compositionResourcesByLoop.get(currentLoopId)
         );
         const compositionStateSnapshot = getCompositionScopeSnapshot(currentLoopId);
+        const compositionScopeAliases = collectActiveCompositionScopeKeys()
+          .filter((key) => key !== String(currentLoopId || "").trim());
         const payload = {
           version: 1,
           loopId: String(currentLoopId),
           workflowName: String(selectedPipelineWorkflowName || pipelineSelect?.value || ""),
+          compositionScopeAliases,
           steps,
           lastRun: pipelineState.lastRun && typeof pipelineState.lastRun === "object"
             ? pipelineState.lastRun
@@ -2736,6 +2965,9 @@ app.registerExtension({
             compositionMonitorDockTarget: normalizeCompositionMonitorDockTarget(
               compositionStepMonitorDockTarget
             ),
+            compositionMonitorConfigDockTarget: normalizeCompositionMonitorDockTarget(
+              compositionStepMonitorConfigDockTarget
+            ),
             dockContentMode: String(dockContentMode || "song2daw"),
             loopCompositionRequested: Boolean(loopCompositionRequested),
             dockExpanded: Boolean(song2dawDockExpanded),
@@ -2749,29 +2981,6 @@ app.registerExtension({
       } catch {}
     };
 
-    const collectActiveCompositionScopeKeys = () => {
-      const keys = new Set();
-      const push = (value) => {
-        const key = String(value || "").trim();
-        if (!key) return;
-        keys.add(key);
-      };
-      const loopId = String(currentLoopId || "").trim();
-      push(loopId);
-      const selectedWorkflow = String(selectedPipelineWorkflowName || pipelineSelect?.value || "").trim();
-      if (selectedWorkflow) push(`composition:${selectedWorkflow}`);
-      if (loopId.startsWith("composition:")) push("composition:manual");
-      const aliases = Array.isArray(currentLoopDetail?.composition_scope_aliases)
-        ? currentLoopDetail.composition_scope_aliases
-        : [];
-      for (const alias of aliases) push(alias);
-      const runtimeAliases = Array.isArray(currentLoopDetail?.runtime_state?.composition_scope_aliases)
-        ? currentLoopDetail.runtime_state.composition_scope_aliases
-        : [];
-      for (const alias of runtimeAliases) push(alias);
-      return keys;
-    };
-
     let compositionStateRuntimePersistBound = false;
     const ensureCompositionStateRuntimePersist = () => {
       if (compositionStateRuntimePersistBound) return;
@@ -2780,7 +2989,7 @@ app.registerExtension({
         const key = String(scopeKey || "").trim();
         if (!key || !currentLoopId) return;
         const activeScopeKeys = collectActiveCompositionScopeKeys();
-        if (!activeScopeKeys.has(key)) return;
+        if (!activeScopeKeys.includes(key)) return;
         persistPipelineRuntimeState();
       });
     };
@@ -3164,6 +3373,17 @@ app.registerExtension({
 
     const clearLoopCompositionStudio = () => {
       clearLoopCompositionStudioView({ panelBody: loopCompositionBody });
+      if (song2dawSidebarDockHosts) {
+        song2dawSidebarDockHosts.style.display = "none";
+      }
+      if (song2dawSidebarMonitorHost) {
+        song2dawSidebarMonitorHost.style.display = "none";
+        song2dawSidebarMonitorHost.replaceChildren();
+      }
+      if (song2dawSidebarConfigHost) {
+        song2dawSidebarConfigHost.style.display = "none";
+        song2dawSidebarConfigHost.replaceChildren();
+      }
     };
 
     const getCompositionPipelineState = () => {
@@ -3201,22 +3421,66 @@ app.registerExtension({
     const renderLoopCompositionStudio = (detail) => {
       if (!loopCompositionBody) return;
       const monitorDockTarget = normalizeCompositionMonitorDockTarget(compositionStepMonitorDockTarget);
+      const monitorConfigDockTarget = normalizeCompositionMonitorDockTarget(
+        compositionStepMonitorConfigDockTarget
+      );
+      const isCompositionDetailContext =
+        detailScreenMode === "tool_composition" && currentScreen === "song2daw_detail";
+      const isCompositionHomeContext =
+        currentScreen === "home" && dockContentMode === "loop_composition";
+      const sidebarMonitorHost = isCompositionDetailContext
+        ? compositionStepMonitorHost
+        : (isCompositionHomeContext ? song2dawSidebarMonitorHost : null);
+      const sidebarMonitorConfigHost = isCompositionDetailContext
+        ? compositionStepMonitorConfigHost
+        : (isCompositionHomeContext ? song2dawSidebarConfigHost : null);
       const useSidebarMonitorHost =
-        detailScreenMode === "tool_composition" &&
-        currentScreen === "song2daw_detail" &&
         monitorDockTarget === "sidebar" &&
-        compositionStepMonitorHost &&
-        typeof compositionStepMonitorHost.appendChild === "function";
+        sidebarMonitorHost &&
+        typeof sidebarMonitorHost.appendChild === "function";
+      const useSidebarMonitorConfigHost =
+        monitorConfigDockTarget === "sidebar" &&
+        sidebarMonitorConfigHost &&
+        typeof sidebarMonitorConfigHost.appendChild === "function";
+      if (song2dawSidebarDockHosts) {
+        const showDockHosts = isCompositionHomeContext && (useSidebarMonitorHost || useSidebarMonitorConfigHost);
+        song2dawSidebarDockHosts.style.display = showDockHosts ? "" : "none";
+      }
+      if (song2dawSidebarMonitorHost) {
+        const show = isCompositionHomeContext && useSidebarMonitorHost;
+        song2dawSidebarMonitorHost.style.display = show ? "" : "none";
+        if (!show) {
+          song2dawSidebarMonitorHost.replaceChildren();
+        }
+      }
+      if (song2dawSidebarConfigHost) {
+        const show = isCompositionHomeContext && useSidebarMonitorConfigHost;
+        song2dawSidebarConfigHost.style.display = show ? "" : "none";
+        if (!show) {
+          song2dawSidebarConfigHost.replaceChildren();
+        }
+      }
       if (
-        detailScreenMode === "tool_composition" &&
-        currentScreen === "song2daw_detail" &&
-        compositionStepMonitorHost &&
+        isCompositionDetailContext &&
+        sidebarMonitorHost &&
         !useSidebarMonitorHost
       ) {
-        compositionStepMonitorHost.replaceChildren(
+        sidebarMonitorHost.replaceChildren(
           el("div", {
             class: "lemouf-tool-step-monitor-placeholder",
             text: "Video monitor docked in studio.",
+          })
+        );
+      }
+      if (
+        isCompositionDetailContext &&
+        sidebarMonitorConfigHost &&
+        !useSidebarMonitorConfigHost
+      ) {
+        sidebarMonitorConfigHost.replaceChildren(
+          el("div", {
+            class: "lemouf-tool-step-monitor-placeholder",
+            text: "Monitor config docked in studio.",
           })
         );
       }
@@ -3273,7 +3537,12 @@ app.registerExtension({
         panelBody: loopCompositionBody,
         dockExpanded: song2dawDockExpanded,
         onOpenAsset: (src, context = null) => openLightbox(src, context),
-        monitorHost: useSidebarMonitorHost ? compositionStepMonitorHost : null,
+        monitorHost: useSidebarMonitorHost ? sidebarMonitorHost : null,
+        monitorConfigHost: useSidebarMonitorConfigHost ? sidebarMonitorConfigHost : null,
+        monitorDockTarget,
+        monitorConfigDockTarget,
+        onToggleMonitorDock: () => toggleCompositionMonitorDockTarget("monitor"),
+        onToggleMonitorConfigDock: () => toggleCompositionMonitorDockTarget("config"),
         compositionGate: {
           enabled: Boolean(compositionState && isGatePending),
           status: gateStatus || "idle",
@@ -3329,6 +3598,17 @@ app.registerExtension({
           ? "Composition Studio"
           : "Song2DAW Studio";
       }
+      if (nextMode !== "loop_composition") {
+        if (song2dawSidebarDockHosts) song2dawSidebarDockHosts.style.display = "none";
+        if (song2dawSidebarMonitorHost) {
+          song2dawSidebarMonitorHost.style.display = "none";
+          song2dawSidebarMonitorHost.replaceChildren();
+        }
+        if (song2dawSidebarConfigHost) {
+          song2dawSidebarConfigHost.style.display = "none";
+          song2dawSidebarConfigHost.replaceChildren();
+        }
+      }
       persistPipelineRuntimeState();
     };
 
@@ -3355,6 +3635,9 @@ app.registerExtension({
       detailScreenMode = String(pending.detailScreenMode || detailScreenMode || "song2daw");
       compositionStepMonitorDockTarget = normalizeCompositionMonitorDockTarget(
         pending.compositionMonitorDockTarget
+      );
+      compositionStepMonitorConfigDockTarget = normalizeCompositionMonitorDockTarget(
+        pending.compositionMonitorConfigDockTarget || "sidebar"
       );
       updateCompositionMonitorDockButton();
       setDockContentMode("loop_composition");
@@ -5720,7 +6003,9 @@ app.registerExtension({
         setCurrentLoopId(loopId);
         await refreshLoopDetail();
 
-        const resources = parseCompositionResourcesInput(compositionStep.resourcesJson);
+        const resources = normalizeCompositionResourcesList(
+          parseCompositionResourcesInput(compositionStep.resourcesJson)
+        );
         compositionResourcesByLoop.set(loopId, resources);
 
         const now = Date.now();
@@ -6047,22 +6332,30 @@ app.registerExtension({
       text: "Monitor: Studio",
       style: "display:none;",
     });
+    song2dawDetailConfigDockBtn = el("button", {
+      class: "lemouf-loop-btn alt",
+      type: "button",
+      text: "Config: Sidebar",
+      style: "display:none;",
+    });
     song2dawDetailPrevBtn.addEventListener("click", () => stepSong2DawDetailBy(-1));
     song2dawDetailNextBtn.addEventListener("click", () => stepSong2DawDetailBy(1));
     song2dawDetailMonitorDockBtn.addEventListener("click", () => {
       if (detailScreenMode !== "tool_composition") return;
-      compositionStepMonitorDockTarget = normalizeCompositionMonitorDockTarget(
-        compositionStepMonitorDockTarget === "sidebar" ? "studio" : "sidebar"
-      );
-      updateCompositionMonitorDockButton();
-      persistPipelineRuntimeState();
-      if (currentLoopDetail) {
-        renderLoopCompositionStudio(currentLoopDetail);
-      } else {
-        renderLoopCompositionStudio(buildMinimalCompositionDetail());
-      }
-      scheduleSong2DawDetailBalance();
+      toggleCompositionMonitorDockTarget("monitor");
     });
+    song2dawDetailConfigDockBtn.addEventListener("click", () => {
+      if (detailScreenMode !== "tool_composition") return;
+      toggleCompositionMonitorDockTarget("config");
+    });
+    song2dawDetailDockActions = el("div", { class: "lemouf-song2daw-detail-dock-actions" }, [
+      song2dawDetailMonitorDockBtn,
+      song2dawDetailConfigDockBtn,
+    ]);
+    const song2dawDetailNavActions = el("div", { class: "lemouf-song2daw-detail-nav-actions" }, [
+      song2dawDetailPrevBtn,
+      song2dawDetailNextBtn,
+    ]);
     song2dawRunSummaryTitle = el("div", { class: "lemouf-song2daw-step-title", text: "Run summary" });
     song2dawRunSummaryPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-song2daw-detail-summary-panel" }, [
       song2dawRunSummaryTitle,
@@ -6076,9 +6369,12 @@ app.registerExtension({
             song2dawDetailHeaderMeta,
           ]),
           el("div", { class: "lemouf-song2daw-detail-head-actions" }, [
-            song2dawDetailMonitorDockBtn,
-            song2dawDetailPrevBtn,
-            song2dawDetailNextBtn,
+            song2dawDetailDockActions,
+            (song2dawDetailActionSeparator = el("div", {
+              class: "lemouf-song2daw-detail-action-separator",
+              "aria-hidden": "true",
+            })),
+            song2dawDetailNavActions,
           ]),
         ]),
         song2dawStepPanel,
