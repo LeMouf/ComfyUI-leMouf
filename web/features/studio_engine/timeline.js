@@ -2892,7 +2892,9 @@ function mapTimelineSecToSignalSourceSec(state, sourceDurationSec, timelineSec) 
 }
 
 function drawAmplitudeVizLane(ctx, amplitudes, x0, widthPx, y, h, options = {}) {
-  const values = Array.isArray(amplitudes) ? amplitudes : [];
+  const values = Array.isArray(amplitudes)
+    ? amplitudes
+    : (ArrayBuffer.isView(amplitudes) ? amplitudes : []);
   if (!values.length || widthPx <= 0 || h <= 0) return;
   const mode = normalizeSectionVizMode(options.mode);
   const palette = resolveAudioVizPalette(options.palette);
@@ -3411,13 +3413,14 @@ function collectSectionAudioVisualEvents(state, visibleStartSec, visibleEndSec) 
   const eventsByTrack = studioData?.eventsByTrack && typeof studioData.eventsByTrack === "object"
     ? studioData.eventsByTrack
     : {};
-  const out = [];
+  const unmuted = [];
+  const muted = [];
   for (const track of tracks) {
     const kind = String(track?.kind || "").toLowerCase();
     if (kind !== "audio") continue;
     const trackName = String(track?.name || "").trim();
     if (!trackName) continue;
-    if (isTrackMuted(state, trackName)) continue;
+    const trackMuted = isTrackMuted(state, trackName);
     const channelMode = resolveEffectiveChannelMode(state, track);
     const events = Array.isArray(eventsByTrack[trackName]) ? eventsByTrack[trackName] : [];
     for (const event of events) {
@@ -3425,7 +3428,8 @@ function collectSectionAudioVisualEvents(state, visibleStartSec, visibleEndSec) 
       const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
       const end = start + duration;
       if (end <= visibleStartSec || start >= visibleEndSec) continue;
-      out.push({
+      const target = trackMuted ? muted : unmuted;
+      target.push({
         trackName,
         clipId: String(event?.clipId || "").trim(),
         start,
@@ -3437,7 +3441,51 @@ function collectSectionAudioVisualEvents(state, visibleStartSec, visibleEndSec) 
       });
     }
   }
-  return out;
+  if (unmuted.length || muted.length) {
+    return unmuted.length ? unmuted : muted;
+  }
+  // Robust fallback: when audio lanes are temporarily unavailable (or not yet materialized),
+  // keep composition audio timeline readable from video events that carry audio.
+  for (const track of tracks) {
+    const kind = String(track?.kind || "").toLowerCase();
+    if (kind !== "video") continue;
+    const trackName = String(track?.name || "").trim();
+    if (!trackName) continue;
+    const linkedTracks = deriveVideoAudioTrackNames(trackName);
+    const linkedNames = [linkedTracks.stereo, linkedTracks.mono].filter((name) => {
+      return Array.isArray(eventsByTrack[name]) && eventsByTrack[name].length > 0;
+    });
+    const linkedMuted = linkedNames.length
+      ? linkedNames.every((name) => isTrackMuted(state, name))
+      : isTrackMuted(state, trackName);
+    const events = Array.isArray(eventsByTrack[trackName]) ? eventsByTrack[trackName] : [];
+    for (const event of events) {
+      const hasAudio =
+        Boolean(event?.hasAudio) ||
+        Boolean(String(event?.assetKey || "").trim()) ||
+        linkedNames.length > 0;
+      if (!hasAudio) continue;
+      const start = Math.max(0, Number(event?.time || 0));
+      const duration = Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.duration || CLIP_EDIT_MIN_DURATION_SEC));
+      const end = start + duration;
+      if (end <= visibleStartSec || start >= visibleEndSec) continue;
+      const channelMode = linkedTracks.mono && linkedNames.includes(linkedTracks.mono) && !linkedNames.includes(linkedTracks.stereo)
+        ? "mono"
+        : "stereo";
+      const target = linkedMuted ? muted : unmuted;
+      target.push({
+        trackName,
+        clipId: String(event?.clipId || "").trim(),
+        start,
+        end,
+        duration,
+        startOffsetSec: Math.max(0, Number(event?.startOffsetSec || 0)),
+        sourceDurationSec: Math.max(CLIP_EDIT_MIN_DURATION_SEC, Number(event?.sourceDurationSec || duration)),
+        channelMode,
+      });
+    }
+  }
+  return unmuted.length ? unmuted : muted;
 }
 
 function buildSectionCompositionAudioEnvelope(state, audioEvents, visibleStartSec, visibleEndSec, bins) {
@@ -3961,12 +4009,13 @@ function resolveVideoPreviewPlan(state, widthPx) {
   const mode = normalizeVideoPreviewMode(state?.videoPreviewMode);
   const qualityHint = normalizeVideoPreviewQualityHint(state?.previewQualityHint);
   const queuePressure = getFilmstripQueuePressure();
+  // Keep filmstrip rendering visually stable during playback/scrub.
+  // We only switch to "interactive" preview when the user is actively editing
+  // clip geometry (drag/trim/pan/resize), not when transport is running.
   const interactive = Boolean(
     state?.clipEditSession ||
     state?.panningX ||
-    state?.scrubbing ||
-    state?.resizingSection ||
-    state?.isPlaying
+    state?.resizingSection
   );
   const pressureHigh = queuePressure >= 6;
   const pressureMedium = queuePressure >= 2;
@@ -6380,11 +6429,53 @@ function closeTrackContextMenu(state) {
   try {
     menuState.root?.remove?.();
   } catch {}
+  try {
+    if (state?.canvas && menuState.prevCanvasPointerEvents != null) {
+      state.canvas.style.pointerEvents = menuState.prevCanvasPointerEvents;
+    }
+  } catch {}
   state.trackContextMenu = null;
+}
+
+function releaseTimelinePointerCaptures(state) {
+  const canvas = state?.canvas;
+  if (!canvas || typeof canvas.releasePointerCapture !== "function") return;
+  const pointerIds = new Set();
+  const pushPointerId = (value) => {
+    const id = Number(value);
+    if (Number.isFinite(id)) pointerIds.add(id);
+  };
+  pushPointerId(state?.mutePaintPointerId);
+  pushPointerId(state?.scrubPointerId);
+  pushPointerId(state?.resizeSectionPointerId);
+  pushPointerId(state?.panPointerId);
+  pushPointerId(state?.clipEditSession?.pointerId);
+  pushPointerId(state?.boxSelection?.pointerId);
+  pushPointerId(state?.pendingTrackPointer?.pointerId);
+  for (const id of pointerIds.values()) {
+    try {
+      if (typeof canvas.hasPointerCapture === "function" && !canvas.hasPointerCapture(id)) continue;
+      canvas.releasePointerCapture(id);
+    } catch {}
+  }
+  state.mutePaintPointerId = null;
+  state.scrubPointerId = null;
+  state.resizeSectionPointerId = null;
+  state.panPointerId = null;
+  if (state.clipEditSession && typeof state.clipEditSession === "object") {
+    state.clipEditSession.pointerId = null;
+  }
+  if (state.boxSelection && typeof state.boxSelection === "object") {
+    state.boxSelection.pointerId = null;
+  }
+  if (state.pendingTrackPointer && typeof state.pendingTrackPointer === "object") {
+    state.pendingTrackPointer.pointerId = null;
+  }
 }
 
 function openTrackContextMenu(state, clientX, clientY, context) {
   closeTrackContextMenu(state);
+  releaseTimelinePointerCaptures(state);
   const trackName = String(context?.trackName || "").trim();
   if (!trackName) return;
   const trackKind = String(context?.trackKind || "").trim().toLowerCase();
@@ -6424,7 +6515,7 @@ function openTrackContextMenu(state, clientX, clientY, context) {
       title: disabled && disabledReason ? String(disabledReason) : "",
     });
     if (disabled) button.classList.add("is-disabled");
-    button.addEventListener("click", () => {
+    const runAction = () => {
       if (disabled) return;
       closeTrackContextMenu(state);
       const accepted = typeof state.onTrackContextAction === "function"
@@ -6459,6 +6550,20 @@ function openTrackContextMenu(state, clientX, clientY, context) {
       }
       draw(state);
       if (accepted) renderOverview(state);
+    };
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    button.addEventListener("pointerup", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      runAction();
+    });
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      runAction();
     });
     return button;
   };
@@ -6527,11 +6632,19 @@ function openTrackContextMenu(state, clientX, clientY, context) {
   document.addEventListener("pointerdown", onPointerDownCapture, true);
   document.addEventListener("keydown", onKeyDownCapture, true);
   window.addEventListener("blur", onWindowBlur);
+  let prevCanvasPointerEvents = "";
+  try {
+    if (state?.canvas) {
+      prevCanvasPointerEvents = String(state.canvas.style.pointerEvents || "");
+      state.canvas.style.pointerEvents = "none";
+    }
+  } catch {}
   state.trackContextMenu = {
     root,
     onPointerDownCapture,
     onKeyDownCapture,
     onWindowBlur,
+    prevCanvasPointerEvents,
   };
 }
 

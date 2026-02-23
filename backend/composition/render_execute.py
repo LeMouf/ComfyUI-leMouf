@@ -84,6 +84,7 @@ def _diagnostics_bucket() -> Dict[str, Any]:
         "skipped_visual_events": [],
         "skipped_audio_events": [],
         "notes": [],
+        "execution": {},
     }
 
 
@@ -338,6 +339,54 @@ def _collect_visual_events(
                 0.0,
                 100.0,
             )
+            fade_in_sec = _clamp(
+                _to_number(
+                    (placement or {}).get("effectFadeInSec", event.get("effectFadeInSec")),
+                    0.0,
+                ),
+                0.0,
+                30.0,
+            )
+            fade_out_sec = _clamp(
+                _to_number(
+                    (placement or {}).get("effectFadeOutSec", event.get("effectFadeOutSec")),
+                    0.0,
+                ),
+                0.0,
+                30.0,
+            )
+            blur_sigma = _clamp(
+                _to_number(
+                    (placement or {}).get("effectBlurSigma", event.get("effectBlurSigma")),
+                    0.0,
+                ),
+                0.0,
+                20.0,
+            )
+            eq_saturation = _clamp(
+                _to_number(
+                    (placement or {}).get("effectEqSaturation", event.get("effectEqSaturation")),
+                    1.0,
+                ),
+                0.0,
+                4.0,
+            )
+            eq_contrast = _clamp(
+                _to_number(
+                    (placement or {}).get("effectEqContrast", event.get("effectEqContrast")),
+                    1.0,
+                ),
+                0.0,
+                4.0,
+            )
+            eq_brightness = _clamp(
+                _to_number(
+                    (placement or {}).get("effectEqBrightness", event.get("effectEqBrightness")),
+                    0.0,
+                ),
+                -1.0,
+                1.0,
+            )
             z_index = _to_number((placement or {}).get("zIndex"), 0.0)
             target_w = max(2, int(round(output_width * (scale_pct / 100.0))))
             target_h = max(2, int(round(output_height * (scale_pct / 100.0))))
@@ -358,6 +407,12 @@ def _collect_visual_events(
                     "offset_y_px": float(offset_y_px),
                     "rotate_deg": float(rotate_deg),
                     "opacity_pct": float(opacity_pct),
+                    "fade_in_sec": float(fade_in_sec),
+                    "fade_out_sec": float(fade_out_sec),
+                    "blur_sigma": float(blur_sigma),
+                    "eq_saturation": float(eq_saturation),
+                    "eq_contrast": float(eq_contrast),
+                    "eq_brightness": float(eq_brightness),
                     "z_index": float(z_index),
                     "clip_id": clip_id,
                 }
@@ -386,6 +441,7 @@ def _collect_audio_events(
     events_by_track = manifest_maps.get("events_by_track") if isinstance(manifest_maps.get("events_by_track"), dict) else {}
     resource_src_by_id = manifest_maps.get("resource_src_by_id") if isinstance(manifest_maps.get("resource_src_by_id"), dict) else {}
     clip_src_by_id = manifest_maps.get("clip_src_by_id") if isinstance(manifest_maps.get("clip_src_by_id"), dict) else {}
+    placement_by_clip = manifest_maps.get("placement_by_clip") if isinstance(manifest_maps.get("placement_by_clip"), dict) else {}
     out: List[Dict[str, Any]] = []
     for idx, track in enumerate(tracks):
         if not isinstance(track, dict):
@@ -442,6 +498,31 @@ def _collect_audio_events(
             start_offset_sec = max(0.0, _to_number(event.get("startOffsetSec"), 0.0))
             start_offset_sec = _clamp(start_offset_sec, 0.0, max(0.0, source_duration_sec - 0.02))
             duration_sec = _clamp(duration_sec, 0.02, max(0.02, source_duration_sec - start_offset_sec))
+            placement = placement_by_clip.get(clip_id) if clip_id else None
+            fade_in_sec = _clamp(
+                _to_number(
+                    (placement or {}).get("effectAudioFadeInSec", event.get("effectAudioFadeInSec")),
+                    0.0,
+                ),
+                0.0,
+                30.0,
+            )
+            fade_out_sec = _clamp(
+                _to_number(
+                    (placement or {}).get("effectAudioFadeOutSec", event.get("effectAudioFadeOutSec")),
+                    0.0,
+                ),
+                0.0,
+                30.0,
+            )
+            volume_gain = _clamp(
+                _to_number(
+                    (placement or {}).get("effectAudioGain", event.get("effectAudioGain")),
+                    1.0,
+                ),
+                0.0,
+                8.0,
+            )
             out.append(
                 {
                     "track_index": int(idx),
@@ -450,6 +531,9 @@ def _collect_audio_events(
                     "time_sec": float(time_sec),
                     "duration_sec": float(duration_sec),
                     "start_offset_sec": float(start_offset_sec),
+                    "fade_in_sec": float(fade_in_sec),
+                    "fade_out_sec": float(fade_out_sec),
+                    "volume_gain": float(volume_gain),
                     "clip_id": clip_id,
                 }
             )
@@ -547,6 +631,12 @@ def _build_timeline_layers_ffmpeg_command(
         rotate_deg = _to_number(event.get("rotate_deg"), 0.0)
         rotate_rad = (rotate_deg * math.pi) / 180.0
         opacity = _clamp((_to_number(event.get("opacity_pct"), 100.0) / 100.0), 0.0, 1.0)
+        fade_in_sec = _clamp(_to_number(event.get("fade_in_sec"), 0.0), 0.0, 30.0)
+        fade_out_sec = _clamp(_to_number(event.get("fade_out_sec"), 0.0), 0.0, 30.0)
+        blur_sigma = _clamp(_to_number(event.get("blur_sigma"), 0.0), 0.0, 20.0)
+        eq_saturation = _clamp(_to_number(event.get("eq_saturation"), 1.0), 0.0, 4.0)
+        eq_contrast = _clamp(_to_number(event.get("eq_contrast"), 1.0), 0.0, 4.0)
+        eq_brightness = _clamp(_to_number(event.get("eq_brightness"), 0.0), -1.0, 1.0)
         offset_x = _to_number(event.get("offset_x_px"), 0.0)
         offset_y = _to_number(event.get("offset_y_px"), 0.0)
         clip_filters = (
@@ -560,6 +650,24 @@ def _build_timeline_layers_ffmpeg_command(
         )
         if abs(rotate_rad) > 1e-9:
             clip_filters += f",rotate={rotate_rad:.9f}:c=none:ow=rotw(iw):oh=roth(ih)"
+        if blur_sigma > 0.01:
+            clip_filters += f",boxblur={blur_sigma:.3f}:1"
+        if (
+            abs(eq_saturation - 1.0) > 1e-6
+            or abs(eq_contrast - 1.0) > 1e-6
+            or abs(eq_brightness) > 1e-6
+        ):
+            clip_filters += (
+                f",eq=saturation={eq_saturation:.4f}:"
+                f"contrast={eq_contrast:.4f}:brightness={eq_brightness:.4f}"
+            )
+        if fade_in_sec > 0.01:
+            fade_in_applied = min(fade_in_sec, max(0.02, event_duration - 0.01))
+            clip_filters += f",fade=t=in:st=0:d={fade_in_applied:.6f}:alpha=1"
+        if fade_out_sec > 0.01 and event_duration > 0.03:
+            fade_out_applied = min(fade_out_sec, max(0.02, event_duration - 0.01))
+            fade_out_start = max(0.0, event_duration - fade_out_applied)
+            clip_filters += f",fade=t=out:st={fade_out_start:.6f}:d={fade_out_applied:.6f}:alpha=1"
         if opacity < 0.999:
             clip_filters += f",colorchannelmixer=aa={opacity:.6f}"
         clip_filters += f"[{clip_label}]"
@@ -587,12 +695,25 @@ def _build_timeline_layers_ffmpeg_command(
         delay_ms = max(0, int(round(time_sec * 1000.0)))
         start_offset_sec = max(0.0, _to_number(event.get("start_offset_sec"), 0.0))
         event_duration = max(0.02, _to_float(event.get("duration_sec"), 0.1))
-        filter_parts.append(
+        fade_in_sec = _clamp(_to_number(event.get("fade_in_sec"), 0.0), 0.0, 30.0)
+        fade_out_sec = _clamp(_to_number(event.get("fade_out_sec"), 0.0), 0.0, 30.0)
+        volume_gain = _clamp(_to_number(event.get("volume_gain"), 1.0), 0.0, 8.0)
+        audio_chain = (
             f"[{input_idx}:a]"
             f"atrim=start={start_offset_sec:.6f}:duration={event_duration:.6f},"
-            f"asetpts=PTS-STARTPTS,"
-            f"adelay={delay_ms}:all=1"
-            f"[{label}]"
+            f"asetpts=PTS-STARTPTS"
+        )
+        if fade_in_sec > 0.01:
+            fade_in_applied = min(fade_in_sec, max(0.02, event_duration - 0.01))
+            audio_chain += f",afade=t=in:st=0:d={fade_in_applied:.6f}"
+        if fade_out_sec > 0.01 and event_duration > 0.03:
+            fade_out_applied = min(fade_out_sec, max(0.02, event_duration - 0.01))
+            fade_out_start = max(0.0, event_duration - fade_out_applied)
+            audio_chain += f",afade=t=out:st={fade_out_start:.6f}:d={fade_out_applied:.6f}"
+        if abs(volume_gain - 1.0) > 1e-6:
+            audio_chain += f",volume={volume_gain:.6f}"
+        filter_parts.append(
+            f"{audio_chain},adelay={delay_ms}:all=1[{label}]"
         )
         audio_labels.append(label)
         audio_used += 1
@@ -631,6 +752,16 @@ def _build_timeline_layers_ffmpeg_command(
         *audio_args,
         output_path,
     ]
+    execution_meta = diagnostics.get("execution")
+    if not isinstance(execution_meta, dict):
+        execution_meta = {}
+        diagnostics["execution"] = execution_meta
+    execution_meta["input_count"] = int(next_input_index)
+    execution_meta["filter_part_count"] = int(len(filter_parts))
+    execution_meta["audio_mix_input_count"] = int(len(audio_labels))
+    execution_meta["video_overlay_count"] = int(visual_used)
+    execution_meta["command_mode"] = "timeline_layers"
+    execution_meta["duration_sec"] = float(duration_sec)
     return command, {
         "render_mode": "timeline_layers",
         "visual_events_used": int(visual_used),
@@ -727,11 +858,25 @@ class CompositionRenderExecutionService:
             "audio_events_used": int(render_meta.get("audio_events_used") or 0),
             "diagnostics": _json_clone(render_meta.get("diagnostics"), _diagnostics_bucket()),
         }
+        diagnostics = out.get("diagnostics")
+        if not isinstance(diagnostics, dict):
+            diagnostics = _diagnostics_bucket()
+            out["diagnostics"] = diagnostics
+        execution_meta = diagnostics.get("execution")
+        if not isinstance(execution_meta, dict):
+            execution_meta = {}
+            diagnostics["execution"] = execution_meta
+        execution_meta["ffmpeg_found"] = bool(ffmpeg_path)
+        execution_meta["execute_requested"] = bool(execute)
+        execution_meta["output_path"] = output_path
+        execution_meta["scope_key"] = safe_scope
         if not execute:
             return out
         if not ffmpeg_path:
             out["status"] = "failed"
             out["error"] = "ffmpeg_not_found"
+            execution_meta["status"] = "failed"
+            execution_meta["error"] = "ffmpeg_not_found"
             return out
         start = time.time()
         try:
@@ -748,14 +893,20 @@ class CompositionRenderExecutionService:
             out["returncode"] = int(proc.returncode)
             out["stdout_tail"] = str((proc.stdout or "")[-4000:])
             out["stderr_tail"] = str((proc.stderr or "")[-4000:])
+            execution_meta["duration_sec"] = float(elapsed)
+            execution_meta["returncode"] = int(proc.returncode)
             if proc.returncode != 0:
                 out["status"] = "failed"
                 out["error"] = "ffmpeg_failed"
+                execution_meta["status"] = "failed"
+                execution_meta["error"] = "ffmpeg_failed"
                 return out
             out["status"] = "ok"
+            execution_meta["status"] = "ok"
             if os.path.isfile(output_path):
                 try:
                     out["size_bytes"] = int(os.path.getsize(output_path))
+                    execution_meta["size_bytes"] = int(out["size_bytes"])
                 except Exception:
                     pass
             self._prune_scope_locked(self._scope_dir(safe_scope))
@@ -763,6 +914,8 @@ class CompositionRenderExecutionService:
         except subprocess.TimeoutExpired:
             out["status"] = "failed"
             out["error"] = "timeout"
+            execution_meta["status"] = "failed"
+            execution_meta["error"] = "timeout"
             try:
                 if os.path.isfile(output_path):
                     os.remove(output_path)

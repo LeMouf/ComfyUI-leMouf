@@ -119,6 +119,15 @@ export function createHomeScreen() {
     song2dawHomeViewBlock,
     song2dawStatus,
   ]);
+  const song2dawSidebarMonitorHost = el("div", { class: "lemouf-tool-step-monitor-host" });
+  const song2dawSidebarConfigHost = el("div", { class: "lemouf-tool-step-monitor-host" });
+  const song2dawSidebarDockHosts = el("div", {
+    class: "lemouf-tool-step-dock-hosts lemouf-song2daw-home-dock-hosts",
+    style: "display:none;",
+  }, [
+    song2dawSidebarMonitorHost,
+    song2dawSidebarConfigHost,
+  ]);
 
   const pipelineBlock = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-home-card" });
   pipelineBlock.append(
@@ -148,6 +157,7 @@ export function createHomeScreen() {
     song2dawPrimaryLoadRow,
     song2dawAdvancedControls,
     song2dawRunDetailBlock,
+    song2dawSidebarDockHosts,
   );
 
   root.append(
@@ -184,6 +194,9 @@ export function createHomeScreen() {
     song2dawDockToggleBtn,
     song2dawDockExpandBtn,
     song2dawRunDetailBlock,
+    song2dawSidebarDockHosts,
+    song2dawSidebarMonitorHost,
+    song2dawSidebarConfigHost,
     song2dawHomeViewBlock,
     song2dawAudioPreviewAsset,
     song2dawAudioPreviewPlayer,

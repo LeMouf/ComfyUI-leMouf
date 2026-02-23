@@ -66,6 +66,25 @@ function sanitizeManualResource(resource) {
   return out;
 }
 
+function canonicalizeManualResourceSrcForDedupe(srcRaw) {
+  const raw = String(srcRaw || "").trim();
+  if (!raw) return "";
+  try {
+    const parsed = new URL(raw, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const pathname = String(parsed.pathname || "").trim();
+    if (pathname === "/view") {
+      const filename = String(parsed.searchParams.get("filename") || "").trim();
+      const type = String(parsed.searchParams.get("type") || "").trim();
+      const subfolder = String(parsed.searchParams.get("subfolder") || "").trim();
+      if (filename) return `/view?filename=${filename}&type=${type}&subfolder=${subfolder}`;
+    }
+    parsed.hash = "";
+    return parsed.href;
+  } catch {
+    return raw;
+  }
+}
+
 function sanitizePlacementRecord(record = {}) {
   const transformXPct = Math.max(-200, Math.min(200, toFiniteNumber(record.transformXPct, 0)));
   const transformYPct = Math.max(-200, Math.min(200, toFiniteNumber(record.transformYPct, 0)));
@@ -408,12 +427,30 @@ export function getManualResources(scopeKey) {
 
 export function appendManualResources(scopeKey, resources) {
   const key = normalizeScopeKey(scopeKey);
-  const current = getManualResources(key);
-  const additions = Array.isArray(resources) ? resources : [];
-  manualResourcesByScope.set(
-    key,
-    current.concat(additions).map((row) => (row && typeof row === "object" ? { ...row } : row))
-  );
+  const current = getManualResources(key)
+    .map((row) => sanitizeManualResource(row))
+    .filter(Boolean);
+  const additions = (Array.isArray(resources) ? resources : [])
+    .map((row) => sanitizeManualResource(row))
+    .filter(Boolean);
+  const merged = [];
+  const seenId = new Set();
+  const seenSrc = new Set();
+  const pushRow = (row) => {
+    const kind = String(row?.kind || "").trim().toLowerCase();
+    const id = String(row?.id || "").trim();
+    const src = canonicalizeManualResourceSrcForDedupe(row?.src || row?.previewSrc || "");
+    const idKey = kind && id ? `${kind}:${id}` : "";
+    const srcKey = kind && src ? `${kind}:${src}` : "";
+    if (idKey && seenId.has(idKey)) return;
+    if (srcKey && seenSrc.has(srcKey)) return;
+    merged.push(row);
+    if (idKey) seenId.add(idKey);
+    if (srcKey) seenSrc.add(srcKey);
+  };
+  for (const row of current) pushRow(row);
+  for (const row of additions) pushRow(row);
+  manualResourcesByScope.set(key, merged);
   markScopeTouched(key);
   schedulePersist();
 }

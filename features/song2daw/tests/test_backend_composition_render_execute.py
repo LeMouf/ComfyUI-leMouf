@@ -118,3 +118,74 @@ def test_render_execute_falls_back_when_manifest_has_no_usable_sources(monkeypat
         str(item.get("reason") or "") == "source_unresolved"
         for item in diagnostics.get("skipped_visual_events") or []
     )
+
+
+def test_render_execute_applies_optional_effects_and_exposes_execution_diagnostics(monkeypatch):
+    service = CompositionRenderExecutionService(".")
+    monkeypatch.setattr(service, "_new_output_path", lambda _scope, _ext: "C:/render/out.mp4")
+    monkeypatch.setattr(
+        "backend.composition.render_execute._resolve_source_path",
+        lambda raw_src, _repo_root, _render_root: f"C:/media/{str(raw_src).split('/')[-1]}",
+    )
+
+    manifest = {
+        "timeline": {
+            "tracks": [
+                {"name": "Video 1", "kind": "video"},
+                {"name": "Audio S1", "kind": "audio"},
+            ],
+            "eventsByTrack": {
+                "Video 1": [
+                    {"clipId": "v1", "resourceId": "res_v1", "src": "clip_a.mp4", "time": 0, "duration": 3.0},
+                ],
+                "Audio S1": [
+                    {"clipId": "a1", "resourceId": "res_a1", "src": "mix_a.mp3", "time": 0.2, "duration": 2.5},
+                ],
+            },
+        },
+        "snapshot": {
+            "placements": {
+                "v1": {
+                    "clipId": "v1",
+                    "effectFadeInSec": 0.4,
+                    "effectFadeOutSec": 0.5,
+                    "effectBlurSigma": 1.2,
+                    "effectEqSaturation": 1.15,
+                    "effectEqContrast": 1.1,
+                    "effectEqBrightness": 0.05,
+                },
+                "a1": {
+                    "clipId": "a1",
+                    "effectAudioFadeInSec": 0.2,
+                    "effectAudioFadeOutSec": 0.3,
+                    "effectAudioGain": 1.35,
+                },
+            }
+        },
+    }
+
+    out = service.execute(
+        scope_key="scope-effects",
+        manifest=manifest,
+        export_plan=_build_plan(duration_sec=3.5),
+        execute=False,
+    )
+    assert out["status"] == "planned"
+    assert out["render_mode"] == "timeline_layers"
+    command = [str(part) for part in out.get("command", [])]
+    joined = " ".join(command)
+    assert "boxblur=" in joined
+    assert "eq=saturation=" in joined
+    assert "fade=t=in" in joined
+    assert "fade=t=out" in joined
+    assert "afade=t=in" in joined
+    assert "afade=t=out" in joined
+    assert "volume=" in joined
+
+    diagnostics = out.get("diagnostics")
+    assert isinstance(diagnostics, dict)
+    execution = diagnostics.get("execution")
+    assert isinstance(execution, dict)
+    assert int(execution.get("video_overlay_count") or 0) >= 1
+    assert int(execution.get("audio_mix_input_count") or 0) >= 1
+    assert str(execution.get("command_mode") or "") == "timeline_layers"
