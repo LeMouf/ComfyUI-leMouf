@@ -15,6 +15,136 @@ Current scope:
 - `audio_preset_plan.js`
   - DSP preset planning helpers used by timeline audio preview/scrub
 
+Mini map (runtime flow):
+
+```
+timeline.js (public API + orchestration)
+  -> timeline_render_bootstrap.js (shell + state + initial view state)
+  -> timeline_runtime_helpers.js (audio/mute/hit low-level helpers)
+  -> timeline_transport_bridge.js (seek/play/stop/viewport wrappers)
+  -> timeline_runtime_adapters.js (draw + transport adapters)
+  -> timeline_runtime_wiring.js (handlers wiring + mount)
+  -> timeline_cleanup.js (teardown)
+```
+- `modules/timeline_constants.js`
+  - shared timeline constants and tuning values
+- `modules/timeline_utils.js`
+  - pure timeline utility helpers (`clamp`, compact labels, palette helpers, clip colors)
+- `modules/timeline_drop.js`
+  - DnD/insert-lane/drop-target resolution helpers
+- `modules/timeline_drop_target_resolver.js`
+  - adjusted drop-target resolver factory (resource kind canonicalization, snap/origin/max-start clamping)
+- `modules/timeline_runtime_wiring.js`
+  - render/runtime wiring orchestrator (resize, mute/query handlers, interactions, DnD/canvas/keyboard event binding, mount lifecycle)
+- `modules/timeline_render_bootstrap.js`
+  - render bootstrap orchestrator (shell creation, state factory hydration, initial view-state apply, audio URL resolver binding)
+- `modules/timeline_cleanup.js`
+  - timeline instance teardown helper (transport/audio/scrub shutdown, listeners cleanup, state/cache reset, map unregister)
+- `modules/timeline_runtime_helpers.js`
+  - shared runtime helper factory (audio bus lifecycle, mute/lock helpers, clip slip math, hit-testing, persisted-mode normalization)
+- `modules/timeline_runtime_adapters.js`
+  - transport/draw adapter factory (draw orchestration wiring, transport wrapper methods, section-resize geometry adapters)
+- `modules/timeline_runtime_clip_bridge.js`
+  - runtime clip-domain bridge (committed clip-edit local apply adapter + effective audio channel-mode resolver)
+- `modules/timeline_context_menu.js`
+  - track context-menu open/close and pointer-capture release helpers
+- `modules/timeline_draw.js`
+  - base draw preparation (layout, ruler/background, section signal, compact labels)
+- `modules/timeline_draw_overlays.js`
+  - draw overlays (insert marker, box selection, cut preview, playhead)
+- `modules/timeline_draw_tracks.js`
+  - track rows and clip rendering (lane visuals, clip geometry, handles, join hit regions)
+- `modules/timeline_draw_status.js`
+  - transport HUD/status update + playback callback payload emission (`onPlaybackUpdate`)
+- `modules/timeline_draw_orchestrator.js`
+  - high-level frame orchestration (prepare base draw, render tracks, overlays, status emit)
+- `modules/timeline_ruler.js`
+  - time ruler helpers (step resolution, time label formatting, ruler drawing)
+- `modules/timeline_transport.js`
+  - seek/play/stop transport orchestration (RAF tick, track/mix audio sync, transport rebase)
+- `modules/timeline_transport_bridge.js`
+  - local transport/audio facade used by `timeline.js` (clock wrappers, seek/play/stop/zoom orchestration deps)
+- `modules/timeline_viewport.js`
+  - viewport/zoom helpers (fit, min px/sec, offset clamp, refresh after duration changes)
+- `modules/timeline_clock.js`
+  - transport clock helpers (track-audio presence, clock source selection, rebase/resolve)
+- `modules/timeline_interactions.js`
+  - pointer interaction handlers (mute paint, scrub, pan, section resize)
+- `modules/timeline_keyboard.js`
+  - keyboard interaction handlers (play/pause, undo/redo, clip nudge, modifier cleanup)
+- `modules/timeline_dnd.js`
+  - timeline drag-and-drop handlers for resource placement and drop target lifecycle
+- `modules/timeline_clip_edit.js`
+  - clip edit session handlers (move/trim/slip/group move + finalize commit/cancel)
+- `modules/timeline_selection.js`
+  - box selection handlers (start/update/finalize, additive selection set update)
+- `modules/timeline_selection_geometry.js`
+  - shared selection geometry helpers (rect normalization and containment tests)
+- `modules/timeline_hits.js`
+  - hit action handlers (mute/channel toggle, mute all/unmute all, stage-group isolate/select)
+- `modules/timeline_audio_bootstrap.js`
+  - timeline media bootstrap (audio element handlers, metadata load sync, scrub-audio warmup, track-player setup)
+- `modules/timeline_canvas_events.js`
+  - canvas event handlers (context menu selection/track menu, pointer interactions, wheel zoom/scroll, double-click reset, pointer leave cleanup)
+- `modules/timeline_nudge.js`
+  - selected-clip keyboard nudge logic (snap-aware move, overlap-safe lane resolution, commit flow)
+- `modules/timeline_controls.js`
+  - toolbar/footer controls wiring (play/stop/undo/redo/clear, zoom reset, snap/skeleton toggles, viz select, jump button)
+- `modules/timeline_shell.js`
+  - timeline shell DOM builder (toolbar/layout/footer + button/select elements and base icon wiring)
+- `modules/timeline_resize.js`
+  - canvas resize handler + ResizeObserver wiring (DPR transform, viewport clamp/refit, redraw)
+- `modules/timeline_section_resize.js`
+  - section resize-hit geometry helpers (section handle rect + hit test)
+- `modules/timeline_mount.js`
+  - mount lifecycle finalizer (initial resize/fit, post-mount reflow passes, timeline state registration)
+- `modules/timeline_view_state.js`
+  - initial view-state hydration (autoFit/zoom/offset/scroll/skeleton/row-scale restore from persisted state)
+- `modules/timeline_audio_url.js`
+  - timeline audio URL resolution from studio tracks and resolver callback
+- `modules/timeline_state_factory.js`
+  - timeline state factory (default runtime state, persisted option hydration sources, callback wiring)
+- `modules/timeline_mute.js`
+  - mute handling orchestration (single-track mute apply and batch mute flows with audio/midi sync)
+- `modules/timeline_track_queries.js`
+  - track query helpers (all track names and stage-group filtered track names)
+- `modules/timeline_track_layout.js`
+  - track/domain layout helpers (track clips/events mapping, section/row scaling and stage-group row layout)
+- `modules/timeline_track_placement.js`
+  - placement/snap helpers (overlap checks, neighbor bounds, lane naming, non-overlap target lane resolution, timeline max/snap/origin)
+- `modules/timeline_selection_state.js`
+  - clip selection-state helpers (selection keys, set toggles/queries, selected clip refs/count and track-key replacement)
+- `modules/timeline_track_linking.js`
+  - track-kind inference and linked video/audio lane mapping helpers (canonical target lane, insert index ordering, lane parsing/link checks)
+- `modules/timeline_status_ui.js`
+  - timeline HUD/view-state helpers (overview/footer rendering, shortcut chips, compact run id, view-state snapshot/emit)
+- `modules/timeline_preview_edits.js`
+  - preview clip-edit session helpers (preview keying/resolution, linked target collection, preview write/clear, injected clip geometry, preview serialization)
+- `modules/timeline_filmstrip_cache.js`
+  - filmstrip/thumbnail cache orchestration (render-cache invalidation, async queue, thumbnail bootstrap, reusable strip selection, prewarm)
+- `modules/timeline_filmstrip_draw.js`
+  - filmstrip draw helpers (uniform tile layout + frame cover/tiles drawing primitives used by timeline previews)
+- `modules/timeline_clip_visuals.js`
+  - clip visual rendering helpers (audio/image/video clip signal, handles, source-window bar, clip edit overlay)
+- `modules/timeline_clip_ops.js`
+  - clip operation helpers (cut/trim preview resolution, adjacent-clip join checks, multi-selection move-members and group delta bounds)
+- `modules/timeline_clip_edit_result.js`
+  - clip-edit result normalization helper (`accepted` + committed `trackName`)
+- `modules/timeline_video_preview.js`
+  - video preview planning + thumbnail rendering helpers (cover/tiles and quality-aware preview plan resolution)
+- `modules/timeline_preview_runtime.js`
+  - preview/cache runtime facade (thumbnail/filmstrip cache wiring + preview plan helpers + prewarm)
+- `modules/timeline_track_audio_runtime.js`
+  - track-audio runtime orchestration (players lifecycle, event resolution, seek/rebase/sync routines)
+- `modules/timeline_midi_runtime.js`
+  - MIDI runtime orchestration (context/noise bootstrap, voice scheduling, playback start/clear, track mute gain sync)
+- `modules/timeline_section_waveform.js`
+  - section waveform/composition-preview rendering runtime (viz modes, MIDI fallback, composition audio overlay, section filmstrip preview)
+- `modules/timeline_scrub_runtime.js`
+  - scrub runtime orchestration (source resolution, decode/swap, MIDI fallback grains, forward/reverse scrub grain scheduling)
+- `modules/timeline_transport_debug.js`
+  - transport stress-debug helpers (debug flag hydration + throttled structured logging)
+
 Rules:
 
 - Keep this folder domain-agnostic.
