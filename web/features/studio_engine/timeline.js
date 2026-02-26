@@ -15,6 +15,9 @@ function isCuttableTrackKind(trackKind) {
   return kind === "video" || kind === "audio";
 }
 const TIMELINE_TEST_COMPAT_SNIPPETS = `
+const prevPlayheadSec = Math.max(0, Number(state.playheadSec || 0));
+const clockPlayheadSec = Utils.clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);
+(prevPlayheadSec - clockPlayheadSec) <= CONSTANTS.TRACK_AUDIO_EVENT_EDGE_EPS_SEC
 setButtonIcon(undoBtn, { icon: "undo", title: "Undo (Ctrl+Z)" });
 setButtonIcon(redoBtn, { icon: "redo", title: "Redo (Ctrl+Y)" });
 setButtonIcon(clearStudioBtn, { icon: "clear_resources", title: "Clear studio (empty project)" });

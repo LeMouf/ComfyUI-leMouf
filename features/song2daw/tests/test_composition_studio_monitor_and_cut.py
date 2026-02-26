@@ -20,7 +20,7 @@ def _read_timeline_bundle() -> str:
 def test_composition_monitor_supports_image_stage():
     studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
     assert "lemouf-loop-composition-monitor-image" in studio_view
-    assert 'setMonitorStageState(selected.mediaKind === "image" ? "image" : "video")' in studio_view
+    assert 'setMonitorStageState(selectedResolved.mediaKind === "image" ? "image" : "video")' in studio_view
 
 
 def test_image_source_duration_uses_virtual_cap_for_resizing():
@@ -127,8 +127,20 @@ def test_monitor_selection_resolution_and_playback_priority_are_robust():
     assert "!Boolean(isPlaying)" in studio_view
     assert "monitorWheelCommitTimer == null;" in studio_view
     assert "const selected = selectionOverrideAllowed" in studio_view
+    assert "let monitorLastStableVisualEvent = null;" in studio_view
+    assert "const MONITOR_GAP_HOLD_MS_PLAY = 56;" in studio_view
+    assert "const MONITOR_GAP_HOLD_MS_SCRUB = 44;" in studio_view
+    assert "if (!selectedResolved && monitorLastStableVisualEvent && (isPlaying || isScrubbing)) {" in studio_view
+    assert "selectedResolved = fallback;" in studio_view
     assert "const end = Math.max(start + MONITOR_EDGE_EPS_SEC * 0.25, toNumber(event.end, start));" in studio_view
     assert "return time >= start - eps && time < end;" in studio_view
+
+
+def test_transport_tick_avoids_micro_backward_jitter_on_audio_clock():
+    timeline = _read_timeline_bundle()
+    assert "const prevPlayheadSec = Math.max(0, Number(state.playheadSec || 0));" in timeline
+    assert "const clockPlayheadSec = Utils.clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);" in timeline
+    assert "(prevPlayheadSec - clockPlayheadSec) <= CONSTANTS.TRACK_AUDIO_EVENT_EDGE_EPS_SEC" in timeline
 
 
 def test_monitor_project_actions_save_load_reset_are_wired():

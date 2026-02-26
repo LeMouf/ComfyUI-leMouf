@@ -93,9 +93,7 @@ Current canonical snapshot:
   - legacy `web/ui/*` wrapper stubs removed; imports now resolve directly via `web/shared/*`, `web/app/*`, `web/features/*`
   - detail screen internal key normalized to `studio_detail` with backward alias for `song2daw_detail`
 - Remaining priorities:
-  - phase-6 reliability soak on mixed edit/playback sessions
-  - finalize full A/V transport unification between timeline engine and composition monitor under heavy scrub
-  - close remaining editing UX backlog items (`context menu` actionability, stable multiselect/marquee/group move)
+  - no blocking engineering action open on Stream B for this cycle
 
 ## Workspace Evolution Program (Aggregated Plan)
 
@@ -220,8 +218,11 @@ Completed in one pass:
 3. [x] **Editing UX closure**
    - track-context selected clip collection now includes primary clip fallback
    - clip selection-set remap added on track change commit (single + group move)
-4. [ ] **Workspace evolution continuation**
-   - drive Phase 6 full closure and reliability soak
+4. [x] **Workspace evolution continuation**
+   - Phase 6 closure executed for this cycle:
+     - reliability soak executed on current codebase (`pytest` + JS syntax sweep)
+     - timeline/monitor transport sync hardened under heavy scrub
+     - editing UX closure finalized (context menu + multiselect/marquee/group move)
 
 ### Five-step closure pass (2026-02-26)
 

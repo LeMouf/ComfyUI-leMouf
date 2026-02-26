@@ -103,11 +103,22 @@ export function startTimelinePlayback(state, deps = {}) {
   const tick = (ts) => {
     if (!state.isPlaying) return;
     const playbackDurationSec = resolvePlaybackDurationSec(state);
+    const prevPlayheadSec = Math.max(0, Number(state.playheadSec || 0));
     {
       const clockAudio = getPlaybackClockAudio(state);
       const hasAudioClock = clockAudio && !clockAudio.paused;
       if (hasAudioClock) {
-        state.playheadSec = Utils.clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);
+        const clockPlayheadSec = Utils.clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);
+        // Avoid tiny backward jitter at resume/clip boundaries while still allowing
+        // explicit rebase when drift becomes meaningful.
+        if (
+          clockPlayheadSec < prevPlayheadSec &&
+          (prevPlayheadSec - clockPlayheadSec) <= CONSTANTS.TRACK_AUDIO_EVENT_EDGE_EPS_SEC
+        ) {
+          state.playheadSec = prevPlayheadSec;
+        } else {
+          state.playheadSec = clockPlayheadSec;
+        }
         if (clockAudio.ended || state.playheadSec >= playbackDurationSec) {
           state.playheadSec = playbackDurationSec;
           state.isPlaying = false;

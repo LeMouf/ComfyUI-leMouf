@@ -4935,8 +4935,12 @@ export function renderLoopCompositionStudioView({
   let monitorFrameLoopKind = "";
   let monitorLastAppliedLocalTimeSec = Number.NaN;
   let monitorLastAppliedAtMs = 0;
+  let monitorLastStableVisualEvent = null;
+  let monitorLastStableVisualAtMs = 0;
   const MONITOR_EDGE_EPS_SEC = 1 / 90;
   const MONITOR_BOUNDARY_RECOVERY_EPS_SEC = 1 / 24;
+  const MONITOR_GAP_HOLD_MS_PLAY = 56;
+  const MONITOR_GAP_HOLD_MS_SCRUB = 44;
   const MONITOR_SCRUB_SEEK_MIN_INTERVAL_MS = 24;
   const MONITOR_SCRUB_MIN_DELTA_SEC = 1 / 120;
   const pickMonitorEvent = (events, playheadSec, { isPlaying = false, isScrubbing = false } = {}) => {
@@ -5189,6 +5193,8 @@ export function renderLoopCompositionStudioView({
     const selectionRefs = Array.isArray(selectionPayload.selectedClipRefs) ? selectionPayload.selectedClipRefs : [];
     const selectedClipCount = Math.max(0, Math.round(toNumber(selectionPayload.selectedClipCount, selectionRefs.length)));
     if (!materializedEvents.length) {
+      monitorLastStableVisualEvent = null;
+      monitorLastStableVisualAtMs = 0;
       monitorAllowAudio = false;
       monitorPendingScrub = false;
       monitorPendingPlay = false;
@@ -5230,7 +5236,22 @@ export function renderLoopCompositionStudioView({
     const selected = selectionOverrideAllowed
       ? (selectedBySelection || activeByPlayhead)
       : (activeByPlayhead || selectedBySelection);
-    if (!selected) {
+    let selectedResolved = selected;
+    if (!selectedResolved && monitorLastStableVisualEvent && (isPlaying || isScrubbing)) {
+      const nowMs = performance.now();
+      const ageMs = nowMs - Number(monitorLastStableVisualAtMs || 0);
+      const holdMs = isScrubbing ? MONITOR_GAP_HOLD_MS_SCRUB : MONITOR_GAP_HOLD_MS_PLAY;
+      const fallback = monitorLastStableVisualEvent;
+      const fallbackStart = Math.max(0, toNumber(fallback?.start, 0));
+      const fallbackEnd = Math.max(fallbackStart + MONITOR_EDGE_EPS_SEC * 0.25, toNumber(fallback?.end, fallbackStart));
+      const nearBoundary =
+        Math.abs(Number(playheadSec || 0) - fallbackStart) <= MONITOR_BOUNDARY_RECOVERY_EPS_SEC ||
+        Math.abs(Number(playheadSec || 0) - fallbackEnd) <= MONITOR_BOUNDARY_RECOVERY_EPS_SEC;
+      if (ageMs <= holdMs && nearBoundary) {
+        selectedResolved = fallback;
+      }
+    }
+    if (!selectedResolved) {
       monitorCurrentKey = "";
       monitorCurrentMediaKind = "";
       monitorSelectedTrackName = "";
@@ -5271,41 +5292,43 @@ export function renderLoopCompositionStudioView({
       );
       return;
     }
-    const eventKey = `${selected.trackName}:${selected.clipId || selected.resourceId}:${selected.start.toFixed(4)}`;
-    const clipOffset = Math.max(0, Number(selected.startOffsetSec || 0));
-    const clipLocalTime = Math.max(0, Number(playheadSec || 0) - selected.start);
-    const sourceDurationSec = Math.max(0.01, Number(selected.sourceDurationSec || selected.duration || 0.01));
+    monitorLastStableVisualEvent = selectedResolved;
+    monitorLastStableVisualAtMs = performance.now();
+    const eventKey = `${selectedResolved.trackName}:${selectedResolved.clipId || selectedResolved.resourceId}:${selectedResolved.start.toFixed(4)}`;
+    const clipOffset = Math.max(0, Number(selectedResolved.startOffsetSec || 0));
+    const clipLocalTime = Math.max(0, Number(playheadSec || 0) - selectedResolved.start);
+    const sourceDurationSec = Math.max(0.01, Number(selectedResolved.sourceDurationSec || selectedResolved.duration || 0.01));
     const localTime = Math.max(
       0,
       Math.min(Math.max(0.01, sourceDurationSec - 0.02), clipOffset + clipLocalTime)
     );
-    const linkedAudioTracks = getLinkedAudioTrackNames(selected);
+    const linkedAudioTracks = getLinkedAudioTrackNames(selectedResolved);
     const hasLinkedAudioTrack = linkedAudioTracks.length > 0;
     const hasAudibleLinkedAudioTrack = linkedAudioTracks.some((trackName) => !mutedTrackSet.has(trackName));
-    const monitorIsVideo = String(selected.mediaKind || "video") === "video";
+    const monitorIsVideo = String(selectedResolved.mediaKind || "video") === "video";
     monitorAllowAudio =
       monitorIsVideo &&
       Boolean(isPlaying) &&
       !Boolean(isScrubbing) &&
-      Boolean(selected.hasAudio) &&
+      Boolean(selectedResolved.hasAudio) &&
       !hasLinkedAudioTrack &&
       !Boolean(hasAudibleLinkedAudioTrack) &&
       !Boolean(hasAudibleTimelineAudio);
     monitorPendingLocalTimeSec = localTime;
     monitorPendingPlay = Boolean(isPlaying);
     monitorPendingScrub = Boolean(isScrubbing);
-    const normalizedSelectedSrc = normalizeMediaSrcForCompare(selected.src);
+    const normalizedSelectedSrc = normalizeMediaSrcForCompare(selectedResolved.src);
     const normalizedMonitorSrc = monitorIsVideo
       ? normalizeMediaSrcForCompare(monitorVideo.src)
       : normalizeMediaSrcForCompare(monitorImage.src);
-    const mediaKindChanged = monitorCurrentMediaKind !== String(selected.mediaKind || "video");
+    const mediaKindChanged = monitorCurrentMediaKind !== String(selectedResolved.mediaKind || "video");
     const sourceChanged = normalizedMonitorSrc !== normalizedSelectedSrc;
     const previousMonitorKey = String(monitorCurrentKey || "");
     monitorCurrentKey = eventKey;
-    monitorCurrentMediaKind = String(selected.mediaKind || "video");
-    monitorSelectedTrackName = String(selected.trackName || "");
-    monitorSelectedClipId = String(selected.clipId || "");
-    monitorSelectedResourceId = String(selected.resourceId || "");
+    monitorCurrentMediaKind = String(selectedResolved.mediaKind || "video");
+    monitorSelectedTrackName = String(selectedResolved.trackName || "");
+    monitorSelectedClipId = String(selectedResolved.clipId || "");
+    monitorSelectedResourceId = String(selectedResolved.resourceId || "");
     monitorSelectedClipCount = selectedClipCount;
     monitorPanel.classList.toggle("is-selection-group", selectedClipCount > 1);
     monitorPanel.classList.toggle("is-selection-solo", selectedClipCount <= 1);
@@ -5315,9 +5338,9 @@ export function renderLoopCompositionStudioView({
         {
           from: previousMonitorKey,
           to: eventKey,
-          mediaKind: String(selected.mediaKind || "video"),
-          trackName: String(selected.trackName || ""),
-          clipId: String(selected.clipId || ""),
+          mediaKind: String(selectedResolved.mediaKind || "video"),
+          trackName: String(selectedResolved.trackName || ""),
+          clipId: String(selectedResolved.clipId || ""),
           playheadSec: Number(playheadSec || 0),
           localTimeSec: Number(localTime || 0),
           isPlaying: Boolean(isPlaying),
@@ -5334,7 +5357,7 @@ export function renderLoopCompositionStudioView({
       if (mediaKindChanged || sourceChanged) {
         monitorLastAppliedLocalTimeSec = Number.NaN;
         monitorLastAppliedAtMs = 0;
-        monitorVideo.src = selected.src;
+        monitorVideo.src = selectedResolved.src;
         try { monitorVideo.load(); } catch {}
         applyMonitorTransport();
       } else {
@@ -5346,7 +5369,7 @@ export function renderLoopCompositionStudioView({
       stopMonitorFrameLoop();
       if (mediaKindChanged) clearMonitorVideoSource();
       if (mediaKindChanged || sourceChanged) {
-        monitorImage.src = selected.src;
+        monitorImage.src = selectedResolved.src;
       }
       monitorLastAppliedLocalTimeSec = Number.NaN;
       monitorLastAppliedAtMs = 0;
@@ -5355,10 +5378,10 @@ export function renderLoopCompositionStudioView({
       monitorAllowAudio = false;
       applyMonitorTransport();
     }
-    setMonitorStageState(selected.mediaKind === "image" ? "image" : "video");
+    setMonitorStageState(selectedResolved.mediaKind === "image" ? "image" : "video");
     applyMonitorHeadFeedback(
-      `${selected.trackName} · ${selected.label}${selectedClipCount > 1 ? ` · group ${selectedClipCount}` : ""}`,
-      `${modeLabel} · clip ${selected.start.toFixed(2)}-${selected.end.toFixed(2)}s · local ${localTime.toFixed(2)}s${
+      `${selectedResolved.trackName} · ${selectedResolved.label}${selectedClipCount > 1 ? ` · group ${selectedClipCount}` : ""}`,
+      `${modeLabel} · clip ${selectedResolved.start.toFixed(2)}-${selectedResolved.end.toFixed(2)}s · local ${localTime.toFixed(2)}s${
         monitorAllowAudio ? " · monitor audio" : ""
       }${
         monitorDebugEnabled

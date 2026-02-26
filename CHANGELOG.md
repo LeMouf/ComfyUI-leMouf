@@ -42,7 +42,7 @@
     - final timeline extraction verification
     - pre-release status/docs sync
 - Remaining priorities:
-  - phase-6 reliability soak on mixed edit/playback sessions
+  - no blocking engineering action open on Stream B for this cycle
 
 ## 0.3.1 - 2026-02-16
 

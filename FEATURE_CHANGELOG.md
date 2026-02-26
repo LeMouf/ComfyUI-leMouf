@@ -6,7 +6,7 @@ _Process note: quality validation is tracked via the **Precommit Gate** (see `RE
 
 ## Unreleased Snapshot (0.3.3-wip, manual sync)
 
-_Last sync: 2026-02-22_
+_Last sync: 2026-02-26_
 _Source of truth for execution status: `docs/feature-design.md`._
 
 - Release line:
@@ -52,7 +52,7 @@ _Source of truth for execution status: `docs/feature-design.md`._
     - final timeline extraction verification
     - pre-release status/docs sync
 - Remaining priorities:
-  - phase-6 reliability soak on mixed edit/playback sessions
+  - no blocking engineering action open on Stream B for this cycle
 
 ### composition (0.3.3-wip)
 - Unified insert/drop lane resolution between resource drop and clip move paths.
@@ -72,7 +72,7 @@ _Source of truth for execution status: `docs/feature-design.md`._
   - optional effect hooks in render execution (video/audio fades, blur/EQ, gain),
   - richer diagnostics payload for execution troubleshooting.
 - Remaining focus:
-  - reliability soak under mixed edit/playback stress.
+  - non-blocking periodic soak during normal feature iteration.
 
 ### studio_engine (0.3.3-wip)
 - Audio timeline robustness pass:
@@ -84,40 +84,39 @@ _Source of truth for execution status: `docs/feature-design.md`._
   - `domain/services/placement.js`
   - `domain/services/linking.js`
   - `domain/services/edit_ops.js`
-  - compat wrappers preserved in `modules/*` for staged transition.
+  - staged transition complete: wrappers removed after recabling.
 - Treefolder migration continued:
   - `application/{boot,runtime}/*` wrappers introduced
   - `ui/{shell,timeline/draw}/*` wrappers introduced
   - `infrastructure/audio/*` wrappers introduced
-  - `timeline.js` now imports through treefolder paths (compat modules still present)
+  - `timeline.js` now imports through treefolder paths
 - Treefolder migration continued (physical move):
   - draw/render stack moved to `ui/timeline/draw/{core,tracks,overlays,status_emit,frame,ruler}.js`
-  - status/ruler/frame legacy module paths now served by compatibility wrappers
+  - status/ruler/frame paths now directly served by treefolder modules
 - Treefolder migration continued (runtime viewport/transport move):
   - transport moved to `application/runtime/transport.js`
   - viewport + resize moved to `ui/timeline/{viewport,resize}.js`
   - mount lifecycle moved to `application/boot/mount.js`
-  - legacy module paths kept as compatibility wrappers
+  - compatibility wrappers removed after recabling
 - Treefolder migration continued (boot/wiring move):
   - runtime wiring moved to `application/runtime/wiring.js`
   - render bootstrap moved to `application/boot/bootstrap.js`
-  - legacy module paths kept as compatibility wrappers
+  - compatibility wrappers removed after recabling
 - Treefolder migration continued (runtime adapters/helpers move):
   - runtime helpers, adapters, and clip bridge moved to `application/runtime/*`
-  - legacy module paths kept as compatibility wrappers
+  - compatibility wrappers removed after recabling
 - Treefolder migration continued (infra/cleanup move):
   - transport clock helpers moved to `infrastructure/audio/clock.js`
   - timeline audio bootstrap moved to `infrastructure/audio/bootstrap.js`
   - cleanup lifecycle moved to `application/boot/cleanup.js`
-  - legacy module paths kept as compatibility wrappers
+  - compatibility wrappers removed after recabling
 - Remaining focus:
-  - final soak pass on mixed lanes under sustained scrub,
-  - full parity static vs drag render path.
+  - non-blocking soak and perf profiling during next feature cycles.
 
 ### panel (0.3.3-wip)
 - Workflow/status docs and progress reporting aligned with current stabilization program.
 - Remaining focus:
-  - keep docs/status synchronized while Stream B closes.
+  - keep docs/status synchronized while Stream B stays in maintenance.
 
 ## composition (0.3.2)
 - No scoped commits found yet.
