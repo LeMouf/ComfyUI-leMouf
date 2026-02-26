@@ -25,27 +25,32 @@ export function injectStyles() {
       --lemouf-scrollbar-thumb: #9a846f;
       --lemouf-scrollbar-track: transparent;
     }
-    .lemouf-song2daw-dock {
+    .lemouf-studio-dock,
+    .lemouf-studio-dock {
       --lemouf-scrollbar-size: 8px;
       --lemouf-scrollbar-thumb: #9a846f;
       --lemouf-scrollbar-track: transparent;
     }
     .lemouf-loop-panel *,
-    .lemouf-song2daw-dock * {
+    .lemouf-studio-dock *,
+    .lemouf-studio-dock * {
       scrollbar-width: thin;
       scrollbar-color: var(--lemouf-scrollbar-thumb) var(--lemouf-scrollbar-track);
     }
     .lemouf-loop-panel *::-webkit-scrollbar,
-    .lemouf-song2daw-dock *::-webkit-scrollbar {
+    .lemouf-studio-dock *::-webkit-scrollbar,
+    .lemouf-studio-dock *::-webkit-scrollbar {
       width: var(--lemouf-scrollbar-size);
       height: var(--lemouf-scrollbar-size);
     }
     .lemouf-loop-panel *::-webkit-scrollbar-track,
-    .lemouf-song2daw-dock *::-webkit-scrollbar-track {
+    .lemouf-studio-dock *::-webkit-scrollbar-track,
+    .lemouf-studio-dock *::-webkit-scrollbar-track {
       background: var(--lemouf-scrollbar-track);
     }
     .lemouf-loop-panel *::-webkit-scrollbar-thumb,
-    .lemouf-song2daw-dock *::-webkit-scrollbar-thumb {
+    .lemouf-studio-dock *::-webkit-scrollbar-thumb,
+    .lemouf-studio-dock *::-webkit-scrollbar-thumb {
       background: var(--lemouf-scrollbar-thumb);
       border-radius: 999px;
       border: 2px solid transparent;
@@ -53,10 +58,12 @@ export function injectStyles() {
     }
     .lemouf-workflow-list,
     .lemouf-loop-manifest,
-    .lemouf-song2daw-overview,
+    .lemouf-studio-overview,
+    .lemouf-studio-overview,
     .lemouf-loop-payload,
-    .lemouf-song2daw-detail-pre,
-    .lemouf-song2daw-studio-body {
+    .lemouf-studio-detail-pre,
+    .lemouf-studio-detail-pre,
+    .lemouf-studio-body {
       scrollbar-gutter: stable both-edges;
     }
     .lemouf-loop-title {
@@ -162,12 +169,14 @@ export function injectStyles() {
       min-height: 0;
       overflow: hidden;
     }
-    .lemouf-song2daw-detail-screen {
+    .lemouf-studio-detail-screen,
+    .lemouf-studio-detail-screen {
       flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
     }
-    .lemouf-song2daw-detail-layout {
+    .lemouf-studio-detail-layout,
+    .lemouf-studio-detail-layout {
       flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
@@ -204,7 +213,8 @@ export function injectStyles() {
       background: rgba(90, 70, 55, 0.08);
       border-right: 1px solid rgba(90, 70, 55, 0.2);
     }
-    .lemouf-song2daw-dock {
+    .lemouf-studio-dock,
+    .lemouf-studio-dock {
       position: fixed;
       left: 0;
       right: 0;
@@ -219,7 +229,8 @@ export function injectStyles() {
       overflow: hidden;
       min-width: 0;
     }
-    .lemouf-song2daw-dock-resizer {
+    .lemouf-studio-dock-resizer,
+    .lemouf-studio-dock-resizer {
       position: absolute;
       top: 0;
       left: 0;
@@ -230,7 +241,8 @@ export function injectStyles() {
       border-bottom: 1px solid rgba(90, 70, 55, 0.2);
       z-index: 1;
     }
-    .lemouf-song2daw-dock-header {
+    .lemouf-studio-dock-header,
+    .lemouf-studio-dock-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -240,19 +252,24 @@ export function injectStyles() {
       border-bottom: 1px solid rgba(90, 70, 55, 0.2);
       background: rgba(255, 250, 243, 0.55);
     }
-    .lemouf-song2daw-dock-header-actions {
+    .lemouf-studio-dock-header-actions,
+    .lemouf-studio-dock-header-actions {
       display: flex;
       align-items: center;
       gap: 6px;
     }
-    .lemouf-song2daw-dock-title {
+    .lemouf-studio-dock-title,
+    .lemouf-studio-dock-title {
       font-size: 11px;
       text-transform: uppercase;
       letter-spacing: 0.5px;
       font-weight: 700;
       color: #4a3b2f;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-step-panel {
+    .lemouf-studio-dock .lemouf-studio-step-panel,
+    .lemouf-studio-dock .lemouf-studio-step-panel,
+    .lemouf-studio-dock .lemouf-studio-step-panel,
+    .lemouf-studio-dock .lemouf-studio-step-panel {
       margin: 8px;
       margin-top: 6px;
       flex: 1;
@@ -262,33 +279,44 @@ export function injectStyles() {
       border-color: #bfae9d;
       background: #f9f1e6;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-studio-body {
+    .lemouf-studio-dock .lemouf-studio-body,
+    .lemouf-studio-dock .lemouf-studio-body {
       flex: 1 1 auto;
       min-height: 0;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-studio-layout {
+    .lemouf-studio-dock .lemouf-studio-layout,
+    .lemouf-studio-dock .lemouf-studio-layout {
       flex: 1 1 auto;
       min-height: 0;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-arrange-canvas-wrap {
+    .lemouf-studio-dock .lemouf-studio-arrange-canvas-wrap,
+    .lemouf-studio-dock .lemouf-studio-arrange-canvas-wrap {
       min-height: 0;
       height: 100%;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-studio-inspector {
+    .lemouf-studio-dock .lemouf-studio-inspector,
+    .lemouf-studio-dock .lemouf-studio-inspector,
+    .lemouf-studio-dock .lemouf-studio-inspector,
+    .lemouf-studio-dock .lemouf-studio-inspector {
       min-height: 0;
       height: 100%;
     }
-    .lemouf-song2daw-dock .lemouf-song2daw-step-title {
+    .lemouf-studio-dock .lemouf-studio-step-title,
+    .lemouf-studio-dock .lemouf-studio-step-title,
+    .lemouf-studio-dock .lemouf-studio-step-title,
+    .lemouf-studio-dock .lemouf-studio-step-title {
       position: sticky;
       top: 0;
       z-index: 1;
       background: #f9f1e6;
       padding-bottom: 2px;
     }
-    .lemouf-song2daw-dock .lemouf-loop-row.tight {
+    .lemouf-studio-dock .lemouf-loop-row.tight,
+    .lemouf-studio-dock .lemouf-loop-row.tight {
       margin-bottom: 0;
     }
-    .lemouf-song2daw-dock-content {
+    .lemouf-studio-dock-content,
+    .lemouf-studio-dock-content {
       flex: 1 1 auto;
       min-height: 0;
       min-width: 0;
@@ -1354,18 +1382,21 @@ export function injectStyles() {
       padding: 8px;
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
     }
-    .lemouf-song2daw-home-card {
+    .lemouf-studio-home-card,
+    .lemouf-studio-home-card {
       flex: 1 1 auto;
       min-height: 0;
       display: flex;
       flex-direction: column;
     }
-    .lemouf-song2daw-run-detail {
+    .lemouf-studio-run-detail,
+    .lemouf-studio-run-detail {
       flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
     }
-    .lemouf-song2daw-home-view {
+    .lemouf-studio-home-view,
+    .lemouf-studio-home-view {
       flex: 1 1 auto;
       min-height: 0;
       overflow: hidden;
@@ -1551,7 +1582,8 @@ export function injectStyles() {
       align-items: stretch;
       min-width: 0;
     }
-    .lemouf-step-flow-song2daw {
+    .lemouf-step-flow-studio,
+    .lemouf-step-flow-studio {
       gap: 4px;
     }
     .lemouf-step-flow-card {
@@ -1637,31 +1669,39 @@ export function injectStyles() {
       font-weight: 700;
       line-height: 1;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-card {
+    .lemouf-step-flow-studio .lemouf-step-flow-card,
+    .lemouf-step-flow-studio .lemouf-step-flow-card {
       padding: 6px 8px;
       gap: 2px;
       border-radius: 9px;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-head {
+    .lemouf-step-flow-studio .lemouf-step-flow-head,
+    .lemouf-step-flow-studio .lemouf-step-flow-head {
       gap: 4px;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-badge {
+    .lemouf-step-flow-studio .lemouf-step-flow-badge,
+    .lemouf-step-flow-studio .lemouf-step-flow-badge {
       padding: 1px 7px;
       font-size: 9px;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-index {
+    .lemouf-step-flow-studio .lemouf-step-flow-index,
+    .lemouf-step-flow-studio .lemouf-step-flow-index {
       font-size: 9px;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-title {
+    .lemouf-step-flow-studio .lemouf-step-flow-title,
+    .lemouf-step-flow-studio .lemouf-step-flow-title {
       font-size: 12px;
       line-height: 1.15;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-sub,
-    .lemouf-step-flow-song2daw .lemouf-step-flow-meta {
+    .lemouf-step-flow-studio .lemouf-step-flow-sub,
+    .lemouf-step-flow-studio .lemouf-step-flow-meta,
+    .lemouf-step-flow-studio .lemouf-step-flow-sub,
+    .lemouf-step-flow-studio .lemouf-step-flow-meta {
       font-size: 10px;
       line-height: 1.2;
     }
-    .lemouf-step-flow-song2daw .lemouf-step-flow-arrow {
+    .lemouf-step-flow-studio .lemouf-step-flow-arrow,
+    .lemouf-step-flow-studio .lemouf-step-flow-arrow {
       font-size: 13px;
       margin: 0;
       opacity: 0.8;
@@ -3121,7 +3161,8 @@ export function injectStyles() {
       white-space: pre-wrap;
       word-break: break-word;
     }
-    .lemouf-song2daw-overview {
+    .lemouf-studio-overview,
+    .lemouf-studio-overview {
       display: block;
       min-width: 0;
       margin-top: 2px;
@@ -3130,12 +3171,16 @@ export function injectStyles() {
       overflow-x: hidden;
       padding-right: 4px;
     }
-    .lemouf-song2daw-home-card .lemouf-song2daw-overview {
+    .lemouf-studio-home-card .lemouf-studio-overview,
+    .lemouf-studio-home-card .lemouf-studio-overview,
+    .lemouf-studio-home-card .lemouf-studio-overview,
+    .lemouf-studio-home-card .lemouf-studio-overview {
       flex: 1 1 auto;
       min-height: 120px;
       max-height: none;
     }
-    .lemouf-song2daw-step-empty {
+    .lemouf-studio-step-empty,
+    .lemouf-studio-step-empty {
       grid-column: 1 / -1;
       font-size: 11px;
       color: #7a6756;
@@ -3144,7 +3189,8 @@ export function injectStyles() {
       padding: 8px;
       background: #fffaf3;
     }
-    .lemouf-song2daw-step-card {
+    .lemouf-studio-step-card,
+    .lemouf-studio-step-card {
       border: 1px solid #b59c86;
       border-radius: 8px;
       background: #fffaf3;
@@ -3156,22 +3202,26 @@ export function injectStyles() {
       gap: 4px;
       cursor: pointer;
     }
-    .lemouf-song2daw-step-card:hover {
+    .lemouf-studio-step-card:hover,
+    .lemouf-studio-step-card:hover {
       filter: brightness(0.98);
       box-shadow: 0 4px 10px rgba(40, 30, 20, 0.12);
     }
-    .lemouf-song2daw-step-card.is-selected {
+    .lemouf-studio-step-card.is-selected,
+    .lemouf-studio-step-card.is-selected {
       border-color: #7a5a3c;
       background: #f2e5d4;
       box-shadow: inset 0 0 0 1px rgba(90, 70, 55, 0.2);
     }
-    .lemouf-song2daw-step-head {
+    .lemouf-studio-step-head,
+    .lemouf-studio-step-head {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 6px;
     }
-    .lemouf-song2daw-step-badge {
+    .lemouf-studio-step-badge,
+    .lemouf-studio-step-badge {
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -3184,26 +3234,32 @@ export function injectStyles() {
       background: #9a846f;
       color: #f7f2ea;
     }
-    .lemouf-song2daw-step-badge.ok { background: #4b7b4f; }
-    .lemouf-song2daw-step-badge.error { background: #a4473d; }
-    .lemouf-song2daw-step-idx {
+    .lemouf-studio-step-badge.ok,
+    .lemouf-studio-step-badge.ok { background: #4b7b4f; }
+    .lemouf-studio-step-badge.error,
+    .lemouf-studio-step-badge.error { background: #a4473d; }
+    .lemouf-studio-step-idx,
+    .lemouf-studio-step-idx {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.3px;
       color: #7a6756;
     }
-    .lemouf-song2daw-step-name {
+    .lemouf-studio-step-name,
+    .lemouf-studio-step-name {
       font-size: 11px;
       font-weight: 700;
       color: #3b2f24;
       word-break: break-word;
     }
-    .lemouf-song2daw-step-sub {
+    .lemouf-studio-step-sub,
+    .lemouf-studio-step-sub {
       font-size: 10px;
       color: #7a6756;
       word-break: break-word;
     }
-    .lemouf-song2daw-step-panel {
+    .lemouf-studio-step-panel,
+    .lemouf-studio-step-panel {
       border: 1px solid #c9b9a8;
       border-radius: 8px;
       background: #fffaf3;
@@ -3212,12 +3268,15 @@ export function injectStyles() {
       flex-direction: column;
       gap: 6px;
     }
-    .lemouf-song2daw-studio-panel {
-      --lemouf-song2daw-compact-height: 170px;
+    .lemouf-studio-panel,
+    .lemouf-studio-panel {
+      --lemouf-studio-compact-height: 170px;
+      --lemouf-studio-compact-height: 170px;
       min-height: 0;
       overflow: hidden;
     }
-    .lemouf-song2daw-studio-inline-resizer {
+    .lemouf-studio-inline-resizer,
+    .lemouf-studio-inline-resizer {
       display: none;
       height: 8px;
       border: 1px solid rgba(118, 96, 76, 0.3);
@@ -3231,10 +3290,12 @@ export function injectStyles() {
       cursor: ns-resize;
       box-sizing: border-box;
     }
-    .lemouf-song2daw-studio-panel.is-compact .lemouf-song2daw-studio-inline-resizer {
+    .lemouf-studio-panel.is-compact .lemouf-studio-inline-resizer,
+    .lemouf-studio-panel.is-compact .lemouf-studio-inline-resizer {
       display: block;
     }
-    .lemouf-song2daw-audio-preview {
+    .lemouf-studio-audio-preview,
+    .lemouf-studio-audio-preview {
       border: 1px solid #c9b9a8;
       border-radius: 10px;
       background: linear-gradient(180deg, #fffaf3, #f3e7d8);
@@ -3245,12 +3306,14 @@ export function injectStyles() {
       margin-top: 6px;
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
     }
-    .lemouf-song2daw-audio-preview .lemouf-loop-select {
+    .lemouf-studio-audio-preview .lemouf-loop-select,
+    .lemouf-studio-audio-preview .lemouf-loop-select {
       border-color: #bda995;
       background: #f7efe4;
       color: #493a2e;
     }
-    .lemouf-song2daw-audio-preview-player {
+    .lemouf-studio-audio-preview-player,
+    .lemouf-studio-audio-preview-player {
       width: 100%;
       min-height: 34px;
       height: 38px;
@@ -3263,37 +3326,47 @@ export function injectStyles() {
       accent-color: #a88a67;
       color-scheme: dark;
     }
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-enclosure {
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-enclosure,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-enclosure {
       border-radius: 999px;
       background: transparent;
       border: none;
     }
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-panel {
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-panel,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-panel {
       background: transparent;
       color: #f8efe2;
     }
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-current-time-display,
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-time-remaining-display {
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-current-time-display,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-time-remaining-display,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-current-time-display,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-time-remaining-display {
       color: #f8efe2;
       font-size: 10px;
       text-shadow: none;
     }
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-timeline {
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-timeline,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-timeline {
       filter: sepia(0.42) saturate(0.72) brightness(1.06);
     }
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-play-button,
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-mute-button,
-    .lemouf-song2daw-audio-preview-player::-webkit-media-controls-overflow-button {
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-play-button,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-mute-button,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-overflow-button,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-play-button,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-mute-button,
+    .lemouf-studio-audio-preview-player::-webkit-media-controls-overflow-button {
       filter: sepia(0.55) saturate(0.85) brightness(1.12);
     }
-    .lemouf-song2daw-step-title {
+    .lemouf-studio-step-title,
+    .lemouf-studio-step-title {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.4px;
       color: #6b5a4a;
       font-weight: 700;
     }
-    .lemouf-song2daw-detail-head {
+    .lemouf-studio-detail-head,
+    .lemouf-studio-detail-head {
       border: 1px solid #c9b9a8;
       border-radius: 8px;
       background: #fffaf3;
@@ -3302,13 +3375,15 @@ export function injectStyles() {
       flex-direction: column;
       gap: 8px;
     }
-    .lemouf-song2daw-detail-head-main {
+    .lemouf-studio-detail-head-main,
+    .lemouf-studio-detail-head-main {
       display: flex;
       flex-direction: column;
       gap: 2px;
       min-width: 0;
     }
-    .lemouf-song2daw-detail-title {
+    .lemouf-studio-detail-title,
+    .lemouf-studio-detail-title {
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: 0.35px;
@@ -3316,20 +3391,24 @@ export function injectStyles() {
       color: #3b2f24;
       word-break: break-word;
     }
-    .lemouf-song2daw-detail-meta {
+    .lemouf-studio-detail-meta,
+    .lemouf-studio-detail-meta {
       font-size: 10px;
       color: #6b5a4a;
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .lemouf-song2daw-detail-head-actions {
+    .lemouf-studio-detail-head-actions,
+    .lemouf-studio-detail-head-actions {
       display: flex;
       align-items: center;
       flex-wrap: wrap;
       gap: 8px;
     }
-    .lemouf-song2daw-detail-dock-actions,
-    .lemouf-song2daw-detail-nav-actions {
+    .lemouf-studio-detail-dock-actions,
+    .lemouf-studio-detail-nav-actions,
+    .lemouf-studio-detail-dock-actions,
+    .lemouf-studio-detail-nav-actions {
       display: inline-flex;
       align-items: center;
       gap: 6px;
@@ -3340,7 +3419,8 @@ export function injectStyles() {
       background: rgba(247, 237, 220, 0.7);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
     }
-    .lemouf-song2daw-detail-action-separator {
+    .lemouf-studio-detail-action-separator,
+    .lemouf-studio-detail-action-separator {
       flex: 0 0 1px;
       align-self: stretch;
       min-height: 26px;
@@ -3352,12 +3432,14 @@ export function injectStyles() {
         rgba(145, 121, 98, 0)
       );
     }
-    .lemouf-song2daw-detail-content-panel {
+    .lemouf-studio-detail-content-panel,
+    .lemouf-studio-detail-content-panel {
       flex: 0 0 auto;
       min-height: 110px;
       overflow: hidden;
     }
-    .lemouf-song2daw-detail-summary-panel {
+    .lemouf-studio-detail-summary-panel,
+    .lemouf-studio-detail-summary-panel {
       flex: 1 1 50%;
       min-height: 110px;
       overflow: hidden;
@@ -3403,27 +3485,32 @@ export function injectStyles() {
       justify-content: center;
       text-align: center;
     }
-    .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor {
+    .lemouf-studio-detail-content-panel .lemouf-loop-composition-monitor,
+    .lemouf-studio-detail-content-panel .lemouf-loop-composition-monitor {
       flex: 1 1 auto;
       min-height: 0;
     }
-    .lemouf-song2daw-detail-content-panel .lemouf-loop-composition-monitor-stage {
+    .lemouf-studio-detail-content-panel .lemouf-loop-composition-monitor-stage,
+    .lemouf-studio-detail-content-panel .lemouf-loop-composition-monitor-stage {
       max-height: none;
       min-height: 220px;
       width: 100%;
       min-width: 220px;
     }
-    .lemouf-song2daw-detail-content-panel .lemouf-tool-step-dock-hosts {
+    .lemouf-studio-detail-content-panel .lemouf-tool-step-dock-hosts,
+    .lemouf-studio-detail-content-panel .lemouf-tool-step-dock-hosts {
       flex: 0 0 auto;
       min-height: 0;
       overflow: visible;
     }
-    .lemouf-song2daw-detail-content-panel .lemouf-tool-step-monitor-host {
+    .lemouf-studio-detail-content-panel .lemouf-tool-step-monitor-host,
+    .lemouf-studio-detail-content-panel .lemouf-tool-step-monitor-host {
       flex: 0 0 auto;
       min-height: 0;
       overflow: visible;
     }
-    .lemouf-song2daw-detail-pre {
+    .lemouf-studio-detail-pre,
+    .lemouf-studio-detail-pre {
       flex: 1 1 auto;
       min-height: 0;
       max-height: 100%;
@@ -3439,7 +3526,7 @@ export function injectStyles() {
       color: #f3f8ff;
       box-shadow: inset 0 0 0 1px rgba(25, 38, 50, 0.3);
     }
-    .lemouf-song2daw-studio-body {
+    .lemouf-studio-body {
       border: 1px solid #d6c4b2;
       border-radius: 8px;
       background: #f8efe2;
@@ -3452,24 +3539,25 @@ export function injectStyles() {
       color: #4a3b2f;
       overflow: auto;
     }
-    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact {
+    .lemouf-studio-body.lemouf-studio-body-compact {
       overflow: hidden;
       gap: 6px;
-      height: var(--lemouf-song2daw-compact-height, 170px);
+      height: var(--lemouf-studio-compact-height, 170px);
       min-height: 96px;
       max-height: 440px;
       flex: 0 0 auto;
     }
-    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-studio-layout {
+    .lemouf-studio-body.lemouf-studio-body-compact .lemouf-studio-layout {
       min-height: 120px;
     }
-    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-arrange-canvas-wrap {
+    .lemouf-studio-body.lemouf-studio-body-compact .lemouf-studio-arrange-canvas-wrap {
       min-height: 120px;
     }
-    .lemouf-song2daw-studio-body.lemouf-song2daw-studio-body-compact .lemouf-song2daw-arrange-canvas {
+    .lemouf-studio-body.lemouf-studio-body-compact .lemouf-studio-arrange-canvas {
       min-height: 120px;
     }
-    .lemouf-song2daw-studio-meta {
+    .lemouf-studio-meta,
+    .lemouf-studio-meta {
       font-size: 10px;
       color: #6a5948;
       text-transform: uppercase;
@@ -3477,19 +3565,19 @@ export function injectStyles() {
       border-bottom: 1px dashed #c9b9a8;
       padding-bottom: 6px;
     }
-    .lemouf-song2daw-studio-toolbar {
+    .lemouf-studio-toolbar {
       display: flex;
       align-items: center;
       justify-content: flex-start;
       gap: 6px;
       flex-wrap: wrap;
     }
-    .lemouf-song2daw-studio-toolbar-group {
+    .lemouf-studio-toolbar-group {
       display: flex;
       align-items: center;
       gap: 4px;
     }
-    .lemouf-song2daw-viz-select {
+    .lemouf-studio-viz-select {
       width: auto;
       min-width: 118px;
       max-width: 150px;
@@ -3497,7 +3585,7 @@ export function injectStyles() {
       font-size: 11px;
       flex: 0 0 auto;
     }
-    .lemouf-song2daw-studio-toolbar-overview {
+    .lemouf-studio-toolbar-overview {
       font-size: 10px;
       color: #5f4e40;
       text-transform: uppercase;
@@ -3512,7 +3600,7 @@ export function injectStyles() {
       background: #fffaf3;
       padding: 5px 7px;
     }
-    .lemouf-song2daw-studio-toolbar-status {
+    .lemouf-studio-toolbar-status {
       font-size: 10px;
       color: #5f4e40;
       text-transform: uppercase;
@@ -3526,7 +3614,7 @@ export function injectStyles() {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .lemouf-song2daw-studio-footer {
+    .lemouf-studio-footer {
       border: 1px solid #cfbeac;
       border-radius: 8px;
       background: #fffaf3;
@@ -3537,7 +3625,7 @@ export function injectStyles() {
       justify-content: space-between;
       gap: 10px;
     }
-    .lemouf-song2daw-studio-footer-actions {
+    .lemouf-studio-footer-actions {
       margin-left: 0;
       display: flex;
       align-items: center;
@@ -3546,11 +3634,11 @@ export function injectStyles() {
       gap: 14px;
       min-width: 0;
     }
-    .lemouf-song2daw-studio-footer-shortcuts-wrap {
+    .lemouf-studio-footer-shortcuts-wrap {
       flex: 1 1 auto;
       min-width: 0;
     }
-    .lemouf-song2daw-studio-footer-shortcuts {
+    .lemouf-studio-footer-shortcuts {
       display: flex;
       align-items: center;
       gap: 5px;
@@ -3561,7 +3649,7 @@ export function injectStyles() {
       letter-spacing: 0.18px;
       white-space: nowrap;
     }
-    .lemouf-song2daw-shortcut-chip {
+    .lemouf-studio-shortcut-chip {
       display: inline-flex;
       align-items: center;
       gap: 4px;
@@ -3573,20 +3661,20 @@ export function injectStyles() {
       min-width: 0;
       flex: 0 0 auto;
     }
-    .lemouf-song2daw-shortcut-icon {
+    .lemouf-studio-shortcut-icon {
       width: 12px;
       height: 12px;
       flex: 0 0 auto;
       color: #6b5747;
     }
-    .lemouf-song2daw-shortcut-text {
+    .lemouf-studio-shortcut-text {
       font-size: 9px;
       line-height: 1.2;
       letter-spacing: 0.18px;
       text-transform: uppercase;
       white-space: nowrap;
     }
-    .lemouf-song2daw-track-context-menu {
+    .lemouf-studio-track-context-menu {
       position: fixed;
       z-index: 2147483640;
       min-width: 180px;
@@ -3601,7 +3689,7 @@ export function injectStyles() {
       pointer-events: auto;
       isolation: isolate;
     }
-    .lemouf-song2daw-track-context-menu-title {
+    .lemouf-studio-track-context-menu-title {
       font-size: 10px;
       line-height: 1.2;
       color: #5e4c3c;
@@ -3611,7 +3699,7 @@ export function injectStyles() {
       border-bottom: 1px dashed rgba(136, 110, 86, 0.42);
       margin-bottom: 1px;
     }
-    .lemouf-song2daw-track-context-menu-item {
+    .lemouf-studio-track-context-menu-item {
       border: 1px solid rgba(133, 104, 76, 0.78);
       border-radius: 7px;
       background: #8a6f53;
@@ -3624,30 +3712,30 @@ export function injectStyles() {
       cursor: pointer;
       pointer-events: auto;
     }
-    .lemouf-song2daw-track-context-menu-item:hover {
+    .lemouf-studio-track-context-menu-item:hover {
       background: #7a6048;
     }
-    .lemouf-song2daw-track-context-menu-item:disabled,
-    .lemouf-song2daw-track-context-menu-item.is-disabled {
+    .lemouf-studio-track-context-menu-item:disabled,
+    .lemouf-studio-track-context-menu-item.is-disabled {
       opacity: 0.55;
       cursor: default;
       background: #ad9a84;
       color: #efe5d7;
     }
-    .lemouf-song2daw-studio-footer-group {
+    .lemouf-studio-footer-group {
       display: flex;
       align-items: center;
       gap: 6px;
       min-width: 0;
     }
-    .lemouf-song2daw-studio-footer-zoom {
+    .lemouf-studio-footer-zoom {
       font-size: 10px;
       color: #5f4e40;
       text-transform: uppercase;
       letter-spacing: 0.22px;
       white-space: nowrap;
     }
-    .lemouf-song2daw-studio-layout {
+    .lemouf-studio-layout {
       display: flex;
       flex-direction: column;
       gap: 8px;
@@ -3655,7 +3743,7 @@ export function injectStyles() {
       min-width: 0;
       flex: 1 1 auto;
     }
-    .lemouf-song2daw-arrange-canvas-wrap {
+    .lemouf-studio-arrange-canvas-wrap {
       border: 1px solid #cfbeac;
       border-radius: 8px;
       background: #f8efe2;
@@ -3665,14 +3753,15 @@ export function injectStyles() {
       min-width: 0;
       flex: 1 1 auto;
     }
-    .lemouf-song2daw-arrange-canvas {
+    .lemouf-studio-arrange-canvas {
       width: 100%;
       height: 100%;
       display: block;
       cursor: default;
       min-height: 220px;
     }
-    .lemouf-song2daw-spectrum-canvas-wrap {
+    .lemouf-studio-spectrum-canvas-wrap,
+    .lemouf-studio-spectrum-canvas-wrap {
       border: 1px solid #cfbeac;
       border-radius: 8px;
       background: #f7ecdc;
@@ -3682,14 +3771,16 @@ export function injectStyles() {
       min-width: 0;
       flex: 1 1 auto;
     }
-    .lemouf-song2daw-spectrum-canvas {
+    .lemouf-studio-spectrum-canvas,
+    .lemouf-studio-spectrum-canvas {
       width: 100%;
       height: 100%;
       display: block;
       min-height: 220px;
       background: #f8efe2;
     }
-    .lemouf-song2daw-studio-inspector {
+    .lemouf-studio-inspector,
+    .lemouf-studio-inspector {
       border: 1px solid #cfbeac;
       border-radius: 8px;
       background: #fffaf3;
@@ -3701,57 +3792,67 @@ export function injectStyles() {
       overflow: auto;
       min-width: 0;
     }
-    .lemouf-song2daw-inspector-title {
+    .lemouf-studio-inspector-title,
+    .lemouf-studio-inspector-title {
       font-size: 10px;
       text-transform: uppercase;
       letter-spacing: 0.3px;
       color: #5f4e40;
       font-weight: 700;
     }
-    .lemouf-song2daw-inspector-grid {
+    .lemouf-studio-inspector-grid,
+    .lemouf-studio-inspector-grid {
       display: grid;
       grid-template-columns: 64px minmax(0, 1fr);
       gap: 3px 5px;
       font-size: 10px;
     }
-    .lemouf-song2daw-inspector-key {
+    .lemouf-studio-inspector-key,
+    .lemouf-studio-inspector-key {
       color: #7a6756;
       text-transform: uppercase;
       letter-spacing: 0.2px;
       font-size: 9px;
     }
-    .lemouf-song2daw-inspector-value {
+    .lemouf-studio-inspector-value,
+    .lemouf-studio-inspector-value {
       color: #3b2f24;
       word-break: break-word;
       font-size: 10px;
     }
-    .lemouf-song2daw-inspector-actions {
+    .lemouf-studio-inspector-actions,
+    .lemouf-studio-inspector-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 4px;
       margin-top: 2px;
     }
-    .lemouf-song2daw-arrange {
+    .lemouf-studio-arrange,
+    .lemouf-studio-arrange {
       display: flex;
       flex-direction: column;
       gap: 4px;
     }
-    .lemouf-song2daw-arrange-row {
+    .lemouf-studio-arrange-row,
+    .lemouf-studio-arrange-row {
       display: grid;
       grid-template-columns: 116px 1fr;
       gap: 6px;
       align-items: stretch;
       min-height: 34px;
     }
-    .lemouf-song2daw-arrange-row.is-ruler {
+    .lemouf-studio-arrange-row.is-ruler,
+    .lemouf-studio-arrange-row.is-ruler {
       min-height: 22px;
       margin-bottom: 2px;
     }
-    .lemouf-song2daw-arrange-row.is-sections {
+    .lemouf-studio-arrange-row.is-sections,
+    .lemouf-studio-arrange-row.is-sections {
       min-height: 30px;
       margin-bottom: 3px;
     }
-    .lemouf-song2daw-arrange-head {
+    .lemouf-studio-arrange-head,
+    .lemouf-studio-arrange-head {
       border: 1px solid #cfbeac;
       border-radius: 7px;
       background: linear-gradient(180deg, #efe0cf, #e6d2be);
@@ -3762,7 +3863,8 @@ export function injectStyles() {
       gap: 2px;
       min-width: 0;
     }
-    .lemouf-song2daw-arrange-head-name {
+    .lemouf-studio-arrange-head-name,
+    .lemouf-studio-arrange-head-name {
       font-size: 10px;
       font-weight: 700;
       color: #3b2f24;
@@ -3772,14 +3874,16 @@ export function injectStyles() {
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .lemouf-song2daw-arrange-head-sub {
+    .lemouf-studio-arrange-head-sub,
+    .lemouf-studio-arrange-head-sub {
       font-size: 9px;
       color: #705f4e;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
-    .lemouf-song2daw-arrange-ruler {
+    .lemouf-studio-arrange-ruler,
+    .lemouf-studio-arrange-ruler {
       position: relative;
       border: 1px solid #cfbeac;
       border-radius: 7px;
@@ -3787,7 +3891,8 @@ export function injectStyles() {
       min-height: 22px;
       overflow: hidden;
     }
-    .lemouf-song2daw-arrange-ruler-mark {
+    .lemouf-studio-arrange-ruler-mark,
+    .lemouf-studio-arrange-ruler-mark {
       position: absolute;
       top: 3px;
       transform: translateX(-50%);
@@ -3796,7 +3901,8 @@ export function injectStyles() {
       user-select: none;
       pointer-events: none;
     }
-    .lemouf-song2daw-arrange-lane {
+    .lemouf-studio-arrange-lane,
+    .lemouf-studio-arrange-lane {
       position: relative;
       border: 1px solid #cfbeac;
       border-radius: 7px;
@@ -3804,17 +3910,20 @@ export function injectStyles() {
       min-height: 34px;
       overflow: hidden;
     }
-    .lemouf-song2daw-arrange-lane.sections {
+    .lemouf-studio-arrange-lane.sections,
+    .lemouf-studio-arrange-lane.sections {
       min-height: 30px;
       background: linear-gradient(180deg, #f8ecdc, #f1dfca);
     }
-    .lemouf-song2daw-arrange-grid {
+    .lemouf-studio-arrange-grid,
+    .lemouf-studio-arrange-grid {
       position: absolute;
       inset: 0;
       pointer-events: none;
       z-index: 1;
     }
-    .lemouf-song2daw-arrange-line {
+    .lemouf-studio-arrange-line,
+    .lemouf-studio-arrange-line {
       position: absolute;
       top: 0;
       bottom: 0;
@@ -3822,10 +3931,12 @@ export function injectStyles() {
       transform: translateX(-0.5px);
       background: rgba(125, 101, 79, 0.24);
     }
-    .lemouf-song2daw-arrange-line.minor {
+    .lemouf-studio-arrange-line.minor,
+    .lemouf-studio-arrange-line.minor {
       background: rgba(125, 101, 79, 0.12);
     }
-    .lemouf-song2daw-arrange-playhead {
+    .lemouf-studio-arrange-playhead,
+    .lemouf-studio-arrange-playhead {
       position: absolute;
       top: 0;
       bottom: 0;
@@ -3835,11 +3946,14 @@ export function injectStyles() {
       z-index: 4;
       pointer-events: none;
     }
-    .lemouf-song2daw-arrange-playhead.ruler {
+    .lemouf-studio-arrange-playhead.ruler,
+    .lemouf-studio-arrange-playhead.ruler {
       background: rgba(28, 28, 28, 0.65);
     }
-    .lemouf-song2daw-arrange-section,
-    .lemouf-song2daw-arrange-clip {
+    .lemouf-studio-arrange-section,
+    .lemouf-studio-arrange-clip,
+    .lemouf-studio-arrange-section,
+    .lemouf-studio-arrange-clip {
       position: absolute;
       left: 0;
       top: 4px;
@@ -3862,7 +3976,8 @@ export function injectStyles() {
       box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
       user-select: none;
     }
-    .lemouf-song2daw-arrange-section {
+    .lemouf-studio-arrange-section,
+    .lemouf-studio-arrange-section {
       --clip-h: 35;
       height: calc(100% - 7px);
       top: 3px;
@@ -3872,7 +3987,8 @@ export function injectStyles() {
       background: linear-gradient(180deg, #89694f, #71563f);
       font-weight: 700;
     }
-    .lemouf-song2daw-arrange-empty {
+    .lemouf-studio-arrange-empty,
+    .lemouf-studio-arrange-empty {
       position: absolute;
       left: 8px;
       top: 50%;
@@ -3883,17 +3999,20 @@ export function injectStyles() {
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .lemouf-song2daw-studio-note {
+    .lemouf-studio-note,
+    .lemouf-studio-note {
       font-size: 10px;
       color: #7a6756;
       padding-left: 2px;
     }
-    .lemouf-song2daw-tracks-grid {
+    .lemouf-studio-tracks-grid,
+    .lemouf-studio-tracks-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 6px;
     }
-    .lemouf-song2daw-track-card {
+    .lemouf-studio-track-card,
+    .lemouf-studio-track-card {
       border: 1px solid #cfbeac;
       border-radius: 8px;
       background: #fffaf3;
@@ -3902,7 +4021,8 @@ export function injectStyles() {
       flex-direction: column;
       gap: 3px;
     }
-    .lemouf-song2daw-track-name {
+    .lemouf-studio-track-name,
+    .lemouf-studio-track-name {
       font-size: 11px;
       font-weight: 700;
       color: #3b2f24;
@@ -3911,42 +4031,48 @@ export function injectStyles() {
       align-items: center;
       gap: 5px;
     }
-    .lemouf-song2daw-track-color-dot {
+    .lemouf-studio-track-color-dot,
+    .lemouf-studio-track-color-dot {
       width: 9px;
       height: 9px;
       border-radius: 50%;
       flex: 0 0 auto;
       border: 1px solid rgba(40, 30, 20, 0.26);
     }
-    .lemouf-song2daw-track-meta {
+    .lemouf-studio-track-meta,
+    .lemouf-studio-track-meta {
       font-size: 10px;
       color: #6a5948;
       text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .lemouf-song2daw-track-source {
+    .lemouf-studio-track-source,
+    .lemouf-studio-track-source {
       font-size: 10px;
       color: #6a5948;
       word-break: break-word;
     }
     @media (max-width: 900px) {
-      .lemouf-song2daw-studio-toolbar-overview {
+      .lemouf-studio-toolbar-overview {
         flex: 1 1 100%;
       }
-      .lemouf-song2daw-studio-toolbar-status {
+      .lemouf-studio-toolbar-status {
         width: 100%;
         text-align: left;
       }
     }
     @media (max-width: 520px) {
-      .lemouf-song2daw-tracks-grid {
+      .lemouf-studio-tracks-grid,
+      .lemouf-studio-tracks-grid {
         grid-template-columns: 1fr;
       }
-      .lemouf-song2daw-arrange-row {
+      .lemouf-studio-arrange-row,
+      .lemouf-studio-arrange-row {
         grid-template-columns: 1fr;
         gap: 4px;
       }
-      .lemouf-song2daw-arrange-head {
+      .lemouf-studio-arrange-head,
+      .lemouf-studio-arrange-head {
         min-height: 26px;
       }
     }

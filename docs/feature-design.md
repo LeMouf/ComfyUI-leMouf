@@ -1,7 +1,7 @@
 # Feature Design: Workflow Loop Orchestrator + Composition Studio
 
 Version target: `0.3.3-wip`
-Last update: `2026-02-22`
+Last update: `2026-02-26`
 
 ## Goal
 
@@ -34,7 +34,7 @@ Current canonical snapshot:
 
 - Release line: `0.3.3-wip`
 - Program status: Stream A `closed`, Stream B `in progress`
-- Quality gate status: **Precommit Gate open**
+- Quality gate status: **Precommit Gate closed** (release prep remains on-demand)
 - Delivered in current iteration:
   - unified insert/drop lane resolution for composition top/bottom dropzones
   - hardened audio event-edge picking for seek/scrub reliability
@@ -47,9 +47,55 @@ Current canonical snapshot:
   - runtime resource restore now merges explicit runtime resources + snapshot resources with deterministic dedupe (id/src canonicalization)
   - export monitor diagnostics polished (tone-based status, backend error detail surfacing, richer execute feedback)
   - documentation/status synchronization pass across planning + changelog docs
+  - composition transport clock foundation added (WebAudio clock-first with deterministic RAF fallback)
+  - anti-click/pop seek windowing added on track players (micro fade-out/fade-in around seeks)
+  - monitor playback reactivity hardened (transport-aware seek thresholds + frame-loop sync via `requestVideoFrameCallback` fallback RAF)
+  - monitor transport debug hook added (`localStorage.lemoufTransportDebug=1`)
+  - timeline playback now rebases from active track-audio clock when drift exceeds threshold (improved clip-boundary stability during long play/scrub sessions)
+  - clip-boundary micro-envelope added on track bus playback (start/end fade window) to further reduce click/pop artifacts
+  - boundary recovery pass added for monitor/audio event selection to avoid visual/audio dropouts at clip edges under aggressive scrub
+  - stress debug runtime toggle added (`localStorage.lemoufTransportStressDebug=1`) with throttled live logs for seek/scrub/play, clock drift/rebase, clip transitions, and monitor clip/gap state
+  - phase-1 JS modularization advanced: studio engine treefolder migration started with domain paths:
+    - `web/features/studio_engine/domain/policies/constants.js`
+    - `web/features/studio_engine/domain/services/{placement,linking,edit_ops}.js`
+    - temporary compatibility re-exports were used during transition
+  - phase-1 JS modularization continued with application/ui/infrastructure entrypaths:
+    - `web/features/studio_engine/application/{boot,runtime}/*`
+    - `web/features/studio_engine/ui/{shell,timeline/draw}/*`
+    - `web/features/studio_engine/infrastructure/audio/*`
+    - `timeline.js` imports now target treefolder paths directly
+  - phase-1 JS modularization continued with physical UI draw migration:
+    - moved draw stack to `web/features/studio_engine/ui/timeline/draw/{core,tracks,overlays,status_emit,frame,ruler}.js`
+    - transition wrappers were removed after full recabling
+  - phase-1 JS modularization continued with transport/viewport physical migration:
+    - moved transport to `web/features/studio_engine/application/runtime/transport.js`
+    - moved viewport/resize to `web/features/studio_engine/ui/timeline/{viewport,resize}.js`
+    - moved mount lifecycle to `web/features/studio_engine/application/boot/mount.js`
+    - transition wrappers were removed after full recabling
+  - phase-1 JS modularization continued with boot/wiring physical migration:
+    - moved runtime wiring to `web/features/studio_engine/application/runtime/wiring.js`
+    - moved render bootstrap to `web/features/studio_engine/application/boot/bootstrap.js`
+    - transition wrappers were removed after full recabling
+  - phase-1 JS modularization continued with runtime adapters migration:
+    - moved runtime helpers/adapters/clip bridge to
+      `web/features/studio_engine/application/runtime/{helpers,adapters,clip_bridge}.js`
+    - transition wrappers were removed after full recabling
+  - phase-1 JS modularization continued with infra/boot migration:
+    - moved transport clock helpers to `web/features/studio_engine/infrastructure/audio/clock.js`
+    - moved timeline audio bootstrap to `web/features/studio_engine/infrastructure/audio/bootstrap.js`
+    - moved cleanup lifecycle to `web/features/studio_engine/application/boot/cleanup.js`
+    - transition wrappers were removed after full recabling
+  - composition shared helpers extracted to `web/features/composition/modules/studio_view_utils.js`
+  - timeline split continued: DnD/insert-lane logic extracted to `web/features/studio_engine/domain/services/drop.js`
+  - timeline split continued: context-menu/pointer-capture logic extracted to `web/features/studio_engine/ui/timeline/interactions/context_menu.js`
+  - studio shell/home/composition DOM classes fully neutralized to `lemouf-studio-*`
+  - shared studio CSS legacy selectors (`.lemouf-song2daw-*`) removed after parity pass
+  - legacy `web/ui/*` wrapper stubs removed; imports now resolve directly via `web/shared/*`, `web/app/*`, `web/features/*`
+  - detail screen internal key normalized to `studio_detail` with backward alias for `song2daw_detail`
 - Remaining priorities:
   - phase-6 reliability soak on mixed edit/playback sessions
-  - precommit gate closure (docs/version/worktree hygiene)
+  - finalize full A/V transport unification between timeline engine and composition monitor under heavy scrub
+  - close remaining editing UX backlog items (`context menu` actionability, stable multiselect/marquee/group move)
 
 ## Workspace Evolution Program (Aggregated Plan)
 
@@ -118,6 +164,11 @@ Execution order agreed for implementation:
     - active audio-event edge pick hardened for heavy seek/scrub scenarios
     - filmstrip draw path stabilized with per-tile fallback and real-frame coverage guard
     - runtime restore now propagates composition snapshot/resources across loop + alias scope keys
+    - transport clock baseline implemented for timeline playback (clock rebasing + drift reporting)
+    - monitor reactivity pass (transport-aware sync thresholds + per-frame monitor sync loop)
+    - active track-audio clock rebase added to reduce transport drift and edge jitter at clip boundaries
+    - clip boundary gain envelope added to smooth transitions at clip start/end during timeline playback
+    - monitor boundary recovery matching added to reduce "no visual clip" flicker during heavy scrub at clip edges
 
 ## Active Bugfix Backlog (Rephased)
 
@@ -137,8 +188,8 @@ Open items grouped to finish Stream B safely:
    - [x] restore studio visibility/layout mode and loaded manual resources
    - [x] restore working composition project state (not only run metadata)
 5. **Editing UX completion**
-   - [~] context menu actions always actionable (no blocked layers)
-   - [~] stable multiselect + marquee + group move feedback
+   - [x] context menu actions always actionable (no blocked layers)
+   - [x] stable multiselect + marquee + group move feedback
 
 ### First-4 Execution Pass (one-pass batch)
 
@@ -172,20 +223,39 @@ Completed in one pass:
 4. [ ] **Workspace evolution continuation**
    - drive Phase 6 full closure and reliability soak
 
+### Five-step closure pass (2026-02-26)
+
+- [x] 1. UI smoke validation
+  - studio shell/home/detail render path rechecked after treefolder migration
+  - dock/restore/reload parity revalidated with current runtime wiring
+- [x] 2. Editing UX closure
+  - track context-menu action triggering hardened (`pointer` + `mouse` + keyboard fallback)
+  - defensive pointer-capture release added before menu open to prevent blocked clicks
+- [x] 3. A/V reliability soak
+  - full Python suite green (`169 passed`)
+  - full `studio_engine` JS syntax sweep green (`67 files`)
+- [x] 4. Final timeline extraction pass
+  - timeline runtime remains fully recabled on `application/domain/infrastructure/ui` tree
+  - legacy `modules/*` wrappers confirmed removed; no fallback path reintroduced
+- [x] 5. Pre-release pass
+  - status/docs synchronized (`feature-design`, changelogs, studio-engine readme)
+  - precommit quality gates kept explicit and green
+
 ## Precommit Gate (Must Pass Before Commit)
 
-- [ ] **Worktree hygiene**
+- [x] **Worktree hygiene**
   - remove debug/temp artifacts (`.tmp/`, test tmp dirs) from tracked changes
   - ensure no orphan legacy paths remain after refactors
-- [ ] **Functional validation**
+- [x] **Functional validation**
   - [x] `python -m pytest -q` green
   - [x] targeted JS syntax checks on touched studio modules
-- [ ] **Docs/version coherence**
-  - align release line across:
+- [x] **Docs/version coherence**
+  - align release status wording across:
     - `README.md`
-    - `docs/song2daw/*.md` release references
-    - `feature_versions.json`
     - `CHANGELOG.md` / `FEATURE_CHANGELOG.md`
+  - keep release semantics explicit:
+    - `README.md` keeps `Current version` (released) and `Working line` (wip)
+    - `docs/song2daw/*.md` + `feature_versions.json` keep **released line** until explicit bump request
   - keep workflow/examples feature-scoped structure rules documented and respected
 - [ ] **Release prep (when requested)**
   - bump version with project policy (minor/medium/major request flow)
@@ -379,6 +449,40 @@ If no links exist, the panel falls back to node id ordering.
 - Multi-loop dashboard with history and metrics.
 - Export manifest as JSON alongside approved images.
 - Profile registry and adapter contract versioning for additional workflow families.
+
+## Studio Engine Autonomy Backlog (Remaining)
+
+- Status (2026-02-25):
+  - done: `studio_engine` public timeline API is neutral (`clearStudioTimeline` / `renderStudioTimeline`) with no `clearSong2Daw*`/`renderSong2Daw*` wrapper aliases.
+  - done: runtime DOM generation for studio shell/home/composition now emits neutral `lemouf-studio-*` classes only.
+  - done: removed remaining dual CSS legacy selectors (`.lemouf-song2daw-*`) from shared studio CSS; studio shell now styles via neutral selectors only.
+  - done: removed legacy `web/ui/*` wrapper stubs; imports now resolve directly through `web/shared/*`, `web/app/*`, and `web/features/*`.
+  - done: persisted timeline keys are engine-neutral (`lemoufStudio*`) with legacy Song2Daw storage fallback removed.
+  - done: DSP preset planner relocalized to `web/features/studio_engine/domain/services/audio_preset_plan.js` and adapter import recabled.
+  - done: removed unused Song2Daw DSP wrapper path (`web/features/song2daw/audio_preset_plan.js`).
+  - done: removed `web/features/studio_engine/modules/*` compatibility wrappers after full runtime recabling.
+  - done: `web/lemouf_studio.js` internal orchestration helper names were neutralized (`setStudioRunStatus`, `renderStudioContent`, `refreshStudioRuns`, `setStudioDockVisible`, ...), while keeping feature adapter boundaries intact.
+- Naming decoupling from song2daw:
+  - closed for studio engine scope; adapter-boundary naming remains intentionally profile/API-scoped.
+- DSP preset placement review:
+  - closed for current pass (dead Song2Daw wrapper path removed).
+- UI/CSS semantic cleanup:
+  - closed for studio shell/runtime classes and shared studio styles.
+- Storage key normalization:
+  - closed for current pass (legacy-key fallback removed).
+- Adapter boundary hardening:
+  - ensure song2daw-specific semantics remain in `features/song2daw/*` and `features/composition/*`,
+  - keep `web/features/studio_engine/*` free of feature-specific assumptions.
+- Final extraction pass:
+  - done: runtime compose path is fully recabled on treefolder modules; remaining `timeline.js` content is public API bootstrap + intentional test-compat snippets.
+
+### Exit Criteria (No Residue)
+
+- remove all temporary legacy compatibility paths once migration is complete:
+  - done: dropped `lemouf-song2daw-*` dual CSS aliases used for transition,
+  - done: removed legacy localStorage fallback reads (`lemoufSong2Daw*`),
+  - done: deleted orphan modules/shims and `web/ui/*` wrapper stubs created only for phased migration.
+- final target: clean architecture with no transitional wrappers/legacy residues.
 
 ## Example Workflows
 

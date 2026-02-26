@@ -11,7 +11,10 @@ import {
   getCompositionScopeSnapshot,
   setCompositionStateChangeListener,
 } from "./features/composition/state_store.js";
-import { clearSong2DawStudioView, renderSong2DawStudioView } from "./features/song2daw/studio_view.js";
+import {
+  clearStudioView as clearFeatureStudioView,
+  renderStudioView as renderFeatureStudioView,
+} from "./features/song2daw/studio_view.js";
 import { clearLoopCompositionStudioView, renderLoopCompositionStudioView } from "./features/composition/studio_view.js";
 import { setButtonIcon } from "./shared/ui/icons.js";
 
@@ -977,34 +980,34 @@ app.registerExtension({
       compatStatus,
       workflowDiagnosticsPanel,
       workflowDiagnosticsSummaryState,
-      song2dawSelect,
-      song2dawBlock,
+      studioRunSelect,
+      studioFeatureBlock,
       workflowProfileStatus,
-      song2dawStatus,
-      song2dawRefreshBtn,
-      song2dawClearBtn,
-      song2dawLoadBtn,
-      song2dawPrimaryLoadRow,
-      song2dawOpenDirBtn,
-      song2dawDockToggleBtn,
-      song2dawDockExpandBtn,
-      song2dawRunDetailBlock,
-      song2dawSidebarDockHosts,
-      song2dawSidebarMonitorHost,
-      song2dawSidebarConfigHost,
-      song2dawAudioPreviewAsset,
-      song2dawAudioPreviewPlayer,
-      song2dawOverview,
-      song2dawStepPanel,
-      song2dawStepTitle,
-      song2dawStepDetail,
-      song2dawStudioPanel,
-      song2dawStudioTimelineBtn,
-      song2dawStudioTracksBtn,
-      song2dawStudioSpectrumBtn,
-      song2dawStudioInlineResizer,
-      song2dawStudioBody,
-      song2dawDetail,
+      studioStatusText,
+      studioRefreshBtn,
+      studioClearBtn,
+      studioLoadBtn,
+      studioPrimaryLoadRow,
+      studioOpenDirBtn,
+      studioDockToggleBtn,
+      studioDockExpandBtn,
+      studioRunDetailBlock,
+      studioSidebarDockHosts,
+      studioSidebarMonitorHost,
+      studioSidebarConfigHost,
+      studioAudioPreviewAsset,
+      studioAudioPreviewPlayer,
+      studioOverview,
+      studioStepPanel,
+      studioStepTitle,
+      studioStepDetail,
+      studioPanel,
+      studioTimelineBtn,
+      studioTracksBtn,
+      studioSpectrumBtn,
+      studioInlineResizer,
+      studioBody,
+      studioDetailSummary,
     } = homeScreen;
     let openLoopLightboxImpl = null;
     const openLightbox = (src, context = null) => {
@@ -1049,12 +1052,21 @@ app.registerExtension({
     let autoRefreshTimer = null;
     let autoRefreshAttempts = 0;
     const AUTO_REFRESH_MAX = 180;
-    const SONG2DAW_DOCK_MIN_HEIGHT = 140;
-    const SONG2DAW_DOCK_MAX_HEIGHT = 560;
-    const SONG2DAW_DOCK_DEFAULT_HEIGHT = 230;
-    const SONG2DAW_HOME_STUDIO_COMPACT_MIN_HEIGHT = 96;
-    const SONG2DAW_HOME_STUDIO_COMPACT_MAX_HEIGHT = 440;
-    const SONG2DAW_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT = 170;
+    const STUDIO_DOCK_MIN_HEIGHT = 140;
+    const STUDIO_DOCK_MAX_HEIGHT = 560;
+    const STUDIO_DOCK_DEFAULT_HEIGHT = 230;
+    const STUDIO_HOME_STUDIO_COMPACT_MIN_HEIGHT = 96;
+    const STUDIO_HOME_STUDIO_COMPACT_MAX_HEIGHT = 440;
+    const STUDIO_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT = 170;
+    const DETAIL_SCREEN_MODE_STUDIO = "studio";
+    const DETAIL_SCREEN_MODE_TOOL_COMPOSITION = "tool_composition";
+    const DOCK_CONTENT_MODE_STUDIO = "studio";
+    const DOCK_CONTENT_MODE_LOOP_COMPOSITION = "loop_composition";
+    const SCREEN_HOME = "home";
+    const SCREEN_RUN = "run";
+    const SCREEN_PAYLOAD = "payload";
+    const SCREEN_STUDIO_DETAIL = "studio_detail";
+    const SCREEN_STUDIO_DETAIL_ALIAS = "song2daw_detail";
     let progressState = {
       promptId: null,
       value: 0,
@@ -1081,20 +1093,20 @@ app.registerExtension({
     let lastManifestCycleIndices = [];
     let lastManifestCycleEntries = new Map();
     let closeHeaderMenu = null;
-    let song2dawDetailSection = null;
-    let song2dawDetailLayout = null;
-    let song2dawRunSummaryPanel = null;
-    let song2dawRunSummaryTitle = null;
-    let song2dawDetailHeaderTitle = null;
-    let song2dawDetailHeaderMeta = null;
-    let song2dawDetailPrevBtn = null;
-    let song2dawDetailNextBtn = null;
-    let song2dawDetailMonitorDockBtn = null;
-    let song2dawDetailConfigDockBtn = null;
-    let song2dawDetailDockActions = null;
-    let song2dawDetailActionSeparator = null;
-    let song2dawDetailBalanceRaf = 0;
-    let detailScreenMode = "song2daw";
+    let studioDetailSection = null;
+    let studioDetailLayout = null;
+    let studioRunSummaryPanel = null;
+    let studioRunSummaryTitle = null;
+    let studioDetailHeaderTitle = null;
+    let studioDetailHeaderMeta = null;
+    let studioDetailPrevBtn = null;
+    let studioDetailNextBtn = null;
+    let studioDetailMonitorDockBtn = null;
+    let studioDetailConfigDockBtn = null;
+    let studioDetailDockActions = null;
+    let studioDetailActionSeparator = null;
+    let studioDetailBalanceRaf = 0;
+    let detailScreenMode = DETAIL_SCREEN_MODE_STUDIO;
     let compositionStepMonitorDockTarget = "studio";
     let compositionStepMonitorConfigDockTarget = "sidebar";
     let compositionStepMonitorHost = null;
@@ -1107,19 +1119,19 @@ app.registerExtension({
       lastRun: null,
     };
     const compositionResourcesByLoop = new Map();
-    let song2dawRuns = [];
-    let currentSong2DawRun = null;
-    let selectedSong2DawStepIndex = 0;
-    let song2dawStudioMode = "timeline";
+    let studioRuns = [];
+    let currentStudioRun = null;
+    let selectedStudioStepIndex = 0;
+    let studioMode = "timeline";
     let currentWorkflowProfile = finalizeWorkflowProfile({ profile_id: "generic_loop", source: "init" }, "init");
-    let song2dawDockVisible = true;
-    let song2dawDockUserVisible = true;
-    let song2dawDockExpanded = false;
-    let song2dawDock = null;
-    let song2dawDockTitle = null;
-    let song2dawDockHeaderToggleBtn = null;
-    let song2dawDockHeaderExpandBtn = null;
-    let dockContentMode = "song2daw";
+    let studioDockVisible = true;
+    let studioDockUserVisible = true;
+    let studioDockExpanded = false;
+    let studioDock = null;
+    let studioDockTitle = null;
+    let studioDockHeaderToggleBtn = null;
+    let studioDockHeaderExpandBtn = null;
+    let dockContentMode = DOCK_CONTENT_MODE_STUDIO;
     let loopCompositionRequested = false;
     let pendingLoopUiRestore = null;
     let loopCompositionPanel = null;
@@ -1127,31 +1139,47 @@ app.registerExtension({
     let currentLoopDetail = null;
     let currentGutter = Number(getStored(STORAGE_KEYS.gutterWidth, "420") || 420);
     if (!Number.isFinite(currentGutter)) currentGutter = 420;
-    let currentSong2DawDockHeight = Number(
-      getStored(STORAGE_KEYS.dockHeight, String(SONG2DAW_DOCK_DEFAULT_HEIGHT)) ||
-        SONG2DAW_DOCK_DEFAULT_HEIGHT
+    let currentStudioDockHeight = Number(
+      getStored(STORAGE_KEYS.dockHeight, String(STUDIO_DOCK_DEFAULT_HEIGHT)) ||
+        STUDIO_DOCK_DEFAULT_HEIGHT
     );
-    if (!Number.isFinite(currentSong2DawDockHeight)) {
-      currentSong2DawDockHeight = SONG2DAW_DOCK_DEFAULT_HEIGHT;
+    if (!Number.isFinite(currentStudioDockHeight)) {
+      currentStudioDockHeight = STUDIO_DOCK_DEFAULT_HEIGHT;
     }
-    let currentSong2DawHomeStudioCompactHeight = Number(
-      getStored(STORAGE_KEYS.homeStudioCompactHeight, String(SONG2DAW_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT)) ||
-        SONG2DAW_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT
+    let currentStudioHomeCompactHeight = Number(
+      getStored(STORAGE_KEYS.homeStudioCompactHeight, String(STUDIO_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT)) ||
+        STUDIO_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT
     );
-    if (!Number.isFinite(currentSong2DawHomeStudioCompactHeight)) {
-      currentSong2DawHomeStudioCompactHeight = SONG2DAW_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT;
+    if (!Number.isFinite(currentStudioHomeCompactHeight)) {
+      currentStudioHomeCompactHeight = STUDIO_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT;
     }
-    let song2dawDockRestoreHeight = currentSong2DawDockHeight;
-    song2dawDockVisible = getStored(STORAGE_KEYS.dockVisible, "1") !== "0";
-    song2dawDockUserVisible = song2dawDockVisible;
-    song2dawDockExpanded = getStored(STORAGE_KEYS.dockExpanded, "0") === "1";
+    let studioDockRestoreHeight = currentStudioDockHeight;
+    studioDockVisible = getStored(STORAGE_KEYS.dockVisible, "1") !== "0";
+    studioDockUserVisible = studioDockVisible;
+    studioDockExpanded = getStored(STORAGE_KEYS.dockExpanded, "0") === "1";
     let pipelinePayloadEntry = null;
     let pipelineGraphView = null;
     let pipelineHydrationInFlight = false;
-    let currentScreen = "home";
+    let currentScreen = SCREEN_HOME;
     let pendingScreen = null;
     const normalizeCompositionMonitorDockTarget = (value) =>
       String(value || "").toLowerCase() === "sidebar" ? "sidebar" : "studio";
+    const normalizeDetailScreenMode = (value) =>
+      String(value || "").toLowerCase() === DETAIL_SCREEN_MODE_TOOL_COMPOSITION
+        ? DETAIL_SCREEN_MODE_TOOL_COMPOSITION
+        : DETAIL_SCREEN_MODE_STUDIO;
+    const normalizeDockContentMode = (value) =>
+      String(value || "").toLowerCase() === DOCK_CONTENT_MODE_LOOP_COMPOSITION
+        ? DOCK_CONTENT_MODE_LOOP_COMPOSITION
+        : DOCK_CONTENT_MODE_STUDIO;
+    const normalizeScreenName = (value) => {
+      const raw = String(value || "").trim().toLowerCase();
+      if (!raw || raw === SCREEN_HOME) return SCREEN_HOME;
+      if (raw === SCREEN_RUN) return SCREEN_RUN;
+      if (raw === SCREEN_PAYLOAD) return SCREEN_PAYLOAD;
+      if (raw === SCREEN_STUDIO_DETAIL_ALIAS || raw === SCREEN_STUDIO_DETAIL) return SCREEN_STUDIO_DETAIL;
+      return SCREEN_HOME;
+    };
 
     const progressNode = el("div", { class: "lemouf-loop-progress-node", text: "Idle" });
     const progressStateText = el("div", { class: "lemouf-loop-progress-state", text: "0%" });
@@ -1362,8 +1390,8 @@ app.registerExtension({
       pipelineStatus.textContent = msg || "";
     };
 
-    const setSong2DawStatus = (msg) => {
-      song2dawStatus.textContent = msg || "";
+    const setStudioRunStatus = (msg) => {
+      studioStatusText.textContent = msg || "";
     };
 
     const setManifestRunButtonVisibility = (status = "") => {
@@ -2234,27 +2262,27 @@ app.registerExtension({
       return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
     };
 
-    const hasSong2DawStepDetail = () =>
-      Boolean(currentSong2DawRun) &&
-      Array.isArray(currentSong2DawRun?.summary?.steps) &&
-      currentSong2DawRun.summary.steps.length > 0;
+    const hasStudioStepDetail = () =>
+      Boolean(currentStudioRun) &&
+      Array.isArray(currentStudioRun?.summary?.steps) &&
+      currentStudioRun.summary.steps.length > 0;
 
-    const restoreSong2DawDetailLayout = () => {
-      detailScreenMode = "song2daw";
-      if (song2dawStepTitle) {
-        song2dawStepTitle.textContent = "Step outputs (JSON)";
+    const restoreStudioDetailLayout = () => {
+      detailScreenMode = DETAIL_SCREEN_MODE_STUDIO;
+      if (studioStepTitle) {
+        studioStepTitle.textContent = "Step outputs (JSON)";
       }
-      if (song2dawStepPanel && !song2dawStepPanel.contains(song2dawStepDetail)) {
-        song2dawStepPanel.replaceChildren(song2dawStepTitle, song2dawStepDetail);
+      if (studioStepPanel && !studioStepPanel.contains(studioStepDetail)) {
+        studioStepPanel.replaceChildren(studioStepTitle, studioStepDetail);
       }
-      if (song2dawRunSummaryTitle) {
-        song2dawRunSummaryTitle.textContent = "Run summary";
+      if (studioRunSummaryTitle) {
+        studioRunSummaryTitle.textContent = "Run summary";
       }
-      if (song2dawDetailPrevBtn) {
-        song2dawDetailPrevBtn.textContent = "Prev step";
+      if (studioDetailPrevBtn) {
+        studioDetailPrevBtn.textContent = "Prev step";
       }
-      if (song2dawDetailNextBtn) {
-        song2dawDetailNextBtn.textContent = "Next step";
+      if (studioDetailNextBtn) {
+        studioDetailNextBtn.textContent = "Next step";
       }
       if (compositionStepMonitorHost) {
         compositionStepMonitorHost.replaceChildren();
@@ -2262,61 +2290,61 @@ app.registerExtension({
       if (compositionStepMonitorConfigHost) {
         compositionStepMonitorConfigHost.replaceChildren();
       }
-      if (song2dawDetailMonitorDockBtn) {
-        song2dawDetailMonitorDockBtn.style.display = "none";
+      if (studioDetailMonitorDockBtn) {
+        studioDetailMonitorDockBtn.style.display = "none";
       }
-      if (song2dawDetailConfigDockBtn) {
-        song2dawDetailConfigDockBtn.style.display = "none";
+      if (studioDetailConfigDockBtn) {
+        studioDetailConfigDockBtn.style.display = "none";
       }
-      if (song2dawDetailDockActions) {
-        song2dawDetailDockActions.style.display = "none";
+      if (studioDetailDockActions) {
+        studioDetailDockActions.style.display = "none";
       }
-      if (song2dawDetailActionSeparator) {
-        song2dawDetailActionSeparator.style.display = "none";
+      if (studioDetailActionSeparator) {
+        studioDetailActionSeparator.style.display = "none";
       }
-      if (song2dawSidebarDockHosts) {
-        song2dawSidebarDockHosts.style.display = "none";
+      if (studioSidebarDockHosts) {
+        studioSidebarDockHosts.style.display = "none";
       }
-      if (song2dawSidebarMonitorHost) {
-        song2dawSidebarMonitorHost.style.display = "none";
-        song2dawSidebarMonitorHost.replaceChildren();
+      if (studioSidebarMonitorHost) {
+        studioSidebarMonitorHost.style.display = "none";
+        studioSidebarMonitorHost.replaceChildren();
       }
-      if (song2dawSidebarConfigHost) {
-        song2dawSidebarConfigHost.style.display = "none";
-        song2dawSidebarConfigHost.replaceChildren();
+      if (studioSidebarConfigHost) {
+        studioSidebarConfigHost.style.display = "none";
+        studioSidebarConfigHost.replaceChildren();
       }
     };
 
     const updateCompositionMonitorDockButton = () => {
-      const isToolComposition = detailScreenMode === "tool_composition";
-      if (song2dawDetailDockActions) {
-        song2dawDetailDockActions.style.display = isToolComposition ? "" : "none";
+      const isToolComposition = detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION;
+      if (studioDetailDockActions) {
+        studioDetailDockActions.style.display = isToolComposition ? "" : "none";
       }
-      if (song2dawDetailActionSeparator) {
-        song2dawDetailActionSeparator.style.display = isToolComposition ? "" : "none";
+      if (studioDetailActionSeparator) {
+        studioDetailActionSeparator.style.display = isToolComposition ? "" : "none";
       }
-      if (song2dawDetailMonitorDockBtn) {
-        song2dawDetailMonitorDockBtn.style.display = isToolComposition ? "" : "none";
+      if (studioDetailMonitorDockBtn) {
+        studioDetailMonitorDockBtn.style.display = isToolComposition ? "" : "none";
         if (isToolComposition) {
           const target = normalizeCompositionMonitorDockTarget(compositionStepMonitorDockTarget);
           const inSidebar = target === "sidebar";
-          song2dawDetailMonitorDockBtn.textContent = inSidebar
+          studioDetailMonitorDockBtn.textContent = inSidebar
             ? "Monitor: Sidebar"
             : "Monitor: Studio";
-          song2dawDetailMonitorDockBtn.title = inSidebar
+          studioDetailMonitorDockBtn.title = inSidebar
             ? "Switch monitor to studio dock"
             : "Switch monitor to step sidebar";
         }
       }
-      if (song2dawDetailConfigDockBtn) {
-        song2dawDetailConfigDockBtn.style.display = isToolComposition ? "" : "none";
+      if (studioDetailConfigDockBtn) {
+        studioDetailConfigDockBtn.style.display = isToolComposition ? "" : "none";
         if (isToolComposition) {
           const target = normalizeCompositionMonitorDockTarget(compositionStepMonitorConfigDockTarget);
           const inSidebar = target === "sidebar";
-          song2dawDetailConfigDockBtn.textContent = inSidebar
+          studioDetailConfigDockBtn.textContent = inSidebar
             ? "Config: Sidebar"
             : "Config: Studio";
-          song2dawDetailConfigDockBtn.title = inSidebar
+          studioDetailConfigDockBtn.title = inSidebar
             ? "Switch monitor config to studio dock"
             : "Switch monitor config to step sidebar";
         }
@@ -2329,7 +2357,7 @@ app.registerExtension({
       } else {
         renderLoopCompositionStudio(buildMinimalCompositionDetail());
       }
-      scheduleSong2DawDetailBalance();
+      scheduleStudioDetailBalance();
     };
 
     const toggleCompositionMonitorDockTarget = (target = "monitor") => {
@@ -2380,7 +2408,7 @@ app.registerExtension({
     };
 
     const openToolCompositionStepDetailScreen = async (step) => {
-      detailScreenMode = "tool_composition";
+      detailScreenMode = DETAIL_SCREEN_MODE_TOOL_COMPOSITION;
       if (!compositionStepMonitorHost) {
         compositionStepMonitorHost = el("div", { class: "lemouf-tool-step-monitor-host" });
       }
@@ -2414,127 +2442,127 @@ app.registerExtension({
           })
         );
       }
-      if (song2dawStepTitle) song2dawStepTitle.textContent = "Composition tools";
-      if (song2dawStepPanel) {
-        song2dawStepPanel.replaceChildren(song2dawStepTitle, compositionStepDockHosts);
+      if (studioStepTitle) studioStepTitle.textContent = "Composition tools";
+      if (studioStepPanel) {
+        studioStepPanel.replaceChildren(studioStepTitle, compositionStepDockHosts);
       }
-      if (song2dawRunSummaryTitle) {
-        song2dawRunSummaryTitle.textContent = "Step summary";
+      if (studioRunSummaryTitle) {
+        studioRunSummaryTitle.textContent = "Step summary";
       }
-      if (song2dawDetail) {
-        song2dawDetail.textContent = formatCompositionStepSummary(step);
-        song2dawDetail.scrollTop = 0;
+      if (studioDetailSummary) {
+        studioDetailSummary.textContent = formatCompositionStepSummary(step);
+        studioDetailSummary.scrollTop = 0;
       }
-      if (song2dawDetailHeaderTitle) {
+      if (studioDetailHeaderTitle) {
         const roleName = String(step?.role || "Composition");
-        song2dawDetailHeaderTitle.textContent = `${roleName} step`;
+        studioDetailHeaderTitle.textContent = `${roleName} step`;
       }
-      if (song2dawDetailHeaderMeta) {
+      if (studioDetailHeaderMeta) {
         const steps = Array.isArray(pipelineState.steps) ? pipelineState.steps : [];
         const index = steps.findIndex((entry) => entry && entry.id === step?.id);
         const total = steps.length;
-        song2dawDetailHeaderMeta.textContent = index >= 0 ? `Step ${index + 1}/${total}` : "Step";
-        if (song2dawDetailPrevBtn) song2dawDetailPrevBtn.disabled = index <= 0;
-        if (song2dawDetailNextBtn) song2dawDetailNextBtn.disabled = index < 0 || index >= total - 1;
+        studioDetailHeaderMeta.textContent = index >= 0 ? `Step ${index + 1}/${total}` : "Step";
+        if (studioDetailPrevBtn) studioDetailPrevBtn.disabled = index <= 0;
+        if (studioDetailNextBtn) studioDetailNextBtn.disabled = index < 0 || index >= total - 1;
       }
       updateCompositionMonitorDockButton();
-      setScreen("song2daw_detail");
+      setScreen(SCREEN_STUDIO_DETAIL);
       await openLoopEditPanel();
       if (currentLoopDetail) {
         renderLoopCompositionStudio(currentLoopDetail);
       } else {
         renderLoopCompositionStudio(buildMinimalCompositionDetail());
       }
-      scheduleSong2DawDetailBalance();
+      scheduleStudioDetailBalance();
     };
 
-    const updateSong2DawDetailHeader = () => {
-      const steps = Array.isArray(currentSong2DawRun?.summary?.steps) ? currentSong2DawRun.summary.steps : [];
+    const updateStudioDetailHeader = () => {
+      const steps = Array.isArray(currentStudioRun?.summary?.steps) ? currentStudioRun.summary.steps : [];
       const total = steps.length;
       const hasSteps = total > 0;
       const boundedIndex = hasSteps
-        ? Math.max(0, Math.min(total - 1, Math.round(Number(selectedSong2DawStepIndex) || 0)))
+        ? Math.max(0, Math.min(total - 1, Math.round(Number(selectedStudioStepIndex) || 0)))
         : 0;
-      if (hasSteps) selectedSong2DawStepIndex = boundedIndex;
+      if (hasSteps) selectedStudioStepIndex = boundedIndex;
       const step = hasSteps ? (steps[boundedIndex] || {}) : null;
       const stepName = String(step?.name || "Step detail");
       const stepVersion = String(step?.version || "");
-      if (song2dawDetailHeaderTitle) {
-        song2dawDetailHeaderTitle.textContent = hasSteps
+      if (studioDetailHeaderTitle) {
+        studioDetailHeaderTitle.textContent = hasSteps
           ? `${stepName}${stepVersion ? ` v${stepVersion}` : ""}`
           : "No step detail";
       }
-      if (song2dawDetailHeaderMeta) {
-        song2dawDetailHeaderMeta.textContent = hasSteps
+      if (studioDetailHeaderMeta) {
+        studioDetailHeaderMeta.textContent = hasSteps
           ? `Step ${boundedIndex + 1}/${total}`
           : "Step 0/0";
       }
-      if (song2dawDetailPrevBtn) {
-        song2dawDetailPrevBtn.disabled = !hasSteps || boundedIndex <= 0;
+      if (studioDetailPrevBtn) {
+        studioDetailPrevBtn.disabled = !hasSteps || boundedIndex <= 0;
       }
-      if (song2dawDetailNextBtn) {
-        song2dawDetailNextBtn.disabled = !hasSteps || boundedIndex >= total - 1;
+      if (studioDetailNextBtn) {
+        studioDetailNextBtn.disabled = !hasSteps || boundedIndex >= total - 1;
       }
     };
 
     const clampPanelHeight = (value, minValue, maxValue) =>
       Math.max(minValue, Math.min(maxValue, value));
 
-    const balanceSong2DawDetailPanels = () => {
-      if (!song2dawDetailLayout || !song2dawStepPanel || !song2dawRunSummaryPanel || !song2dawDetail) {
+    const balanceStudioDetailPanels = () => {
+      if (!studioDetailLayout || !studioStepPanel || !studioRunSummaryPanel || !studioDetailSummary) {
         return;
       }
-      if (currentScreen !== "song2daw_detail") return;
+      if (currentScreen !== SCREEN_STUDIO_DETAIL) return;
 
-      const head = song2dawDetailLayout.querySelector(".lemouf-song2daw-detail-head");
+      const head = studioDetailLayout.querySelector(".lemouf-studio-detail-head");
       const headHeight = head ? head.offsetHeight : 0;
-      const layoutStyle = window.getComputedStyle(song2dawDetailLayout);
+      const layoutStyle = window.getComputedStyle(studioDetailLayout);
       const gapRaw = Number.parseFloat(layoutStyle.gap || layoutStyle.rowGap || "0");
       const gap = Number.isFinite(gapRaw) ? gapRaw : 0;
       const padTop = Number.parseFloat(layoutStyle.paddingTop || "0") || 0;
       const padBottom = Number.parseFloat(layoutStyle.paddingBottom || "0") || 0;
       const available = Math.max(
         180,
-        Math.floor(song2dawDetailLayout.clientHeight - headHeight - padTop - padBottom - gap * 2)
+        Math.floor(studioDetailLayout.clientHeight - headHeight - padTop - padBottom - gap * 2)
       );
 
       const minPanel = 110;
-      if (detailScreenMode === "tool_composition") {
+      if (detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION) {
         const contentNode = compositionStepDockHosts || compositionStepMonitorHost;
         const contentClientHeight = Math.max(0, Number(contentNode?.clientHeight || 0));
         const contentScrollHeight = Math.max(0, Number(contentNode?.scrollHeight || 0));
-        const contentChrome = Math.max(28, song2dawStepPanel.offsetHeight - contentClientHeight);
+        const contentChrome = Math.max(28, studioStepPanel.offsetHeight - contentClientHeight);
         const contentNeed = Math.max(minPanel, Math.ceil(contentScrollHeight + contentChrome));
         const maxContent = Math.max(minPanel, available - minPanel);
         const contentTarget = clampPanelHeight(contentNeed, minPanel, maxContent);
-        song2dawStepPanel.style.flex = "0 0 auto";
-        song2dawStepPanel.style.maxHeight = `${contentTarget}px`;
-        song2dawStepPanel.style.overflow = "auto";
-        song2dawRunSummaryPanel.style.flex = "1 1 auto";
-        song2dawRunSummaryPanel.style.minHeight = `${minPanel}px`;
-        song2dawRunSummaryPanel.style.maxHeight = "";
+        studioStepPanel.style.flex = "0 0 auto";
+        studioStepPanel.style.maxHeight = `${contentTarget}px`;
+        studioStepPanel.style.overflow = "auto";
+        studioRunSummaryPanel.style.flex = "1 1 auto";
+        studioRunSummaryPanel.style.minHeight = `${minPanel}px`;
+        studioRunSummaryPanel.style.maxHeight = "";
         return;
       }
 
-      song2dawStepPanel.style.maxHeight = "";
-      song2dawStepPanel.style.overflow = "hidden";
-      song2dawRunSummaryPanel.style.minHeight = "";
+      studioStepPanel.style.maxHeight = "";
+      studioStepPanel.style.overflow = "hidden";
+      studioRunSummaryPanel.style.minHeight = "";
       if (available <= minPanel * 2) {
         const half = Math.max(80, Math.floor(available / 2));
-        song2dawStepPanel.style.flex = `0 0 ${half}px`;
-        song2dawRunSummaryPanel.style.flex = `0 0 ${Math.max(80, available - half)}px`;
+        studioStepPanel.style.flex = `0 0 ${half}px`;
+        studioRunSummaryPanel.style.flex = `0 0 ${Math.max(80, available - half)}px`;
         return;
       }
 
-      const contentNode = detailScreenMode === "tool_composition"
+      const contentNode = detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION
         ? (compositionStepDockHosts || compositionStepMonitorHost)
-        : song2dawStepDetail;
+        : studioStepDetail;
       const contentClientHeight = Math.max(0, Number(contentNode?.clientHeight || 0));
       const contentScrollHeight = Math.max(0, Number(contentNode?.scrollHeight || 0));
-      const contentChrome = Math.max(28, song2dawStepPanel.offsetHeight - contentClientHeight);
-      const summaryChrome = Math.max(28, song2dawRunSummaryPanel.offsetHeight - song2dawDetail.clientHeight);
+      const contentChrome = Math.max(28, studioStepPanel.offsetHeight - contentClientHeight);
+      const summaryChrome = Math.max(28, studioRunSummaryPanel.offsetHeight - studioDetailSummary.clientHeight);
       const contentNeed = Math.max(minPanel, Math.ceil(contentScrollHeight + contentChrome));
-      const summaryNeed = Math.max(minPanel, Math.ceil(song2dawDetail.scrollHeight + summaryChrome));
+      const summaryNeed = Math.max(minPanel, Math.ceil(studioDetailSummary.scrollHeight + summaryChrome));
       const half = Math.floor(available / 2);
 
       let contentTarget = half;
@@ -2572,20 +2600,20 @@ app.registerExtension({
         }
       }
 
-      song2dawStepPanel.style.flex = `0 0 ${Math.max(minPanel, contentTarget)}px`;
-      song2dawRunSummaryPanel.style.flex = `0 0 ${Math.max(minPanel, summaryTarget)}px`;
+      studioStepPanel.style.flex = `0 0 ${Math.max(minPanel, contentTarget)}px`;
+      studioRunSummaryPanel.style.flex = `0 0 ${Math.max(minPanel, summaryTarget)}px`;
     };
 
-    const scheduleSong2DawDetailBalance = () => {
-      if (song2dawDetailBalanceRaf) cancelAnimationFrame(song2dawDetailBalanceRaf);
-      song2dawDetailBalanceRaf = requestAnimationFrame(() => {
-        song2dawDetailBalanceRaf = 0;
-        balanceSong2DawDetailPanels();
+    const scheduleStudioDetailBalance = () => {
+      if (studioDetailBalanceRaf) cancelAnimationFrame(studioDetailBalanceRaf);
+      studioDetailBalanceRaf = requestAnimationFrame(() => {
+        studioDetailBalanceRaf = 0;
+        balanceStudioDetailPanels();
       });
     };
 
-    const stepSong2DawDetailBy = (delta) => {
-      if (detailScreenMode === "tool_composition") {
+    const stepStudioDetailBy = (delta) => {
+      if (detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION) {
         const steps = Array.isArray(pipelineState.steps) ? pipelineState.steps : [];
         if (!steps.length) return;
         const currentIndex = Math.max(
@@ -2598,30 +2626,30 @@ app.registerExtension({
         void navigateToPipelineStep(nextStep);
         return;
       }
-      const steps = Array.isArray(currentSong2DawRun?.summary?.steps) ? currentSong2DawRun.summary.steps : [];
+      const steps = Array.isArray(currentStudioRun?.summary?.steps) ? currentStudioRun.summary.steps : [];
       if (!steps.length) return;
-      const next = Math.max(0, Math.min(steps.length - 1, selectedSong2DawStepIndex + delta));
-      if (next === selectedSong2DawStepIndex) return;
-      selectedSong2DawStepIndex = next;
-      renderSong2DawStepViews(currentSong2DawRun);
-      if (song2dawStepDetail) song2dawStepDetail.scrollTop = 0;
-      setSong2DawStatus(`Detail view: step ${next + 1}/${steps.length}`);
+      const next = Math.max(0, Math.min(steps.length - 1, selectedStudioStepIndex + delta));
+      if (next === selectedStudioStepIndex) return;
+      selectedStudioStepIndex = next;
+      renderStudioStepViews(currentStudioRun);
+      if (studioStepDetail) studioStepDetail.scrollTop = 0;
+      setStudioRunStatus(`Detail view: step ${next + 1}/${steps.length}`);
     };
 
-    const openSong2DawStepDetailScreen = () => {
-      if (!hasSong2DawStepDetail()) {
-        setSong2DawStatus("No step detail available.");
+    const openStudioStepDetailScreen = () => {
+      if (!hasStudioStepDetail()) {
+        setStudioRunStatus("No step detail available.");
         return;
       }
-      restoreSong2DawDetailLayout();
-      updateSong2DawDetailHeader();
-      setScreen("song2daw_detail");
-      scheduleSong2DawDetailBalance();
+      restoreStudioDetailLayout();
+      updateStudioDetailHeader();
+      setScreen(SCREEN_STUDIO_DETAIL);
+      scheduleStudioDetailBalance();
     };
 
-    const ensureSong2DawHomeScreen = () => {
-      restoreSong2DawDetailLayout();
-      if (currentScreen === "song2daw_detail") setScreen("home");
+    const ensureStudioHomeScreen = () => {
+      restoreStudioDetailLayout();
+      if (currentScreen === SCREEN_STUDIO_DETAIL) setScreen(SCREEN_HOME);
     };
 
     const setWorkflowProfileStatus = (profile) => {
@@ -2885,14 +2913,14 @@ app.registerExtension({
       pendingLoopUiRestore = {
         loopId: targetLoopId,
         screen: String(uiState.screen || "home"),
-        detailScreenMode: String(uiState.detailScreenMode || "song2daw"),
+        detailScreenMode: normalizeDetailScreenMode(uiState.detailScreenMode),
         compositionMonitorDockTarget: normalizeCompositionMonitorDockTarget(
           uiState.compositionMonitorDockTarget
         ),
         compositionMonitorConfigDockTarget: normalizeCompositionMonitorDockTarget(
           uiState.compositionMonitorConfigDockTarget || "sidebar"
         ),
-        dockContentMode: String(uiState.dockContentMode || "song2daw"),
+        dockContentMode: normalizeDockContentMode(uiState.dockContentMode),
         dockExpanded: Boolean(uiState.dockExpanded),
         dockVisible:
           uiState.dockVisible === undefined
@@ -2961,18 +2989,18 @@ app.registerExtension({
           compositionStateSnapshot,
           uiState: {
             screen: String(currentScreen || "home"),
-            detailScreenMode: String(detailScreenMode || "song2daw"),
+            detailScreenMode: normalizeDetailScreenMode(detailScreenMode),
             compositionMonitorDockTarget: normalizeCompositionMonitorDockTarget(
               compositionStepMonitorDockTarget
             ),
             compositionMonitorConfigDockTarget: normalizeCompositionMonitorDockTarget(
               compositionStepMonitorConfigDockTarget
             ),
-            dockContentMode: String(dockContentMode || "song2daw"),
+            dockContentMode: normalizeDockContentMode(dockContentMode),
             loopCompositionRequested: Boolean(loopCompositionRequested),
-            dockExpanded: Boolean(song2dawDockExpanded),
-            dockVisible: Boolean(song2dawDockVisible),
-            dockUserVisible: Boolean(song2dawDockUserVisible),
+            dockExpanded: Boolean(studioDockExpanded),
+            dockVisible: Boolean(studioDockVisible),
+            dockUserVisible: Boolean(studioDockUserVisible),
           },
           savedAt: Date.now(),
         };
@@ -3083,43 +3111,44 @@ app.registerExtension({
       if (!currentLoopId) {
         loopCompositionRequested = false;
         clearLoopCompositionStudio();
-        setDockContentMode("song2daw");
+        setDockContentMode(DOCK_CONTENT_MODE_STUDIO);
       }
     };
 
     const updateHeaderMenuForContext = () => {
-      const isSong2DawProfile = currentWorkflowProfile?.adapter_id === "song2daw";
+      const isStudioFeatureProfile = currentWorkflowProfile?.adapter_id === "song2daw";
       if (headerMenuExitBtn) {
-        headerMenuExitBtn.style.display = isSong2DawProfile ? "none" : "";
+        headerMenuExitBtn.style.display = isStudioFeatureProfile ? "none" : "";
       }
     };
 
     const setScreen = (name) => {
-      currentScreen = name;
-      if (!preStartSection || !payloadSection || !postStartSection || !song2dawDetailSection) {
-        pendingScreen = name;
+      const resolvedName = normalizeScreenName(name);
+      currentScreen = resolvedName;
+      if (!preStartSection || !payloadSection || !postStartSection || !studioDetailSection) {
+        pendingScreen = resolvedName;
         return;
       }
-      if (name !== "song2daw_detail" && detailScreenMode === "tool_composition") {
-        restoreSong2DawDetailLayout();
+      if (resolvedName !== SCREEN_STUDIO_DETAIL && detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION) {
+        restoreStudioDetailLayout();
       }
-      if (preStartSection) preStartSection.style.display = name === "home" ? "" : "none";
-      if (song2dawDetailSection) song2dawDetailSection.style.display = name === "song2daw_detail" ? "" : "none";
-      if (payloadSection) payloadSection.style.display = name === "payload" ? "" : "none";
-      if (postStartSection) postStartSection.style.display = name === "run" ? "" : "none";
-      hasStarted = name === "run";
+      if (preStartSection) preStartSection.style.display = resolvedName === SCREEN_HOME ? "" : "none";
+      if (studioDetailSection) studioDetailSection.style.display = resolvedName === SCREEN_STUDIO_DETAIL ? "" : "none";
+      if (payloadSection) payloadSection.style.display = resolvedName === SCREEN_PAYLOAD ? "" : "none";
+      if (postStartSection) postStartSection.style.display = resolvedName === SCREEN_RUN ? "" : "none";
+      hasStarted = resolvedName === SCREEN_RUN;
       if (panel) panel.classList.toggle("lemouf-loop-started", hasStarted);
-      if (headerBackBtn) headerBackBtn.style.display = name !== "home" ? "" : "none";
+      if (headerBackBtn) headerBackBtn.style.display = resolvedName !== SCREEN_HOME ? "" : "none";
       updateHeaderMenuForContext();
       if (typeof closeHeaderMenu === "function") closeHeaderMenu();
-      if (name === "payload") updatePayloadSection();
-      if (name === "song2daw_detail") scheduleSong2DawDetailBalance();
+      if (resolvedName === SCREEN_PAYLOAD) updatePayloadSection();
+      if (resolvedName === SCREEN_STUDIO_DETAIL) scheduleStudioDetailBalance();
       pendingScreen = null;
       persistPipelineRuntimeState();
     };
 
     const setStarted = (value) => {
-      setScreen(value ? "run" : "home");
+      setScreen(value ? SCREEN_RUN : SCREEN_HOME);
     };
 
     const PIPELINE_KEY = STORAGE_KEYS.pipelineName;
@@ -3136,15 +3165,15 @@ app.registerExtension({
         : null;
       return finalizeWorkflowProfile(rawProfile, source);
     };
-    const resetSong2DawUiStateForWorkflowSwitch = () => {
-      song2dawRuns = [];
-      selectedSong2DawStepIndex = 0;
-      currentSong2DawRun = null;
-      renderSong2DawRunOptions();
-      clearSong2DawStepViews();
-      song2dawDetail.textContent = "";
-      updateSong2DawOpenButton();
-      setSong2DawStatus("Workflow switched. Run pipeline or refresh runs.");
+    const resetStudioUiStateForWorkflowSwitch = () => {
+      studioRuns = [];
+      selectedStudioStepIndex = 0;
+      currentStudioRun = null;
+      renderStudioRunOptions();
+      clearStudioStepViews();
+      studioDetailSummary.textContent = "";
+      updateStudioOpenButton();
+      setStudioRunStatus("Workflow switched. Run pipeline or refresh runs.");
     };
     const applyPipelineWorkflowSelection = (name, { userInitiated = false } = {}) => {
       const nextName = String(name || "");
@@ -3170,7 +3199,7 @@ app.registerExtension({
         pipelineGraphView?.root?.replaceChildren();
         setPipelineGraphStatus("Pipeline graph will appear here once loaded.");
         if (prevProfile.adapter_id === "song2daw" || nextProfile.adapter_id === "song2daw") {
-          resetSong2DawUiStateForWorkflowSwitch();
+          resetStudioUiStateForWorkflowSwitch();
         }
         persistPipelineRuntimeState();
       }
@@ -3282,64 +3311,64 @@ app.registerExtension({
       }
     };
 
-    const renderSong2DawRunOptions = () => {
-      const setSong2DawRunDetailVisible = (visible) => {
-        if (!song2dawRunDetailBlock) return;
-        song2dawRunDetailBlock.style.display = visible ? "" : "none";
+    const renderStudioRunOptions = () => {
+      const setStudioRunDetailVisible = (visible) => {
+        if (!studioRunDetailBlock) return;
+        studioRunDetailBlock.style.display = visible ? "" : "none";
       };
-      const setSong2DawPrimaryLoadVisible = (visible) => {
-        if (!song2dawPrimaryLoadRow) return;
-        song2dawPrimaryLoadRow.style.display = visible ? "" : "none";
+      const setStudioPrimaryLoadVisible = (visible) => {
+        if (!studioPrimaryLoadRow) return;
+        studioPrimaryLoadRow.style.display = visible ? "" : "none";
       };
-      song2dawSelect.innerHTML = "";
-      if (!song2dawRuns.length) {
-        ensureSong2DawHomeScreen();
-        setSong2DawRunDetailVisible(false);
-        setSong2DawPrimaryLoadVisible(false);
-        song2dawSelect.appendChild(el("option", { value: "", text: "No song2daw runs" }));
-        song2dawSelect.disabled = true;
-        song2dawLoadBtn.disabled = true;
-        song2dawOpenDirBtn.disabled = true;
-        currentSong2DawRun = null;
-        clearSong2DawStepViews();
-        song2dawDetail.textContent = "";
+      studioRunSelect.innerHTML = "";
+      if (!studioRuns.length) {
+        ensureStudioHomeScreen();
+        setStudioRunDetailVisible(false);
+        setStudioPrimaryLoadVisible(false);
+        studioRunSelect.appendChild(el("option", { value: "", text: "No studio runs" }));
+        studioRunSelect.disabled = true;
+        studioLoadBtn.disabled = true;
+        studioOpenDirBtn.disabled = true;
+        currentStudioRun = null;
+        clearStudioStepViews();
+        studioDetailSummary.textContent = "";
         return;
       }
-      setSong2DawRunDetailVisible(true);
-      setSong2DawPrimaryLoadVisible(true);
-      for (const run of song2dawRuns) {
+      setStudioRunDetailVisible(true);
+      setStudioPrimaryLoadVisible(true);
+      for (const run of studioRuns) {
         const runId = String(run?.run_id || "");
         const status = String(run?.status || "unknown");
         const stepCount = Number(run?.summary?.step_count || 0);
         const label = `${shortId(runId)} · ${status} · ${stepCount} steps`;
-        song2dawSelect.appendChild(el("option", { value: runId, text: label }));
+        studioRunSelect.appendChild(el("option", { value: runId, text: label }));
       }
-      song2dawSelect.disabled = false;
-      song2dawLoadBtn.disabled = false;
-      song2dawOpenDirBtn.disabled = true;
+      studioRunSelect.disabled = false;
+      studioLoadBtn.disabled = false;
+      studioOpenDirBtn.disabled = true;
     };
 
-    const clearSong2DawStepViews = () => {
-      ensureSong2DawHomeScreen();
-      song2dawOverview.innerHTML = "";
-      song2dawStepTitle.textContent = "Step outputs (JSON)";
-      song2dawStepDetail.textContent = "";
-      if (song2dawAudioPreviewPlayer) {
+    const clearStudioStepViews = () => {
+      ensureStudioHomeScreen();
+      studioOverview.innerHTML = "";
+      studioStepTitle.textContent = "Step outputs (JSON)";
+      studioStepDetail.textContent = "";
+      if (studioAudioPreviewPlayer) {
         try {
-          song2dawAudioPreviewPlayer.pause();
+          studioAudioPreviewPlayer.pause();
         } catch {}
-        song2dawAudioPreviewPlayer.removeAttribute("src");
+        studioAudioPreviewPlayer.removeAttribute("src");
         try {
-          song2dawAudioPreviewPlayer.load();
+          studioAudioPreviewPlayer.load();
         } catch {}
       }
-      if (song2dawAudioPreviewAsset) {
-        song2dawAudioPreviewAsset.innerHTML = "";
-        song2dawAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
-        song2dawAudioPreviewAsset.disabled = true;
+      if (studioAudioPreviewAsset) {
+        studioAudioPreviewAsset.innerHTML = "";
+        studioAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
+        studioAudioPreviewAsset.disabled = true;
       }
-      clearSong2DawStudio();
-      updateSong2DawDetailHeader();
+      clearStudioView();
+      updateStudioDetailHeader();
     };
 
     const compactList = (items, maxItems = 4) => {
@@ -3360,29 +3389,29 @@ app.registerExtension({
       }
     };
 
-    const clearSong2DawStudio = () => {
-      clearSong2DawStudioView({
-        mode: song2dawStudioMode,
-        body: song2dawStudioBody,
-        timelineBtn: song2dawStudioTimelineBtn,
-        tracksBtn: song2dawStudioTracksBtn,
-        spectrumBtn: song2dawStudioSpectrumBtn,
+    const clearStudioView = () => {
+      clearFeatureStudioView({
+        mode: studioMode,
+        body: studioBody,
+        timelineBtn: studioTimelineBtn,
+        tracksBtn: studioTracksBtn,
+        spectrumBtn: studioSpectrumBtn,
       });
-      updateSong2DawHomeStudioResizerState();
+      updateStudioHomeResizerState();
     };
 
     const clearLoopCompositionStudio = () => {
       clearLoopCompositionStudioView({ panelBody: loopCompositionBody });
-      if (song2dawSidebarDockHosts) {
-        song2dawSidebarDockHosts.style.display = "none";
+      if (studioSidebarDockHosts) {
+        studioSidebarDockHosts.style.display = "none";
       }
-      if (song2dawSidebarMonitorHost) {
-        song2dawSidebarMonitorHost.style.display = "none";
-        song2dawSidebarMonitorHost.replaceChildren();
+      if (studioSidebarMonitorHost) {
+        studioSidebarMonitorHost.style.display = "none";
+        studioSidebarMonitorHost.replaceChildren();
       }
-      if (song2dawSidebarConfigHost) {
-        song2dawSidebarConfigHost.style.display = "none";
-        song2dawSidebarConfigHost.replaceChildren();
+      if (studioSidebarConfigHost) {
+        studioSidebarConfigHost.style.display = "none";
+        studioSidebarConfigHost.replaceChildren();
       }
     };
 
@@ -3425,15 +3454,15 @@ app.registerExtension({
         compositionStepMonitorConfigDockTarget
       );
       const isCompositionDetailContext =
-        detailScreenMode === "tool_composition" && currentScreen === "song2daw_detail";
+        detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION && currentScreen === SCREEN_STUDIO_DETAIL;
       const isCompositionHomeContext =
-        currentScreen === "home" && dockContentMode === "loop_composition";
+        currentScreen === "home" && dockContentMode === DOCK_CONTENT_MODE_LOOP_COMPOSITION;
       const sidebarMonitorHost = isCompositionDetailContext
         ? compositionStepMonitorHost
-        : (isCompositionHomeContext ? song2dawSidebarMonitorHost : null);
+        : (isCompositionHomeContext ? studioSidebarMonitorHost : null);
       const sidebarMonitorConfigHost = isCompositionDetailContext
         ? compositionStepMonitorConfigHost
-        : (isCompositionHomeContext ? song2dawSidebarConfigHost : null);
+        : (isCompositionHomeContext ? studioSidebarConfigHost : null);
       const useSidebarMonitorHost =
         monitorDockTarget === "sidebar" &&
         sidebarMonitorHost &&
@@ -3442,22 +3471,22 @@ app.registerExtension({
         monitorConfigDockTarget === "sidebar" &&
         sidebarMonitorConfigHost &&
         typeof sidebarMonitorConfigHost.appendChild === "function";
-      if (song2dawSidebarDockHosts) {
+      if (studioSidebarDockHosts) {
         const showDockHosts = isCompositionHomeContext && (useSidebarMonitorHost || useSidebarMonitorConfigHost);
-        song2dawSidebarDockHosts.style.display = showDockHosts ? "" : "none";
+        studioSidebarDockHosts.style.display = showDockHosts ? "" : "none";
       }
-      if (song2dawSidebarMonitorHost) {
+      if (studioSidebarMonitorHost) {
         const show = isCompositionHomeContext && useSidebarMonitorHost;
-        song2dawSidebarMonitorHost.style.display = show ? "" : "none";
+        studioSidebarMonitorHost.style.display = show ? "" : "none";
         if (!show) {
-          song2dawSidebarMonitorHost.replaceChildren();
+          studioSidebarMonitorHost.replaceChildren();
         }
       }
-      if (song2dawSidebarConfigHost) {
+      if (studioSidebarConfigHost) {
         const show = isCompositionHomeContext && useSidebarMonitorConfigHost;
-        song2dawSidebarConfigHost.style.display = show ? "" : "none";
+        studioSidebarConfigHost.style.display = show ? "" : "none";
         if (!show) {
-          song2dawSidebarConfigHost.replaceChildren();
+          studioSidebarConfigHost.replaceChildren();
         }
       }
       if (
@@ -3535,7 +3564,7 @@ app.registerExtension({
       renderLoopCompositionStudioView({
         detail: effectiveDetail,
         panelBody: loopCompositionBody,
-        dockExpanded: song2dawDockExpanded,
+        dockExpanded: studioDockExpanded,
         onOpenAsset: (src, context = null) => openLightbox(src, context),
         monitorHost: useSidebarMonitorHost ? sidebarMonitorHost : null,
         monitorConfigHost: useSidebarMonitorConfigHost ? sidebarMonitorConfigHost : null,
@@ -3551,12 +3580,12 @@ app.registerExtension({
           },
         },
       });
-      if (useSidebarMonitorHost && song2dawDetail) {
+      if (useSidebarMonitorHost && studioDetailSummary) {
         const step = Array.isArray(pipelineState.steps)
           ? (pipelineState.steps.find((entry) => entry && entry.id === pipelineSelectedStepId) || null)
           : null;
         if (step) {
-          song2dawDetail.textContent = formatCompositionStepSummary(step);
+          studioDetailSummary.textContent = formatCompositionStepSummary(step);
         }
       }
     };
@@ -3585,28 +3614,28 @@ app.registerExtension({
     };
 
     const setDockContentMode = (mode) => {
-      const nextMode = mode === "loop_composition" ? "loop_composition" : "song2daw";
+      const nextMode = normalizeDockContentMode(mode);
       dockContentMode = nextMode;
-      if (song2dawStudioPanel) {
-        song2dawStudioPanel.style.display = nextMode === "song2daw" ? "" : "none";
+      if (studioPanel) {
+        studioPanel.style.display = nextMode === DOCK_CONTENT_MODE_STUDIO ? "" : "none";
       }
       if (loopCompositionPanel) {
-        loopCompositionPanel.style.display = nextMode === "loop_composition" ? "" : "none";
+        loopCompositionPanel.style.display = nextMode === DOCK_CONTENT_MODE_LOOP_COMPOSITION ? "" : "none";
       }
-      if (song2dawDockTitle) {
-        song2dawDockTitle.textContent = nextMode === "loop_composition"
+      if (studioDockTitle) {
+        studioDockTitle.textContent = nextMode === "loop_composition"
           ? "Composition Studio"
-          : "Song2DAW Studio";
+          : "Studio";
       }
-      if (nextMode !== "loop_composition") {
-        if (song2dawSidebarDockHosts) song2dawSidebarDockHosts.style.display = "none";
-        if (song2dawSidebarMonitorHost) {
-          song2dawSidebarMonitorHost.style.display = "none";
-          song2dawSidebarMonitorHost.replaceChildren();
+      if (nextMode !== DOCK_CONTENT_MODE_LOOP_COMPOSITION) {
+        if (studioSidebarDockHosts) studioSidebarDockHosts.style.display = "none";
+        if (studioSidebarMonitorHost) {
+          studioSidebarMonitorHost.style.display = "none";
+          studioSidebarMonitorHost.replaceChildren();
         }
-        if (song2dawSidebarConfigHost) {
-          song2dawSidebarConfigHost.style.display = "none";
-          song2dawSidebarConfigHost.replaceChildren();
+        if (studioSidebarConfigHost) {
+          studioSidebarConfigHost.style.display = "none";
+          studioSidebarConfigHost.replaceChildren();
         }
       }
       persistPipelineRuntimeState();
@@ -3632,7 +3661,9 @@ app.registerExtension({
       if (!shouldOpenComposition) return false;
 
       loopCompositionRequested = true;
-      detailScreenMode = String(pending.detailScreenMode || detailScreenMode || "song2daw");
+      detailScreenMode = normalizeDetailScreenMode(
+        pending.detailScreenMode || detailScreenMode || DETAIL_SCREEN_MODE_STUDIO
+      );
       compositionStepMonitorDockTarget = normalizeCompositionMonitorDockTarget(
         pending.compositionMonitorDockTarget
       );
@@ -3640,41 +3671,41 @@ app.registerExtension({
         pending.compositionMonitorConfigDockTarget || "sidebar"
       );
       updateCompositionMonitorDockButton();
-      setDockContentMode("loop_composition");
+      setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
       // Restore the composition session as a visible workspace after reload.
       // This also prevents a subsequent validation pass from immediately hiding it.
       if (pending.dockUserVisible !== null) {
-        song2dawDockUserVisible = Boolean(pending.dockUserVisible);
+        studioDockUserVisible = Boolean(pending.dockUserVisible);
       } else {
-        song2dawDockUserVisible = true;
+        studioDockUserVisible = true;
       }
       const wantsVisible = pending.dockVisible === null ? true : Boolean(pending.dockVisible);
-      if (song2dawDockVisible !== wantsVisible) {
-        setSong2DawDockVisible(wantsVisible, {
+      if (studioDockVisible !== wantsVisible) {
+        setStudioDockVisible(wantsVisible, {
           persist: false,
           userIntent: false,
         });
       }
-      if (Boolean(pending.dockExpanded) && !song2dawDockExpanded) {
-        setSong2DawDockExpanded(true);
+      if (Boolean(pending.dockExpanded) && !studioDockExpanded) {
+        setStudioDockExpanded(true);
       }
 
       const wantsDetail =
-        String(pending.screen || "").toLowerCase() === "song2daw_detail" &&
-        detailScreenMode === "tool_composition";
+        normalizeScreenName(String(pending.screen || "")) === SCREEN_STUDIO_DETAIL &&
+        detailScreenMode === DETAIL_SCREEN_MODE_TOOL_COMPOSITION;
       if (wantsDetail && compositionStep) {
         pipelineSelectedStepId = compositionStep.id;
         await openToolCompositionStepDetailScreen(compositionStep);
         return true;
       }
 
-      if (dockContentMode === "loop_composition") {
+      if (dockContentMode === DOCK_CONTENT_MODE_LOOP_COMPOSITION) {
         renderLoopCompositionStudio(detail);
       }
       return true;
     };
 
-    const getSong2DawAudioResolver = (runData) => {
+    const getStudioAudioResolver = (runData) => {
       const SOURCE_FALLBACK_ASSET = "__source_audio";
       const audioAssets = runData?.audio_assets && typeof runData.audio_assets === "object" ? runData.audio_assets : {};
       const availableAudioAssetKeys = Object.keys(audioAssets).filter((key) => String(audioAssets[key] || "").trim());
@@ -3712,128 +3743,128 @@ app.registerExtension({
       return { audioAssets, availableAudioAssetKeys: exposedAudioAssetKeys, preferredAudioAsset, resolveAudioUrl };
     };
 
-    const renderSong2DawAudioPreview = (runData) => {
-      if (!song2dawAudioPreviewAsset || !song2dawAudioPreviewPlayer) return;
-      const { availableAudioAssetKeys, preferredAudioAsset, resolveAudioUrl } = getSong2DawAudioResolver(runData);
-      const previousAsset = String(song2dawAudioPreviewAsset.value || "");
+    const renderStudioAudioPreview = (runData) => {
+      if (!studioAudioPreviewAsset || !studioAudioPreviewPlayer) return;
+      const { availableAudioAssetKeys, preferredAudioAsset, resolveAudioUrl } = getStudioAudioResolver(runData);
+      const previousAsset = String(studioAudioPreviewAsset.value || "");
       const selectedAsset = availableAudioAssetKeys.includes(previousAsset)
         ? previousAsset
         : (preferredAudioAsset || "");
 
-      song2dawAudioPreviewAsset.innerHTML = "";
+      studioAudioPreviewAsset.innerHTML = "";
       if (!availableAudioAssetKeys.length) {
-        song2dawAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
-        song2dawAudioPreviewAsset.disabled = true;
+        studioAudioPreviewAsset.appendChild(el("option", { value: "", text: "No source preview" }));
+        studioAudioPreviewAsset.disabled = true;
         try {
-          song2dawAudioPreviewPlayer.pause();
+          studioAudioPreviewPlayer.pause();
         } catch {}
-        song2dawAudioPreviewPlayer.removeAttribute("src");
+        studioAudioPreviewPlayer.removeAttribute("src");
         try {
-          song2dawAudioPreviewPlayer.load();
+          studioAudioPreviewPlayer.load();
         } catch {}
         return;
       }
 
       for (const assetKey of availableAudioAssetKeys) {
         const label = assetKey === "__source_audio" ? "Workflow source" : (assetKey === "mix" ? "Mix" : assetKey);
-        song2dawAudioPreviewAsset.appendChild(el("option", { value: assetKey, text: label }));
+        studioAudioPreviewAsset.appendChild(el("option", { value: assetKey, text: label }));
       }
-      song2dawAudioPreviewAsset.disabled = false;
-      song2dawAudioPreviewAsset.value = selectedAsset;
-      song2dawAudioPreviewAsset.onchange = () => {
-        const nextAsset = String(song2dawAudioPreviewAsset.value || "");
+      studioAudioPreviewAsset.disabled = false;
+      studioAudioPreviewAsset.value = selectedAsset;
+      studioAudioPreviewAsset.onchange = () => {
+        const nextAsset = String(studioAudioPreviewAsset.value || "");
         const src = resolveAudioUrl(nextAsset);
         if (src) {
-          song2dawAudioPreviewPlayer.src = src;
-          song2dawAudioPreviewPlayer.load();
+          studioAudioPreviewPlayer.src = src;
+          studioAudioPreviewPlayer.load();
         } else {
-          song2dawAudioPreviewPlayer.removeAttribute("src");
-          song2dawAudioPreviewPlayer.load();
+          studioAudioPreviewPlayer.removeAttribute("src");
+          studioAudioPreviewPlayer.load();
         }
       };
 
       const src = resolveAudioUrl(selectedAsset);
-      if (src && song2dawAudioPreviewPlayer.src !== src) {
-        song2dawAudioPreviewPlayer.src = src;
-        song2dawAudioPreviewPlayer.load();
+      if (src && studioAudioPreviewPlayer.src !== src) {
+        studioAudioPreviewPlayer.src = src;
+        studioAudioPreviewPlayer.load();
       } else if (!src) {
-        song2dawAudioPreviewPlayer.removeAttribute("src");
-        song2dawAudioPreviewPlayer.load();
+        studioAudioPreviewPlayer.removeAttribute("src");
+        studioAudioPreviewPlayer.load();
       }
     };
 
-    const renderSong2DawStudio = (runData) => {
-      const { resolveAudioUrl } = getSong2DawAudioResolver(runData);
+    const renderStudioContent = (runData) => {
+      const { resolveAudioUrl } = getStudioAudioResolver(runData);
       const jumpToStep = (stepIndex) => {
         const summarySteps = Array.isArray(runData?.summary?.steps) ? runData.summary.steps : [];
         if (!summarySteps.length) return;
         const bounded = Math.max(0, Math.min(summarySteps.length - 1, Math.round(Number(stepIndex) || 0)));
-        selectedSong2DawStepIndex = bounded;
-        renderSong2DawStepViews(runData);
-        song2dawStepDetail.scrollTop = 0;
-        setSong2DawStatus(`Inspector jump: step ${bounded + 1}/${summarySteps.length}`);
+        selectedStudioStepIndex = bounded;
+        renderStudioStepViews(runData);
+        studioStepDetail.scrollTop = 0;
+        setStudioRunStatus(`Inspector jump: step ${bounded + 1}/${summarySteps.length}`);
       };
-      renderSong2DawStudioView({
+      renderFeatureStudioView({
         runData,
-        mode: song2dawStudioMode,
-        dockExpanded: song2dawDockExpanded,
-        body: song2dawStudioBody,
-        timelineBtn: song2dawStudioTimelineBtn,
-        tracksBtn: song2dawStudioTracksBtn,
-        spectrumBtn: song2dawStudioSpectrumBtn,
+        mode: studioMode,
+        dockExpanded: studioDockExpanded,
+        body: studioBody,
+        timelineBtn: studioTimelineBtn,
+        tracksBtn: studioTracksBtn,
+        spectrumBtn: studioSpectrumBtn,
         onJumpToStep: jumpToStep,
-        onOpenRunDir: () => openSong2DawRunDir(),
+        onOpenRunDir: () => openStudioRunDir(),
         onResolveAudioUrl: resolveAudioUrl,
       });
-      updateSong2DawHomeStudioResizerState();
+      updateStudioHomeResizerState();
     };
 
-    const setSong2DawStudioMode = (mode) => {
+    const setStudioMode = (mode) => {
       const nextMode = mode === "tracks" ? "tracks" : (mode === "spectrum3d" ? "spectrum3d" : "timeline");
-      if (song2dawStudioMode === nextMode && currentSong2DawRun) {
-        renderSong2DawStudio(currentSong2DawRun);
+      if (studioMode === nextMode && currentStudioRun) {
+        renderStudioContent(currentStudioRun);
         return;
       }
-      song2dawStudioMode = nextMode;
-      if (currentSong2DawRun) renderSong2DawStudio(currentSong2DawRun);
-      else clearSong2DawStudio();
+      studioMode = nextMode;
+      if (currentStudioRun) renderStudioContent(currentStudioRun);
+      else clearStudioView();
     };
 
-    const selectedSong2DawRunId = () => String(song2dawSelect.value || "");
+    const selectedStudioRunId = () => String(studioRunSelect.value || "");
 
-    const selectedSong2DawRunMeta = () => {
-      const runId = selectedSong2DawRunId();
-      return song2dawRuns.find((run) => String(run?.run_id || "") === runId) || null;
+    const selectedStudioRunMeta = () => {
+      const runId = selectedStudioRunId();
+      return studioRuns.find((run) => String(run?.run_id || "") === runId) || null;
     };
 
-    const updateSong2DawOpenButton = () => {
-      const runId = selectedSong2DawRunId();
-      const detailMatches = currentSong2DawRun && String(currentSong2DawRun.run_id || "") === runId;
-      const runDir = detailMatches ? currentSong2DawRun?.run_dir : selectedSong2DawRunMeta()?.run_dir;
-      song2dawOpenDirBtn.disabled = !String(runDir || "").trim();
+    const updateStudioOpenButton = () => {
+      const runId = selectedStudioRunId();
+      const detailMatches = currentStudioRun && String(currentStudioRun.run_id || "") === runId;
+      const runDir = detailMatches ? currentStudioRun?.run_dir : selectedStudioRunMeta()?.run_dir;
+      studioOpenDirBtn.disabled = !String(runDir || "").trim();
     };
 
-    const renderSong2DawStepViews = (runData) => {
+    const renderStudioStepViews = (runData) => {
       const summarySteps = Array.isArray(runData?.summary?.steps) ? runData.summary.steps : [];
       const rawSteps = Array.isArray(runData?.result?.steps) ? runData.result.steps : [];
-      song2dawOverview.innerHTML = "";
+      studioOverview.innerHTML = "";
 
       if (!summarySteps.length) {
-        ensureSong2DawHomeScreen();
-        song2dawOverview.appendChild(
-          el("div", { class: "lemouf-song2daw-step-empty", text: "No step summary in this run." })
+        ensureStudioHomeScreen();
+        studioOverview.appendChild(
+          el("div", { class: "lemouf-studio-step-empty", text: "No step summary in this run." })
         );
-        song2dawStepTitle.textContent = "Step outputs (JSON)";
-        song2dawStepDetail.textContent = "";
-        updateSong2DawDetailHeader();
+        studioStepTitle.textContent = "Step outputs (JSON)";
+        studioStepDetail.textContent = "";
+        updateStudioDetailHeader();
         return;
       }
 
-      if (selectedSong2DawStepIndex < 0 || selectedSong2DawStepIndex >= summarySteps.length) {
-        selectedSong2DawStepIndex = 0;
+      if (selectedStudioStepIndex < 0 || selectedStudioStepIndex >= summarySteps.length) {
+        selectedStudioStepIndex = 0;
       }
 
-      const flow = el("div", { class: "lemouf-step-flow lemouf-step-flow-song2daw" });
+      const flow = el("div", { class: "lemouf-step-flow lemouf-step-flow-studio" });
       for (let i = 0; i < summarySteps.length; i += 1) {
         const step = summarySteps[i] || {};
         const rawStep = rawSteps[i] || {};
@@ -3845,7 +3876,7 @@ app.registerExtension({
             ? Object.keys(rawStep.outputs).length
             : outputs.length;
         const cacheKey = step?.cache_key ? shortId(step.cache_key) : "n/a";
-        const selectedClass = i === selectedSong2DawStepIndex ? " is-selected" : "";
+        const selectedClass = i === selectedStudioStepIndex ? " is-selected" : "";
         const runStatus = String(runData?.status || "ok").toLowerCase() === "ok" ? "ok" : "error";
         const card = el("button", {
           class: `lemouf-step-flow-card${selectedClass}`,
@@ -3864,28 +3895,28 @@ app.registerExtension({
           el("div", { class: "lemouf-step-flow-meta", text: `cache ${cacheKey}` }),
         );
         card.addEventListener("click", () => {
-          selectedSong2DawStepIndex = i;
-          renderSong2DawStepViews(runData);
+          selectedStudioStepIndex = i;
+          renderStudioStepViews(runData);
         });
         card.addEventListener("dblclick", () => {
-          selectedSong2DawStepIndex = i;
-          renderSong2DawStepViews(runData);
-          openSong2DawStepDetailScreen();
-          setSong2DawStatus(`Detail view: step ${i + 1}/${summarySteps.length}`);
+          selectedStudioStepIndex = i;
+          renderStudioStepViews(runData);
+          openStudioStepDetailScreen();
+          setStudioRunStatus(`Detail view: step ${i + 1}/${summarySteps.length}`);
         });
         flow.appendChild(card);
         if (i < summarySteps.length - 1) {
           flow.appendChild(el("div", { class: "lemouf-step-flow-arrow", text: "↓" }));
         }
       }
-      song2dawOverview.appendChild(flow);
+      studioOverview.appendChild(flow);
       const selectedCard = flow.querySelector(".lemouf-step-flow-card.is-selected");
       if (selectedCard) selectedCard.scrollIntoView({ block: "nearest" });
 
-      const step = summarySteps[selectedSong2DawStepIndex] || {};
-      const rawStep = rawSteps[selectedSong2DawStepIndex] || {};
+      const step = summarySteps[selectedStudioStepIndex] || {};
+      const rawStep = rawSteps[selectedStudioStepIndex] || {};
       const outputs = Array.isArray(step?.outputs) ? step.outputs : [];
-      song2dawStepTitle.textContent = "Step outputs (JSON)";
+      studioStepTitle.textContent = "Step outputs (JSON)";
 
       const detailLines = [];
       detailLines.push(`cache_key: ${String(step?.cache_key || "n/a")}`);
@@ -3896,51 +3927,51 @@ app.registerExtension({
         detailLines.push("outputs_json:");
         detailLines.push(compactJson(rawStep.outputs ?? {}, 1800));
       }
-      song2dawStepDetail.textContent = detailLines.join("\n");
-      updateSong2DawDetailHeader();
-      scheduleSong2DawDetailBalance();
+      studioStepDetail.textContent = detailLines.join("\n");
+      updateStudioDetailHeader();
+      scheduleStudioDetailBalance();
     };
 
-    const refreshSong2DawRuns = async ({ silent = false, selectRunId = null, autoLoad = false } = {}) => {
+    const refreshStudioRuns = async ({ silent = false, selectRunId = null, autoLoad = false } = {}) => {
       const data = await apiGet("/lemouf/song2daw/runs");
       const runs = Array.isArray(data?.runs) ? data.runs.slice() : [];
-      song2dawRuns = runs;
-      renderSong2DawRunOptions();
+      studioRuns = runs;
+      renderStudioRunOptions();
       if (selectRunId && runs.some((run) => String(run?.run_id || "") === selectRunId)) {
-        song2dawSelect.value = selectRunId;
+        studioRunSelect.value = selectRunId;
       }
       if (!silent) {
-        setSong2DawStatus(runs.length ? `Loaded ${runs.length} run(s).` : "No song2daw runs yet.");
+        setStudioRunStatus(runs.length ? `Loaded ${runs.length} run(s).` : "No studio runs yet.");
       }
       if (runs.length && !selectRunId) {
-        song2dawSelect.value = String(runs[0]?.run_id || "");
+        studioRunSelect.value = String(runs[0]?.run_id || "");
       }
-      updateSong2DawOpenButton();
+      updateStudioOpenButton();
       if (autoLoad && runs.length) {
-        await loadSong2DawRunDetail(String(song2dawSelect.value || ""));
+        await loadStudioRunDetail(String(studioRunSelect.value || ""));
       }
       if (!runs.length) {
-        clearSong2DawStepViews();
-        song2dawDetail.textContent = "";
-        currentSong2DawRun = null;
+        clearStudioStepViews();
+        studioDetailSummary.textContent = "";
+        currentStudioRun = null;
       }
     };
 
-    const loadSong2DawRunDetail = async (runIdOverride = "") => {
+    const loadStudioRunDetail = async (runIdOverride = "") => {
       const override =
         typeof runIdOverride === "string" || typeof runIdOverride === "number"
           ? String(runIdOverride)
           : "";
-      const runId = String(override || song2dawSelect.value || "");
+      const runId = String(override || studioRunSelect.value || "");
       if (!runId) {
-        setSong2DawStatus("Select a run first.");
+        setStudioRunStatus("Select a run first.");
         return;
       }
-      song2dawSelect.value = runId;
-      setSong2DawStatus("Loading song2daw step view...");
+      studioRunSelect.value = runId;
+      setStudioRunStatus("Loading run step view...");
       const data = await apiGet(`/lemouf/song2daw/runs/${runId}`);
       if (!data) {
-        setSong2DawStatus(lastApiError || "Failed to load run detail.");
+        setStudioRunStatus(lastApiError || "Failed to load run detail.");
         return;
       }
       const uiViewPayload = await apiGet(`/lemouf/song2daw/runs/${runId}/ui_view`);
@@ -3948,13 +3979,13 @@ app.registerExtension({
         data.ui_view = uiViewPayload.ui_view;
         data.ui_view_valid = Boolean(uiViewPayload.valid);
       }
-      const previousRunId = String(currentSong2DawRun?.run_id || "");
-      if (previousRunId !== runId) selectedSong2DawStepIndex = 0;
-      currentSong2DawRun = data;
-      updateSong2DawOpenButton();
-      renderSong2DawAudioPreview(data);
-      renderSong2DawStepViews(data);
-      renderSong2DawStudio(data);
+      const previousRunId = String(currentStudioRun?.run_id || "");
+      if (previousRunId !== runId) selectedStudioStepIndex = 0;
+      currentStudioRun = data;
+      updateStudioOpenButton();
+      renderStudioAudioPreview(data);
+      renderStudioStepViews(data);
+      renderStudioContent(data);
       const lines = [];
       lines.push(`run ${shortId(data.run_id || "")}  ·  ${data.status || "unknown"}`);
       lines.push(`audio: ${data.audio_path || ""}`);
@@ -3986,37 +4017,37 @@ app.registerExtension({
       if (data.ui_view) {
         lines.push(`ui_view: ${data.ui_view_valid ? "valid" : "invalid"}`);
       }
-      song2dawDetail.textContent = lines.join("\n");
-      scheduleSong2DawDetailBalance();
-      setSong2DawStatus(`Step view loaded: ${shortId(runId)}`);
+      studioDetailSummary.textContent = lines.join("\n");
+      scheduleStudioDetailBalance();
+      setStudioRunStatus(`Step view loaded: ${shortId(runId)}`);
     };
 
-    const clearSong2DawRuns = async () => {
-      setSong2DawStatus("Clearing song2daw runs...");
+    const clearStudioRuns = async () => {
+      setStudioRunStatus("Clearing studio runs...");
       const res = await apiPost("/lemouf/song2daw/runs/clear", {});
       if (!res?.ok) {
-        setSong2DawStatus(lastApiError || "Failed to clear runs.");
+        setStudioRunStatus(lastApiError || "Failed to clear runs.");
         return;
       }
-      song2dawRuns = [];
-      renderSong2DawRunOptions();
-      clearSong2DawStepViews();
-      setSong2DawStatus("Runs cleared.");
+      studioRuns = [];
+      renderStudioRunOptions();
+      clearStudioStepViews();
+      setStudioRunStatus("Runs cleared.");
     };
 
-    const openSong2DawRunDir = async () => {
-      const runId = selectedSong2DawRunId();
+    const openStudioRunDir = async () => {
+      const runId = selectedStudioRunId();
       if (!runId) {
-        setSong2DawStatus("Select a run first.");
+        setStudioRunStatus("Select a run first.");
         return;
       }
-      setSong2DawStatus("Opening run_dir...");
+      setStudioRunStatus("Opening run_dir...");
       const res = await apiPost("/lemouf/song2daw/runs/open", { run_id: runId });
       if (!res?.ok) {
-        setSong2DawStatus(lastApiError || "Failed to open run_dir.");
+        setStudioRunStatus(lastApiError || "Failed to open run_dir.");
         return;
       }
-      setSong2DawStatus(`Opened: ${shortId(runId)}`);
+      setStudioRunStatus(`Opened: ${shortId(runId)}`);
     };
 
     const useCurrentWorkflow = async () => {
@@ -4452,11 +4483,11 @@ app.registerExtension({
       await renderPipelineGraph(pipelineState.steps.length ? pipelineState.steps : [step]);
       workflowDirty = true;
       if (step.role === "execute") {
-        setScreen("run");
+        setScreen(SCREEN_RUN);
         await setCurrentWorkflow({ force: true, silent: true });
         await refreshLoopDetail();
       } else {
-        setScreen("payload");
+        setScreen(SCREEN_PAYLOAD);
         await runValidation(true);
       }
       setStatus(`Workflow loaded: ${step.workflow}`);
@@ -4468,75 +4499,75 @@ app.registerExtension({
     pipelineRefreshBtn.addEventListener("click", () => refreshPipelineList());
     pipelineLoadBtn.addEventListener("click", () => loadSelectedPipeline({ silent: false }));
     pipelineRunBtn.addEventListener("click", runLoadedWorkflow);
-    song2dawRefreshBtn.addEventListener("click", () => refreshSong2DawRuns());
-    song2dawClearBtn.addEventListener("click", clearSong2DawRuns);
-    song2dawLoadBtn.addEventListener("click", () => loadSong2DawRunDetail());
-    song2dawOpenDirBtn.addEventListener("click", openSong2DawRunDir);
-    song2dawStudioTimelineBtn.addEventListener("click", () => setSong2DawStudioMode("timeline"));
-    song2dawStudioTracksBtn.addEventListener("click", () => setSong2DawStudioMode("tracks"));
-    song2dawStudioSpectrumBtn.addEventListener("click", () => setSong2DawStudioMode("spectrum3d"));
-    song2dawSelect.addEventListener("change", async () => {
-      currentSong2DawRun = null;
-      selectedSong2DawStepIndex = 0;
-      ensureSong2DawHomeScreen();
-      clearSong2DawStepViews();
-      updateSong2DawOpenButton();
-      await loadSong2DawRunDetail(selectedSong2DawRunId());
+    studioRefreshBtn.addEventListener("click", () => refreshStudioRuns());
+    studioClearBtn.addEventListener("click", clearStudioRuns);
+    studioLoadBtn.addEventListener("click", () => loadStudioRunDetail());
+    studioOpenDirBtn.addEventListener("click", openStudioRunDir);
+    studioTimelineBtn.addEventListener("click", () => setStudioMode("timeline"));
+    studioTracksBtn.addEventListener("click", () => setStudioMode("tracks"));
+    studioSpectrumBtn.addEventListener("click", () => setStudioMode("spectrum3d"));
+    studioRunSelect.addEventListener("change", async () => {
+      currentStudioRun = null;
+      selectedStudioStepIndex = 0;
+      ensureStudioHomeScreen();
+      clearStudioStepViews();
+      updateStudioOpenButton();
+      await loadStudioRunDetail(selectedStudioRunId());
     });
-    clearSong2DawStudio();
-    ensureSong2DawHomeScreen();
+    clearStudioView();
+    ensureStudioHomeScreen();
 
-    const song2DawDockViewportMaxHeight = () => {
+    const studioDockViewportMaxHeight = () => {
       const viewportHeight = Math.max(
         320,
         Number(window.innerHeight || document.documentElement?.clientHeight || 720)
       );
-      return Math.max(SONG2DAW_DOCK_MIN_HEIGHT, viewportHeight - 28);
+      return Math.max(STUDIO_DOCK_MIN_HEIGHT, viewportHeight - 28);
     };
 
-    const clampSong2DawDockHeight = (height) =>
+    const clampStudioDockHeight = (height) =>
       Math.max(
-        SONG2DAW_DOCK_MIN_HEIGHT,
+        STUDIO_DOCK_MIN_HEIGHT,
         Math.min(
-          Math.min(SONG2DAW_DOCK_MAX_HEIGHT, song2DawDockViewportMaxHeight()),
+          Math.min(STUDIO_DOCK_MAX_HEIGHT, studioDockViewportMaxHeight()),
           Math.round(height)
         )
       );
 
-    const effectiveSong2DawDockHeight = () => {
-      if (!song2dawDockVisible) return 0;
-      if (song2dawDockExpanded) return song2DawDockViewportMaxHeight();
-      return clampSong2DawDockHeight(currentSong2DawDockHeight);
+    const effectiveStudioDockHeight = () => {
+      if (!studioDockVisible) return 0;
+      if (studioDockExpanded) return studioDockViewportMaxHeight();
+      return clampStudioDockHeight(currentStudioDockHeight);
     };
 
-    const updateSong2DawDockToggle = () => {
-      if (song2dawDockHeaderToggleBtn) {
-        setButtonIcon(song2dawDockHeaderToggleBtn, {
-          icon: song2dawDockVisible ? "eye_off" : "eye",
-          title: song2dawDockVisible ? "Hide studio" : "Show studio",
+    const updateStudioDockToggle = () => {
+      if (studioDockHeaderToggleBtn) {
+        setButtonIcon(studioDockHeaderToggleBtn, {
+          icon: studioDockVisible ? "eye_off" : "eye",
+          title: studioDockVisible ? "Hide studio" : "Show studio",
         });
-        song2dawDockHeaderToggleBtn.classList.toggle("is-active", song2dawDockVisible);
+        studioDockHeaderToggleBtn.classList.toggle("is-active", studioDockVisible);
       }
-      if (song2dawDockToggleBtn) {
-        song2dawDockToggleBtn.textContent = song2dawDockVisible ? "Hide studio" : "Show studio";
-        song2dawDockToggleBtn.classList.toggle("is-active", song2dawDockVisible);
+      if (studioDockToggleBtn) {
+        studioDockToggleBtn.textContent = studioDockVisible ? "Hide studio" : "Show studio";
+        studioDockToggleBtn.classList.toggle("is-active", studioDockVisible);
       }
-      const expandText = song2dawDockExpanded ? "Restore studio" : "Max studio";
-      if (song2dawDockExpandBtn) {
-        song2dawDockExpandBtn.textContent = expandText;
-        song2dawDockExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
+      const expandText = studioDockExpanded ? "Restore studio" : "Max studio";
+      if (studioDockExpandBtn) {
+        studioDockExpandBtn.textContent = expandText;
+        studioDockExpandBtn.classList.toggle("is-active", studioDockExpanded);
       }
-      if (song2dawDockHeaderExpandBtn) {
-        setButtonIcon(song2dawDockHeaderExpandBtn, {
-          icon: song2dawDockExpanded ? "panel_restore" : "panel_max",
-          title: song2dawDockExpanded ? "Restore studio size" : "Maximize studio",
+      if (studioDockHeaderExpandBtn) {
+        setButtonIcon(studioDockHeaderExpandBtn, {
+          icon: studioDockExpanded ? "panel_restore" : "panel_max",
+          title: studioDockExpanded ? "Restore studio size" : "Maximize studio",
         });
-        song2dawDockHeaderExpandBtn.classList.toggle("is-active", song2dawDockExpanded);
+        studioDockHeaderExpandBtn.classList.toggle("is-active", studioDockExpanded);
       }
     };
 
     const applyWorkspaceLayout = () => {
-      const dockHeight = effectiveSong2DawDockHeight();
+      const dockHeight = effectiveStudioDockHeight();
       const rightInset = panelVisible ? currentGutter : 0;
       if (panelVisible) {
         document.documentElement.style.setProperty("--lemouf-gutter", `${rightInset}px`);
@@ -4552,10 +4583,10 @@ app.registerExtension({
         }
       }
 
-      if (song2dawDock) {
-        song2dawDock.style.right = `${rightInset}px`;
-        song2dawDock.style.height = `${dockHeight}px`;
-        song2dawDock.style.display = song2dawDockVisible ? "" : "none";
+      if (studioDock) {
+        studioDock.style.right = `${rightInset}px`;
+        studioDock.style.height = `${dockHeight}px`;
+        studioDock.style.display = studioDockVisible ? "" : "none";
       }
 
       const root = getGutterRoot();
@@ -4565,7 +4596,7 @@ app.registerExtension({
         root.style.maxWidth = panelVisible ? `calc(100% - ${rightInset}px)` : "";
         root.style.paddingRight = panelVisible ? "0px" : "";
         root.style.marginRight = panelVisible ? "0px" : "";
-        root.style.paddingBottom = song2dawDockVisible ? `${dockHeight}px` : "0px";
+        root.style.paddingBottom = studioDockVisible ? `${dockHeight}px` : "0px";
         root.style.transition = "width 120ms ease, padding-bottom 120ms ease";
       }
       try {
@@ -4575,30 +4606,30 @@ app.registerExtension({
       } catch {}
     };
 
-    function clampSong2DawHomeStudioCompactHeight(height) {
+    function clampStudioHomeCompactHeight(height) {
       return Math.max(
-        SONG2DAW_HOME_STUDIO_COMPACT_MIN_HEIGHT,
+        STUDIO_HOME_STUDIO_COMPACT_MIN_HEIGHT,
         Math.min(
-          SONG2DAW_HOME_STUDIO_COMPACT_MAX_HEIGHT,
-          Math.round(Number(height || SONG2DAW_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT))
+          STUDIO_HOME_STUDIO_COMPACT_MAX_HEIGHT,
+          Math.round(Number(height || STUDIO_HOME_STUDIO_COMPACT_DEFAULT_HEIGHT))
         )
       );
     }
 
-    function applySong2DawHomeStudioCompactHeight() {
-      currentSong2DawHomeStudioCompactHeight = clampSong2DawHomeStudioCompactHeight(currentSong2DawHomeStudioCompactHeight);
-      if (song2dawStudioPanel) {
-        song2dawStudioPanel.style.setProperty(
-          "--lemouf-song2daw-compact-height",
-          `${currentSong2DawHomeStudioCompactHeight}px`
+    function applyStudioHomeCompactHeight() {
+      currentStudioHomeCompactHeight = clampStudioHomeCompactHeight(currentStudioHomeCompactHeight);
+      if (studioPanel) {
+        studioPanel.style.setProperty(
+          "--lemouf-studio-compact-height",
+          `${currentStudioHomeCompactHeight}px`
         );
       }
     }
 
-    function updateSong2DawHomeStudioResizerState() {
-      if (!song2dawStudioPanel || !song2dawStudioBody) return;
-      const compact = song2dawStudioBody.classList.contains("lemouf-song2daw-studio-body-compact");
-      song2dawStudioPanel.classList.toggle("is-compact", compact);
+    function updateStudioHomeResizerState() {
+      if (!studioPanel || !studioBody) return;
+      const compact = studioBody.classList.contains("lemouf-studio-body-compact");
+      studioPanel.classList.toggle("is-compact", compact);
     }
 
     const applyGutterWidth = (width) => {
@@ -4611,40 +4642,40 @@ app.registerExtension({
       applyWorkspaceLayout();
     };
 
-    const setSong2DawDockVisible = (value, { persist = true, userIntent = true } = {}) => {
-      song2dawDockVisible = Boolean(value);
+    const setStudioDockVisible = (value, { persist = true, userIntent = true } = {}) => {
+      studioDockVisible = Boolean(value);
       if (userIntent) {
-        song2dawDockUserVisible = song2dawDockVisible;
+        studioDockUserVisible = studioDockVisible;
       }
-      if (!song2dawDockVisible && song2dawDockExpanded && userIntent) {
-        song2dawDockExpanded = false;
+      if (!studioDockVisible && studioDockExpanded && userIntent) {
+        studioDockExpanded = false;
         setStored(STORAGE_KEYS.dockExpanded, "0");
       }
       if (persist) {
-        setStored(STORAGE_KEYS.dockVisible, song2dawDockVisible ? "1" : "0");
+        setStored(STORAGE_KEYS.dockVisible, studioDockVisible ? "1" : "0");
       }
-      updateSong2DawDockToggle();
+      updateStudioDockToggle();
       applyWorkspaceLayout();
       persistPipelineRuntimeState();
     };
 
-    const setSong2DawDockExpanded = (value) => {
+    const setStudioDockExpanded = (value) => {
       const next = Boolean(value);
-      if (song2dawDockExpanded === next) return;
+      if (studioDockExpanded === next) return;
       if (next) {
-        song2dawDockRestoreHeight = clampSong2DawDockHeight(currentSong2DawDockHeight);
+        studioDockRestoreHeight = clampStudioDockHeight(currentStudioDockHeight);
       } else {
-        currentSong2DawDockHeight = clampSong2DawDockHeight(song2dawDockRestoreHeight);
+        currentStudioDockHeight = clampStudioDockHeight(studioDockRestoreHeight);
       }
-      song2dawDockExpanded = next;
-      setStored(STORAGE_KEYS.dockExpanded, song2dawDockExpanded ? "1" : "0");
-      updateSong2DawDockToggle();
+      studioDockExpanded = next;
+      setStored(STORAGE_KEYS.dockExpanded, studioDockExpanded ? "1" : "0");
+      updateStudioDockToggle();
       applyWorkspaceLayout();
       persistPipelineRuntimeState();
-      if (dockContentMode === "song2daw" && currentSong2DawRun) {
-        renderSong2DawStudio(currentSong2DawRun);
+      if (dockContentMode === DOCK_CONTENT_MODE_STUDIO && currentStudioRun) {
+        renderStudioContent(currentStudioRun);
       }
-      if (dockContentMode === "loop_composition" && currentLoopDetail) {
+      if (dockContentMode === DOCK_CONTENT_MODE_LOOP_COMPOSITION && currentLoopDetail) {
         renderLoopCompositionStudio(currentLoopDetail);
       }
     };
@@ -4672,31 +4703,31 @@ app.registerExtension({
           Boolean(loopCompositionRequested)
         );
       })();
-      const wantsSong2DawUI = effective.adapter_id === "song2daw" && effective.compatible;
+      const wantsStudioFeatureUI = effective.adapter_id === "song2daw" && effective.compatible;
       const wantsLoopCompositionUI =
         Boolean(loopCompositionRequested) && (
           (isLoopLikeAdapterId(effective.adapter_id) && effective.compatible) ||
           hasRestorableCompositionSession
         );
-      const wantsAnyDockUI = wantsSong2DawUI || wantsLoopCompositionUI;
-      if (song2dawBlock) {
-        song2dawBlock.style.display = wantsSong2DawUI ? "" : "none";
+      const wantsAnyDockUI = wantsStudioFeatureUI || wantsLoopCompositionUI;
+      if (studioFeatureBlock) {
+        studioFeatureBlock.style.display = wantsStudioFeatureUI ? "" : "none";
       }
       if (!isLoopLikeAdapterId(effective.adapter_id) && !hasRestorableCompositionSession) {
         loopCompositionRequested = false;
         clearLoopCompositionStudio();
       }
-      if (wantsSong2DawUI) setDockContentMode("song2daw");
-      else if (wantsLoopCompositionUI) setDockContentMode("loop_composition");
-      if (!wantsSong2DawUI) {
-        ensureSong2DawHomeScreen();
+      if (wantsStudioFeatureUI) setDockContentMode(DOCK_CONTENT_MODE_STUDIO);
+      else if (wantsLoopCompositionUI) setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
+      if (!wantsStudioFeatureUI) {
+        ensureStudioHomeScreen();
       }
-      const nextDockVisible = wantsAnyDockUI ? song2dawDockUserVisible : false;
-      if (song2dawDockVisible !== nextDockVisible) {
-        setSong2DawDockVisible(nextDockVisible, { persist: false, userIntent: false });
+      const nextDockVisible = wantsAnyDockUI ? studioDockUserVisible : false;
+      if (studioDockVisible !== nextDockVisible) {
+        setStudioDockVisible(nextDockVisible, { persist: false, userIntent: false });
       }
-      if (wantsSong2DawUI && currentSong2DawRun) {
-        renderSong2DawStudio(currentSong2DawRun);
+      if (wantsStudioFeatureUI && currentStudioRun) {
+        renderStudioContent(currentStudioRun);
       }
       if (wantsLoopCompositionUI && currentLoopDetail) {
         renderLoopCompositionStudio(currentLoopDetail);
@@ -4704,23 +4735,23 @@ app.registerExtension({
       return effective;
     };
 
-    const setSong2DawDockHeight = (height) => {
-      if (song2dawDockExpanded) {
-        song2dawDockExpanded = false;
+    const setStudioDockHeight = (height) => {
+      if (studioDockExpanded) {
+        studioDockExpanded = false;
         setStored(STORAGE_KEYS.dockExpanded, "0");
       }
-      currentSong2DawDockHeight = clampSong2DawDockHeight(height);
-      song2dawDockRestoreHeight = currentSong2DawDockHeight;
-      updateSong2DawDockToggle();
+      currentStudioDockHeight = clampStudioDockHeight(height);
+      studioDockRestoreHeight = currentStudioDockHeight;
+      updateStudioDockToggle();
       applyWorkspaceLayout();
-      return currentSong2DawDockHeight;
+      return currentStudioDockHeight;
     };
 
-    const toggleSong2DawDockExpanded = () => {
-      if (!song2dawDockVisible) {
-        setSong2DawDockVisible(true);
+    const toggleStudioDockExpanded = () => {
+      if (!studioDockVisible) {
+        setStudioDockVisible(true);
       }
-      setSong2DawDockExpanded(!song2dawDockExpanded);
+      setStudioDockExpanded(!studioDockExpanded);
     };
 
     const updateToggleUI = () => {
@@ -4834,10 +4865,10 @@ app.registerExtension({
       );
       if (shouldRestoreCompositionDock) {
         loopCompositionRequested = true;
-        setDockContentMode("loop_composition");
-        song2dawDockUserVisible = true;
-        if (!song2dawDockVisible) {
-          setSong2DawDockVisible(true, { persist: false, userIntent: false });
+        setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
+        studioDockUserVisible = true;
+        if (!studioDockVisible) {
+          setStudioDockVisible(true, { persist: false, userIntent: false });
         }
       }
       const runtimeStatusRaw = String(data.status || loopRuntimeStatus || "idle").toLowerCase();
@@ -5337,7 +5368,7 @@ app.registerExtension({
       if (!hasStarted) {
         const manifest = data.manifest || [];
         if (manifest.length > 0 || data.status === "running" || data.status === "complete") {
-          setScreen("run");
+          setScreen(SCREEN_RUN);
         }
       }
       const isComplete = data.status === "complete";
@@ -5417,7 +5448,7 @@ app.registerExtension({
             : null,
         });
       }
-      if (dockContentMode === "loop_composition" && loopCompositionRequested) {
+      if (dockContentMode === DOCK_CONTENT_MODE_LOOP_COMPOSITION && loopCompositionRequested) {
         renderLoopCompositionStudio(data);
       }
       persistPipelineRuntimeState();
@@ -5572,7 +5603,7 @@ app.registerExtension({
       updateProgressUI();
       await refreshLoopDetail();
       setStatus("Cycle queued.");
-      setScreen("run");
+      setScreen(SCREEN_RUN);
       startAutoRefresh();
     };
 
@@ -5778,8 +5809,8 @@ app.registerExtension({
     const openLoopEditPanel = async () => {
       if (!currentLoopId) {
         loopCompositionRequested = true;
-        setDockContentMode("loop_composition");
-        setSong2DawDockVisible(true, { userIntent: true });
+        setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
+        setStudioDockVisible(true, { userIntent: true });
         renderLoopCompositionStudio(buildMinimalCompositionDetail());
         setStatus("Composition studio ready.");
         return;
@@ -5804,8 +5835,8 @@ app.registerExtension({
         }
       }
       loopCompositionRequested = true;
-      setDockContentMode("loop_composition");
-      setSong2DawDockVisible(true, { userIntent: true });
+      setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
+      setStudioDockVisible(true, { userIntent: true });
       renderLoopCompositionStudio(detail);
       setStatus("Composition studio ready.");
     };
@@ -5813,7 +5844,7 @@ app.registerExtension({
     const resetToStart = async () => {
       setStatus("");
       setCompatStatus("");
-      setScreen("home");
+      setScreen(SCREEN_HOME);
       const loopId = currentLoopId;
       if (loopId) {
         await apiPost("/lemouf/loop/reset", { loop_id: loopId, keep_workflow: true });
@@ -5838,8 +5869,8 @@ app.registerExtension({
       currentLoopDetail = null;
       loopCompositionRequested = false;
       clearLoopCompositionStudio();
-      setDockContentMode("song2daw");
-      setSong2DawDockVisible(false, { persist: false, userIntent: false });
+      setDockContentMode(DOCK_CONTENT_MODE_STUDIO);
+      setStudioDockVisible(false, { persist: false, userIntent: false });
       loopRuntimeStatus = "idle";
       pipelinePayloadEntry = null;
       pipelineState.lastRun = null;
@@ -6015,9 +6046,9 @@ app.registerExtension({
         await renderPipelineGraph(steps);
 
         loopCompositionRequested = true;
-        setDockContentMode("loop_composition");
-        setSong2DawDockVisible(true, { userIntent: true });
-        setSong2DawDockExpanded(true);
+        setDockContentMode(DOCK_CONTENT_MODE_LOOP_COMPOSITION);
+        setStudioDockVisible(true, { userIntent: true });
+        setStudioDockExpanded(true);
 
         const detail = currentLoopDetail || await refreshLoopDetail({ quiet: true });
         if (detail) {
@@ -6208,17 +6239,17 @@ app.registerExtension({
     };
 
     const resizer = el("div", { class: "lemouf-loop-resizer" });
-    const song2dawDockResizer = el("div", { class: "lemouf-song2daw-dock-resizer" });
-    song2dawDockHeaderExpandBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
-    song2dawDockHeaderToggleBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
-    const song2dawDockHeaderActions = el("div", { class: "lemouf-song2daw-dock-header-actions" }, [
-      song2dawDockHeaderExpandBtn,
-      song2dawDockHeaderToggleBtn,
+    const studioDockResizer = el("div", { class: "lemouf-studio-dock-resizer" });
+    studioDockHeaderExpandBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+    studioDockHeaderToggleBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
+    const studioDockHeaderActions = el("div", { class: "lemouf-studio-dock-header-actions" }, [
+      studioDockHeaderExpandBtn,
+      studioDockHeaderToggleBtn,
     ]);
-    song2dawDockTitle = el("div", { class: "lemouf-song2daw-dock-title", text: "Song2DAW Studio" });
-    const song2dawDockHeader = el("div", { class: "lemouf-song2daw-dock-header" }, [
-      song2dawDockTitle,
-      song2dawDockHeaderActions,
+    studioDockTitle = el("div", { class: "lemouf-studio-dock-title", text: "Studio" });
+    const studioDockHeader = el("div", { class: "lemouf-studio-dock-header" }, [
+      studioDockTitle,
+      studioDockHeaderActions,
     ]);
     const exportBtn = el("button", { class: "lemouf-loop-btn alt", text: "Export approved", onclick: exportApproved });
     const loopEditBtn = el("button", { class: "lemouf-loop-btn alt", text: "Open editor", onclick: openLoopEditPanel });
@@ -6234,18 +6265,18 @@ app.registerExtension({
     const toggleHeaderMenu = () => headerMenu.classList.toggle("is-open");
     headerBackBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
-      if (currentScreen === "song2daw_detail") {
-        setScreen("home");
+      if (currentScreen === SCREEN_STUDIO_DETAIL) {
+        setScreen(SCREEN_HOME);
         return;
       }
-      const isSong2DawProfile = currentWorkflowProfile?.adapter_id === "song2daw";
-      if (isSong2DawProfile) {
-        setScreen("home");
+      const isStudioFeatureProfile = currentWorkflowProfile?.adapter_id === "song2daw";
+      if (isStudioFeatureProfile) {
+        setScreen(SCREEN_HOME);
         return;
       }
       const hasLoop = Boolean(currentLoopId);
       if (!hasLoop) {
-        setScreen("home");
+        setScreen(SCREEN_HOME);
         return;
       }
       toggleHeaderMenu();
@@ -6253,7 +6284,7 @@ app.registerExtension({
     headerMenuHomeBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
       closeHeaderMenu();
-      setScreen("home");
+      setScreen(SCREEN_HOME);
     });
     headerMenuExitBtn.addEventListener("click", (ev) => {
       ev.stopPropagation();
@@ -6306,79 +6337,79 @@ app.registerExtension({
       setStatus("Launching run...");
       await validateAndStart();
     });
-    song2dawDetailHeaderTitle = el("div", {
-      class: "lemouf-song2daw-detail-title",
+    studioDetailHeaderTitle = el("div", {
+      class: "lemouf-studio-detail-title",
       text: "No step detail",
     });
-    song2dawDetailHeaderMeta = el("div", {
-      class: "lemouf-song2daw-detail-meta",
+    studioDetailHeaderMeta = el("div", {
+      class: "lemouf-studio-detail-meta",
       text: "Step 0/0",
     });
-    song2dawDetailPrevBtn = el("button", {
+    studioDetailPrevBtn = el("button", {
       class: "lemouf-loop-btn alt",
       type: "button",
       text: "Prev step",
       disabled: true,
     });
-    song2dawDetailNextBtn = el("button", {
+    studioDetailNextBtn = el("button", {
       class: "lemouf-loop-btn alt",
       type: "button",
       text: "Next step",
       disabled: true,
     });
-    song2dawDetailMonitorDockBtn = el("button", {
+    studioDetailMonitorDockBtn = el("button", {
       class: "lemouf-loop-btn alt",
       type: "button",
       text: "Monitor: Studio",
       style: "display:none;",
     });
-    song2dawDetailConfigDockBtn = el("button", {
+    studioDetailConfigDockBtn = el("button", {
       class: "lemouf-loop-btn alt",
       type: "button",
       text: "Config: Sidebar",
       style: "display:none;",
     });
-    song2dawDetailPrevBtn.addEventListener("click", () => stepSong2DawDetailBy(-1));
-    song2dawDetailNextBtn.addEventListener("click", () => stepSong2DawDetailBy(1));
-    song2dawDetailMonitorDockBtn.addEventListener("click", () => {
-      if (detailScreenMode !== "tool_composition") return;
+    studioDetailPrevBtn.addEventListener("click", () => stepStudioDetailBy(-1));
+    studioDetailNextBtn.addEventListener("click", () => stepStudioDetailBy(1));
+    studioDetailMonitorDockBtn.addEventListener("click", () => {
+      if (detailScreenMode !== DETAIL_SCREEN_MODE_TOOL_COMPOSITION) return;
       toggleCompositionMonitorDockTarget("monitor");
     });
-    song2dawDetailConfigDockBtn.addEventListener("click", () => {
-      if (detailScreenMode !== "tool_composition") return;
+    studioDetailConfigDockBtn.addEventListener("click", () => {
+      if (detailScreenMode !== DETAIL_SCREEN_MODE_TOOL_COMPOSITION) return;
       toggleCompositionMonitorDockTarget("config");
     });
-    song2dawDetailDockActions = el("div", { class: "lemouf-song2daw-detail-dock-actions" }, [
-      song2dawDetailMonitorDockBtn,
-      song2dawDetailConfigDockBtn,
+    studioDetailDockActions = el("div", { class: "lemouf-studio-detail-dock-actions" }, [
+      studioDetailMonitorDockBtn,
+      studioDetailConfigDockBtn,
     ]);
-    const song2dawDetailNavActions = el("div", { class: "lemouf-song2daw-detail-nav-actions" }, [
-      song2dawDetailPrevBtn,
-      song2dawDetailNextBtn,
+    const studioDetailNavActions = el("div", { class: "lemouf-studio-detail-nav-actions" }, [
+      studioDetailPrevBtn,
+      studioDetailNextBtn,
     ]);
-    song2dawRunSummaryTitle = el("div", { class: "lemouf-song2daw-step-title", text: "Run summary" });
-    song2dawRunSummaryPanel = el("div", { class: "lemouf-song2daw-step-panel lemouf-song2daw-detail-summary-panel" }, [
-      song2dawRunSummaryTitle,
-      song2dawDetail,
+    studioRunSummaryTitle = el("div", { class: "lemouf-studio-step-title", text: "Run summary" });
+    studioRunSummaryPanel = el("div", { class: "lemouf-studio-step-panel lemouf-studio-detail-summary-panel" }, [
+      studioRunSummaryTitle,
+      studioDetailSummary,
     ]);
-    song2dawDetailSection = el("div", { class: "lemouf-loop-screen lemouf-song2daw-detail-screen", style: "display:none;" }, [
-      (song2dawDetailLayout = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-song2daw-detail-layout" }, [
-        el("div", { class: "lemouf-song2daw-detail-head" }, [
-          el("div", { class: "lemouf-song2daw-detail-head-main" }, [
-            song2dawDetailHeaderTitle,
-            song2dawDetailHeaderMeta,
+    studioDetailSection = el("div", { class: "lemouf-loop-screen lemouf-studio-detail-screen", style: "display:none;" }, [
+      (studioDetailLayout = el("div", { class: "lemouf-loop-field lemouf-loop-block lemouf-studio-detail-layout" }, [
+        el("div", { class: "lemouf-studio-detail-head" }, [
+          el("div", { class: "lemouf-studio-detail-head-main" }, [
+            studioDetailHeaderTitle,
+            studioDetailHeaderMeta,
           ]),
-          el("div", { class: "lemouf-song2daw-detail-head-actions" }, [
-            song2dawDetailDockActions,
-            (song2dawDetailActionSeparator = el("div", {
-              class: "lemouf-song2daw-detail-action-separator",
+          el("div", { class: "lemouf-studio-detail-head-actions" }, [
+            studioDetailDockActions,
+            (studioDetailActionSeparator = el("div", {
+              class: "lemouf-studio-detail-action-separator",
               "aria-hidden": "true",
             })),
-            song2dawDetailNavActions,
+            studioDetailNavActions,
           ]),
         ]),
-        song2dawStepPanel,
-        song2dawRunSummaryPanel,
+        studioStepPanel,
+        studioRunSummaryPanel,
       ])),
     ]);
     panel = el("div", { class: "lemouf-loop-panel", id: "lemouf-loop-panel" }, [
@@ -6388,7 +6419,7 @@ app.registerExtension({
         headerActions,
       ]),
       preStartSection,
-      song2dawDetailSection,
+      studioDetailSection,
       payloadSection,
       postStartSection,
       el("div", { class: "lemouf-loop-footer", text: `LEMOUF EXTENSION · ${PANEL_VERSION}` }),
@@ -6398,26 +6429,26 @@ app.registerExtension({
       text: "Open editor to compose loop resources.",
     });
     loopCompositionPanel = el("div", {
-      class: "lemouf-song2daw-step-panel lemouf-loop-composition-panel",
+      class: "lemouf-studio-step-panel lemouf-loop-composition-panel",
       style: "display:none;",
     }, [loopCompositionBody]);
-    const song2dawDockContent = el("div", { class: "lemouf-song2daw-dock-content" }, [
-      song2dawStudioPanel,
+    const studioDockContent = el("div", { class: "lemouf-studio-dock-content" }, [
+      studioPanel,
       loopCompositionPanel,
     ]);
-    song2dawDock = el("div", { class: "lemouf-song2daw-dock", id: "lemouf-song2daw-dock" }, [
-      song2dawDockResizer,
-      song2dawDockHeader,
-      song2dawDockContent,
+    studioDock = el("div", { class: "lemouf-studio-dock", id: "lemouf-studio-dock" }, [
+      studioDockResizer,
+      studioDockHeader,
+      studioDockContent,
     ]);
-    setDockContentMode("song2daw");
+    setDockContentMode(DOCK_CONTENT_MODE_STUDIO);
 
     validateBtn.addEventListener("click", validateAndStart);
     setPipelineLoaded(false);
     setWorkflowDiagnosticsVisible(true);
 
     document.body.appendChild(panel);
-    document.body.appendChild(song2dawDock);
+    document.body.appendChild(studioDock);
     updateManifestGridLayout();
     if (typeof ResizeObserver !== "undefined") {
       manifestGridObserver = new ResizeObserver(() => {
@@ -6428,9 +6459,9 @@ app.registerExtension({
     document.addEventListener("click", () => {
       if (typeof closeHeaderMenu === "function") closeHeaderMenu();
     });
-    setScreen(pendingScreen || "home");
-    currentSong2DawDockHeight = clampSong2DawDockHeight(currentSong2DawDockHeight);
-    updateSong2DawDockToggle();
+    setScreen(normalizeScreenName(pendingScreen || SCREEN_HOME));
+    currentStudioDockHeight = clampStudioDockHeight(currentStudioDockHeight);
+    updateStudioDockToggle();
     applyWorkflowProfile(currentWorkflowProfile, { sourceHint: "init" });
     applyGutterWidth(currentGutter);
     const savedVisible = getStored(STORAGE_KEYS.panelVisible, "");
@@ -6439,7 +6470,7 @@ app.registerExtension({
     }
     setupToggleControls();
     refreshPipelineList({ silent: true, preserveSelection: false });
-    refreshSong2DawRuns({ silent: true });
+    refreshStudioRuns({ silent: true });
     const toggleObserver = new MutationObserver(() => {
       if (setupToggleControls()) toggleObserver.disconnect();
     });
@@ -6461,50 +6492,50 @@ app.registerExtension({
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     });
-    song2dawDockToggleBtn.addEventListener("click", () => {
-      setSong2DawDockVisible(!song2dawDockVisible);
+    studioDockToggleBtn.addEventListener("click", () => {
+      setStudioDockVisible(!studioDockVisible);
     });
-    song2dawDockExpandBtn.addEventListener("click", () => {
-      toggleSong2DawDockExpanded();
+    studioDockExpandBtn.addEventListener("click", () => {
+      toggleStudioDockExpanded();
     });
-    song2dawDockHeaderToggleBtn.addEventListener("click", () => {
-      setSong2DawDockVisible(!song2dawDockVisible);
+    studioDockHeaderToggleBtn.addEventListener("click", () => {
+      setStudioDockVisible(!studioDockVisible);
     });
-    song2dawDockHeaderExpandBtn.addEventListener("click", () => {
-      toggleSong2DawDockExpanded();
+    studioDockHeaderExpandBtn.addEventListener("click", () => {
+      toggleStudioDockExpanded();
     });
-    song2dawDockResizer.addEventListener("mousedown", (ev) => {
+    studioDockResizer.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
-      if (!song2dawDockVisible) return;
-      if (song2dawDockExpanded) setSong2DawDockExpanded(false);
+      if (!studioDockVisible) return;
+      if (studioDockExpanded) setStudioDockExpanded(false);
       const startY = ev.clientY;
-      const startHeight = currentSong2DawDockHeight;
+      const startHeight = currentStudioDockHeight;
       const onMove = (moveEv) => {
         const delta = startY - moveEv.clientY;
-        setSong2DawDockHeight(startHeight + delta);
+        setStudioDockHeight(startHeight + delta);
       };
       const onUp = () => {
-        setStored(STORAGE_KEYS.dockHeight, String(currentSong2DawDockHeight));
+        setStored(STORAGE_KEYS.dockHeight, String(currentStudioDockHeight));
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
       };
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     });
-    applySong2DawHomeStudioCompactHeight();
-    updateSong2DawHomeStudioResizerState();
-    song2dawStudioInlineResizer?.addEventListener("mousedown", (ev) => {
+    applyStudioHomeCompactHeight();
+    updateStudioHomeResizerState();
+    studioInlineResizer?.addEventListener("mousedown", (ev) => {
       ev.preventDefault();
-      if (!song2dawStudioBody?.classList?.contains("lemouf-song2daw-studio-body-compact")) return;
+      if (!studioBody?.classList?.contains("lemouf-studio-body-compact")) return;
       const startY = ev.clientY;
-      const startHeight = clampSong2DawHomeStudioCompactHeight(currentSong2DawHomeStudioCompactHeight);
+      const startHeight = clampStudioHomeCompactHeight(currentStudioHomeCompactHeight);
       const onMove = (moveEv) => {
         const delta = startY - moveEv.clientY;
-        currentSong2DawHomeStudioCompactHeight = clampSong2DawHomeStudioCompactHeight(startHeight + delta);
-        applySong2DawHomeStudioCompactHeight();
+        currentStudioHomeCompactHeight = clampStudioHomeCompactHeight(startHeight + delta);
+        applyStudioHomeCompactHeight();
       };
       const onUp = () => {
-        setStored(STORAGE_KEYS.homeStudioCompactHeight, String(currentSong2DawHomeStudioCompactHeight));
+        setStored(STORAGE_KEYS.homeStudioCompactHeight, String(currentStudioHomeCompactHeight));
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
       };
@@ -6512,8 +6543,8 @@ app.registerExtension({
       window.addEventListener("mouseup", onUp);
     });
     window.addEventListener("resize", () => {
-      if (song2dawDockExpanded) applyWorkspaceLayout();
-      if (currentScreen === "song2daw_detail") scheduleSong2DawDetailBalance();
+      if (studioDockExpanded) applyWorkspaceLayout();
+      if (currentScreen === SCREEN_STUDIO_DETAIL) scheduleStudioDetailBalance();
     });
     window.addEventListener("keydown", (ev) => {
       if (ev.altKey && !ev.shiftKey && !ev.ctrlKey && !ev.metaKey && ev.code === "KeyL") {
@@ -6533,15 +6564,15 @@ app.registerExtension({
 
       const adapterId = String(currentWorkflowProfile?.adapter_id || "");
       if (adapterId === "song2daw") {
-        if (!hasSong2DawStepDetail()) return;
+        if (!hasStudioStepDetail()) return;
         if (isArrowUp || isArrowDown) {
           ev.preventDefault();
-          stepSong2DawDetailBy(isArrowUp ? -1 : 1);
+          stepStudioDetailBy(isArrowUp ? -1 : 1);
           return;
         }
         if (isEnter) {
           ev.preventDefault();
-          openSong2DawStepDetailScreen();
+          openStudioStepDetailScreen();
         }
         return;
       }
@@ -6619,7 +6650,7 @@ app.registerExtension({
         progressState.value = progressState.max || progressState.value;
         updateProgressUI();
         refreshLoopDetail();
-        refreshSong2DawRuns({ silent: true, autoLoad: true });
+        refreshStudioRuns({ silent: true, autoLoad: true });
       });
       api.addEventListener?.("execution_error", (ev) => {
         const detail = ev?.detail || {};
@@ -6628,7 +6659,7 @@ app.registerExtension({
         if (progressState.promptId && promptId && promptId !== progressState.promptId) return;
         progressState.status = "error";
         updateProgressUI();
-        refreshSong2DawRuns({ silent: true, autoLoad: true });
+        refreshStudioRuns({ silent: true, autoLoad: true });
       });
     } catch {}
     await refreshLoops();
@@ -6638,5 +6669,7 @@ app.registerExtension({
     }
   },
 });
+
+
 
 

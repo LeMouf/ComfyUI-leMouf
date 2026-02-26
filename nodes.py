@@ -4,6 +4,7 @@ ComfyUI-leMouf nodes.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import os
@@ -51,6 +52,48 @@ def _int_env(name: str, default: int) -> int:
 
 def _log(message: str) -> None:
     print(f"[leMouf] {message}")
+
+
+def _is_windows_proactor_connection_reset_noise(context: Mapping[str, Any]) -> bool:
+    """Return True only for benign Windows Proactor disconnect noise."""
+    exc = context.get("exception")
+    if not isinstance(exc, ConnectionResetError):
+        return False
+    if getattr(exc, "winerror", None) != 10054:
+        return False
+
+    message = str(context.get("message") or "")
+    handle = context.get("handle")
+    callback = context.get("callback")
+    handle_repr = repr(handle) if handle is not None else ""
+    callback_repr = repr(callback) if callback is not None else ""
+    probe = f"{message}\n{handle_repr}\n{callback_repr}"
+    return "_call_connection_lost" in probe and "_ProactorBasePipeTransport" in probe
+
+
+def _ensure_asyncio_exception_filter() -> None:
+    """Install a targeted asyncio exception filter on the active event loop."""
+    if os.name != "nt":
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    if getattr(loop, "_lemouf_asyncio_filter_installed", False):
+        return
+
+    previous_handler = loop.get_exception_handler()
+
+    def _handler(active_loop: asyncio.AbstractEventLoop, context: Dict[str, Any]) -> None:
+        if _is_windows_proactor_connection_reset_noise(context):
+            return
+        if previous_handler is not None:
+            previous_handler(active_loop, context)
+            return
+        active_loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+    setattr(loop, "_lemouf_asyncio_filter_installed", True)
 
 
 MAX_LOOPS = _int_env("LEMOUF_MAX_LOOPS", 50)
@@ -1464,22 +1507,26 @@ def _ensure_routes() -> None:
     routes = PromptServer.instance.routes
 
     def add_route(method: str, path: str, handler):
+        async def wrapped_handler(request):
+            _ensure_asyncio_exception_filter()
+            return await handler(request)
+
         method = method.upper()
         if method == "GET":
-            routes.get(path)(handler)
-            routes.get(f"/api{path}")(handler)
+            routes.get(path)(wrapped_handler)
+            routes.get(f"/api{path}")(wrapped_handler)
         elif method == "POST":
-            routes.post(path)(handler)
-            routes.post(f"/api{path}")(handler)
+            routes.post(path)(wrapped_handler)
+            routes.post(f"/api{path}")(wrapped_handler)
         elif method == "PUT":
-            routes.put(path)(handler)
-            routes.put(f"/api{path}")(handler)
+            routes.put(path)(wrapped_handler)
+            routes.put(f"/api{path}")(wrapped_handler)
         elif method == "DELETE":
-            routes.delete(path)(handler)
-            routes.delete(f"/api{path}")(handler)
+            routes.delete(path)(wrapped_handler)
+            routes.delete(f"/api{path}")(wrapped_handler)
         else:
-            routes.route(method, path)(handler)
-            routes.route(method, f"/api{path}")(handler)
+            routes.route(method, path)(wrapped_handler)
+            routes.route(method, f"/api{path}")(wrapped_handler)
 
     async def loop_list(_request):
         loops = []

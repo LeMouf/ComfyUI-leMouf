@@ -8,7 +8,7 @@
   - Stream A `closed`
   - Stream B `in progress`
 - Quality gate status:
-  - **Precommit Gate open**
+  - **Precommit Gate closed** (release prep remains on-demand)
 - Delivered in current iteration:
   - unified insert/drop lane resolution between resource drop and clip move paths
   - hardened audio event-edge picking during heavy seek/scrub
@@ -28,9 +28,21 @@
   - runtime restore hardening for composition:
     - runtime payload now restores snapshot/resources across loop + workflow alias scopes
     - persisted runtime state now includes composition scope aliases for deterministic reload hydration
+  - studio shell/home/composition DOM classes fully neutralized to `lemouf-studio-*`
+  - shared studio CSS legacy selectors (`.lemouf-song2daw-*`) removed after parity pass
+  - removed legacy `web/ui/*` wrapper stubs; imports now point directly to `web/shared/*`, `web/app/*`, `web/features/*`
+  - detail screen internal key normalized to `studio_detail` (legacy alias `song2daw_detail` kept for compatibility)
+  - editing UX closure hardening:
+    - track context-menu action triggering now uses resilient pointer/mouse/keyboard fallback
+    - defensive timeline pointer-capture release added before context-menu open
+  - five-step closure pass completed:
+    - UI smoke validation
+    - editing UX closure
+    - A/V reliability soak
+    - final timeline extraction verification
+    - pre-release status/docs sync
 - Remaining priorities:
   - phase-6 reliability soak on mixed edit/playback sessions
-  - precommit gate closure (docs/version/worktree hygiene)
 
 ## 0.3.1 - 2026-02-16
 

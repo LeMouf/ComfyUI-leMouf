@@ -1,6 +1,6 @@
 import { el } from "../../shared/ui/dom.js";
 import { clearStudioTimeline, renderStudioTimeline } from "../studio_engine/timeline.js";
-import { clearSong2DawSpectrum3D, renderSong2DawSpectrum3D } from "./studio_spectrum3d.js";
+import { clearStudioSpectrum3D, renderStudioSpectrum3D } from "./studio_spectrum3d.js";
 
 function setTabState({ mode, timelineBtn, tracksBtn, spectrumBtn }) {
   const normalizedMode = mode === "tracks" ? "tracks" : (mode === "spectrum3d" ? "spectrum3d" : "timeline");
@@ -76,7 +76,7 @@ function pickStringField(obj, fields, fallback = "") {
   return fallback;
 }
 
-function normalizeSong2DawSections(rawSections) {
+function normalizeStudioSections(rawSections) {
   if (!Array.isArray(rawSections)) return [];
   const sections = [];
   for (let i = 0; i < rawSections.length; i += 1) {
@@ -100,7 +100,7 @@ function normalizeSong2DawSections(rawSections) {
   return sections;
 }
 
-function normalizeSong2DawEventsByTrack(rawEvents) {
+function normalizeStudioEventsByTrack(rawEvents) {
   const byTrack = {};
   const values = Array.isArray(rawEvents)
     ? rawEvents
@@ -135,8 +135,8 @@ function normalizeSong2DawEventsByTrack(rawEvents) {
   return byTrack;
 }
 
-function buildSong2DawStudioDataFromUiView(uiView) {
-  const sections = normalizeSong2DawSections(Array.isArray(uiView?.sections) ? uiView.sections : []);
+function buildStudioDataFromUiView(uiView) {
+  const sections = normalizeStudioSections(Array.isArray(uiView?.sections) ? uiView.sections : []);
   const tempoBpm = pickNumberField(uiView?.tempo?.[0] || {}, ["bpm"], null);
   const durationFromSong = pickNumberField(uiView?.song || {}, ["duration_sec"], null);
   const tracksRaw = Array.isArray(uiView?.tracks) ? uiView.tracks : [];
@@ -226,22 +226,22 @@ function buildSong2DawStudioDataFromUiView(uiView) {
   return { tempoBpm, durationSec, sections, eventsByTrack, tracks };
 }
 
-function buildSong2DawStudioData(runData) {
+function buildStudioData(runData) {
   const uiView = runData?.ui_view && typeof runData.ui_view === "object" ? runData.ui_view : null;
-  if (uiView) return buildSong2DawStudioDataFromUiView(uiView);
+  if (uiView) return buildStudioDataFromUiView(uiView);
 
   const result = runData?.result && typeof runData.result === "object" ? runData.result : {};
   const artifacts = result?.artifacts && typeof result.artifacts === "object" ? result.artifacts : {};
   const tempo = artifacts?.tempo && typeof artifacts.tempo === "object" ? artifacts.tempo : {};
-  const sections = normalizeSong2DawSections(artifacts.sections);
-  const eventsByTrack = normalizeSong2DawEventsByTrack(artifacts.events);
+  const sections = normalizeStudioSections(artifacts.sections);
+  const eventsByTrack = normalizeStudioEventsByTrack(artifacts.events);
   if (
     Object.keys(eventsByTrack).length === 0 &&
     artifacts.events_by_track &&
     typeof artifacts.events_by_track === "object"
   ) {
     for (const [trackName, values] of Object.entries(artifacts.events_by_track)) {
-      const parsed = normalizeSong2DawEventsByTrack(Array.isArray(values) ? values : []);
+      const parsed = normalizeStudioEventsByTrack(Array.isArray(values) ? values : []);
       const trackEvents = parsed.events || parsed[trackName] || [];
       if (trackEvents.length) eventsByTrack[trackName] = trackEvents;
     }
@@ -337,15 +337,15 @@ function buildSong2DawStudioData(runData) {
   };
 }
 
-export function clearSong2DawStudioView({ mode, body, timelineBtn, tracksBtn, spectrumBtn }) {
+export function clearStudioView({ mode, body, timelineBtn, tracksBtn, spectrumBtn }) {
   clearStudioTimeline(body);
-  clearSong2DawSpectrum3D(body);
+  clearStudioSpectrum3D(body);
   body.innerHTML = "";
   body.textContent = "Load a run to preview DAW visual data.";
   setTabState({ mode, timelineBtn, tracksBtn, spectrumBtn });
 }
 
-export function renderSong2DawStudioView({
+export function renderStudioView({
   runData,
   mode,
   dockExpanded = false,
@@ -359,15 +359,15 @@ export function renderSong2DawStudioView({
 }) {
   setTabState({ mode, timelineBtn, tracksBtn, spectrumBtn });
   clearStudioTimeline(body);
-  clearSong2DawSpectrum3D(body);
+  clearStudioSpectrum3D(body);
   if (!runData || typeof runData !== "object") {
-    clearSong2DawStudioView({ mode, body, timelineBtn, tracksBtn, spectrumBtn });
+    clearStudioView({ mode, body, timelineBtn, tracksBtn, spectrumBtn });
     return;
   }
-  const studioData = buildSong2DawStudioData(runData);
+  const studioData = buildStudioData(runData);
   body.innerHTML = "";
 
-  const meta = el("div", { class: "lemouf-song2daw-studio-meta" });
+  const meta = el("div", { class: "lemouf-studio-meta" });
   const tempo = studioData.tempoBpm !== null ? `${studioData.tempoBpm.toFixed(1)} bpm` : "n/a";
   const tracksCount = studioData.tracks.length;
   const sectionsCount = studioData.sections.length;
@@ -375,20 +375,20 @@ export function renderSong2DawStudioView({
   body.appendChild(meta);
 
   if (mode === "tracks") {
-    const tracksGrid = el("div", { class: "lemouf-song2daw-tracks-grid" });
+    const tracksGrid = el("div", { class: "lemouf-studio-tracks-grid" });
     if (!studioData.tracks.length) {
       tracksGrid.appendChild(
-        el("div", { class: "lemouf-song2daw-step-empty", text: "No track data found in artifacts." })
+        el("div", { class: "lemouf-studio-step-empty", text: "No track data found in artifacts." })
       );
     } else {
       for (const track of studioData.tracks) {
-        const colorDot = el("span", { class: "lemouf-song2daw-track-color-dot" });
+        const colorDot = el("span", { class: "lemouf-studio-track-color-dot" });
         colorDot.style.background = `hsl(${Math.abs(track.name.split("").reduce((a, c) => a + c.charCodeAt(0), 0)) % 360} 58% 58%)`;
         tracksGrid.append(
-          el("div", { class: "lemouf-song2daw-track-card" }, [
-            el("div", { class: "lemouf-song2daw-track-name" }, [colorDot, document.createTextNode(track.name)]),
-            el("div", { class: "lemouf-song2daw-track-meta", text: `type ${track.kind} | events ${track.events}` }),
-            el("div", { class: "lemouf-song2daw-track-source", text: normalizePath(track.source) || "(no source path)" }),
+          el("div", { class: "lemouf-studio-track-card" }, [
+            el("div", { class: "lemouf-studio-track-name" }, [colorDot, document.createTextNode(track.name)]),
+            el("div", { class: "lemouf-studio-track-meta", text: `type ${track.kind} | events ${track.events}` }),
+            el("div", { class: "lemouf-studio-track-source", text: normalizePath(track.source) || "(no source path)" }),
           ])
         );
       }
@@ -397,7 +397,7 @@ export function renderSong2DawStudioView({
     return;
   }
   if (mode === "spectrum3d") {
-    void renderSong2DawSpectrum3D({
+    void renderStudioSpectrum3D({
       runData,
       studioData,
       body,
@@ -415,3 +415,5 @@ export function renderSong2DawStudioView({
     onResolveAudioUrl,
   });
 }
+
+

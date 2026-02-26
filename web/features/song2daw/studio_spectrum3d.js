@@ -449,7 +449,7 @@ function resetPlayback(state) {
   drawSpectrum(state);
 }
 
-export function clearSong2DawSpectrum3D(body) {
+export function clearStudioSpectrum3D(body) {
   const state = SPECTRUM_STATE.get(body);
   if (!state) return;
   stopAnimation(state);
@@ -462,30 +462,30 @@ export function clearSong2DawSpectrum3D(body) {
   SPECTRUM_STATE.delete(body);
 }
 
-export async function renderSong2DawSpectrum3D({
+export async function renderStudioSpectrum3D({
   runData,
   studioData,
   body,
   onResolveAudioUrl,
 }) {
-  clearSong2DawSpectrum3D(body);
+  clearStudioSpectrum3D(body);
   body.innerHTML = "";
 
-  const toolbar = el("div", { class: "lemouf-song2daw-studio-toolbar" });
-  const controls = el("div", { class: "lemouf-song2daw-studio-toolbar-group" });
-  const camera = el("div", { class: "lemouf-song2daw-studio-toolbar-group" });
+  const toolbar = el("div", { class: "lemouf-studio-toolbar" });
+  const controls = el("div", { class: "lemouf-studio-toolbar-group" });
+  const camera = el("div", { class: "lemouf-studio-toolbar-group" });
   const playPauseBtn = el("button", { class: "lemouf-loop-btn icon", type: "button" });
   const stopBtn = el("button", { class: "lemouf-loop-btn alt icon", type: "button" });
   setButtonIcon(playPauseBtn, { icon: "play", title: "Play" });
   setButtonIcon(stopBtn, { icon: "stop", title: "Stop" });
   controls.append(playPauseBtn, stopBtn);
 
-  const cameraSelect = el("select", { class: "lemouf-loop-select lemouf-song2daw-viz-select" });
+  const cameraSelect = el("select", { class: "lemouf-loop-select lemouf-studio-viz-select" });
   cameraSelect.append(
     el("option", { value: "iso", text: "Camera: Iso" }),
     el("option", { value: "top", text: "Camera: Top" })
   );
-  const focusTrackSelect = el("select", { class: "lemouf-loop-select lemouf-song2daw-viz-select" });
+  const focusTrackSelect = el("select", { class: "lemouf-loop-select lemouf-studio-viz-select" });
   focusTrackSelect.append(el("option", { value: "__all", text: "Focus: All tracks" }));
   const tracks = Array.isArray(studioData?.tracks) ? studioData.tracks : [];
   for (const track of tracks) {
@@ -494,12 +494,12 @@ export async function renderSong2DawSpectrum3D({
     focusTrackSelect.append(el("option", { value: name, text: `Focus: ${name}` }));
   }
   camera.append(cameraSelect, focusTrackSelect);
-  const statusLabel = el("div", { class: "lemouf-song2daw-studio-toolbar-status", text: "paused" });
+  const statusLabel = el("div", { class: "lemouf-studio-toolbar-status", text: "paused" });
   toolbar.append(controls, camera, statusLabel);
 
-  const layout = el("div", { class: "lemouf-song2daw-studio-layout" });
-  const canvasWrap = el("div", { class: "lemouf-song2daw-spectrum-canvas-wrap" });
-  const canvas = el("canvas", { class: "lemouf-song2daw-spectrum-canvas" });
+  const layout = el("div", { class: "lemouf-studio-layout" });
+  const canvasWrap = el("div", { class: "lemouf-studio-spectrum-canvas-wrap" });
+  const canvas = el("canvas", { class: "lemouf-studio-spectrum-canvas" });
   canvasWrap.appendChild(canvas);
   layout.appendChild(canvasWrap);
   body.append(toolbar, layout);

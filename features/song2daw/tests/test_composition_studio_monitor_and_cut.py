@@ -5,6 +5,18 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _read_timeline_bundle() -> str:
+    root = _repo_root() / "web" / "features" / "studio_engine"
+    parts = [
+        (root / "timeline.js").read_text(encoding="utf-8"),
+    ]
+    modules_dir = root / "modules"
+    if modules_dir.exists():
+        for path in sorted(modules_dir.glob("*.js")):
+            parts.append(path.read_text(encoding="utf-8"))
+    return "\n".join(parts)
+
+
 def test_composition_monitor_supports_image_stage():
     studio_view = (_repo_root() / "web" / "features" / "composition" / "studio_view.js").read_text(encoding="utf-8")
     assert "lemouf-loop-composition-monitor-image" in studio_view
@@ -25,13 +37,13 @@ def test_composition_cut_accepts_audio_resources():
 
 
 def test_timeline_cut_gate_allows_audio_track_kind():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function isCuttableTrackKind(trackKind)" in timeline
     assert "return kind === \"video\" || kind === \"audio\";" in timeline
 
 
 def test_timeline_trim_shortcut_and_callback_are_wired():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "onClipTrim" in timeline
     assert "const trimRequested = Boolean(event.ctrlKey);" in timeline
     assert "state.onClipTrim({ ...payload, keepSide })" in timeline
@@ -45,7 +57,7 @@ def test_composition_trim_handler_uses_split_plus_keep_side():
 
 
 def test_timeline_toolbar_exposes_undo_redo_and_clear_studio_buttons():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "setButtonIcon(undoBtn, { icon: \"undo\", title: \"Undo (Ctrl+Z)\" });" in timeline
     assert "setButtonIcon(redoBtn, { icon: \"redo\", title: \"Redo (Ctrl+Y)\" });" in timeline
     assert "setButtonIcon(clearStudioBtn, { icon: \"clear_resources\", title: \"Clear studio (empty project)\" });" in timeline
@@ -53,22 +65,22 @@ def test_timeline_toolbar_exposes_undo_redo_and_clear_studio_buttons():
 
 
 def test_timeline_audio_viz_modes_include_line_and_dots():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "const SECTION_VIZ_MODES = [\"bands\", \"filled\", \"peaks\", \"line\", \"dots\"];" in timeline
     assert "el(\"option\", { value: \"line\", text: \"Viz: Line\" })" in timeline
     assert "el(\"option\", { value: \"dots\", text: \"Viz: Dots\" })" in timeline
 
 
 def test_timeline_reuses_shared_audio_viz_renderer_for_overlay_and_clips():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function drawAmplitudeVizLane(" in timeline
     assert "ArrayBuffer.isView(amplitudes)" in timeline
-    assert "drawAmplitudeVizLane(ctx, envelope.left, LEFT_GUTTER, timelineWidth, leftY, laneHeight" in timeline
+    assert "drawAmplitudeVizLane(ctx, envelope.left, CONSTANTS.LEFT_GUTTER, timelineWidth, leftY, laneHeight" in timeline
     assert "drawAmplitudeVizLane(ctx, amplitudes, x0, widthPx, y, h" in timeline
 
 
 def test_video_preview_plan_does_not_switch_to_interactive_on_playback_or_scrub():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "Keep filmstrip rendering visually stable during playback/scrub." in timeline
     assert "state?.isPlaying" not in timeline.split("function resolveVideoPreviewPlan(state, widthPx)")[1].split("function drawImageClipSignal")[0]
     assert "state?.scrubbing" not in timeline.split("function resolveVideoPreviewPlan(state, widthPx)")[1].split("function drawImageClipSignal")[0]
@@ -154,7 +166,7 @@ def test_placement_transform_is_persisted_in_state_store():
 
 
 def test_timeline_playback_update_exports_clip_selection_payload():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function collectSelectedClipRefs(state)" in timeline
     assert "selectedClipCount: selectedClipRefs.length" in timeline
     assert "selectedClipRefs," in timeline
@@ -162,7 +174,7 @@ def test_timeline_playback_update_exports_clip_selection_payload():
 
 
 def test_track_audio_seek_waits_for_ready_state_before_committing_seek():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function applyTrackPlayerSeek(player, localTime)" in timeline
     assert "const readyState = Number(audio.readyState || 0);" in timeline
     assert "if (!Number.isFinite(readyState) || readyState < 1)" in timeline
@@ -170,13 +182,13 @@ def test_track_audio_seek_waits_for_ready_state_before_committing_seek():
 
 
 def test_composition_preview_renders_visual_gaps_as_black_band():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "Video timeline gaps should render as explicit black areas." in timeline
     assert "ctx.fillStyle = \"rgba(12, 10, 8, 0.96)\";" in timeline
 
 
 def test_insert_mode_preview_resolves_real_lane_for_linked_audio_moves():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "const hasLinkedVideoTarget = previewTargets.some((targetRef) => {" in timeline
     assert "const insertTrackKind =" in timeline
     assert "desiredMoveKind === \"audio\" && hasLinkedVideoTarget" in timeline
@@ -184,17 +196,17 @@ def test_insert_mode_preview_resolves_real_lane_for_linked_audio_moves():
 
 
 def test_dropzone_hover_matches_insert_target_by_index_not_only_name():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function isDropzoneInsertHoverMatch(row, insertMode, insertIndex, targetTrackName = \"\")" in timeline
     assert "if (position === \"top\") return idx <= Math.max(1, rowIndex + 1);" in timeline
     assert "if (position === \"bottom\") return idx >= Math.max(0, rowIndex);" in timeline
-    assert "const dropzoneHoverFromResourceDrag = isDropzoneInsertHoverMatch(" in timeline
+    assert "const dropzoneHoverFromResourceDrag = Drop.isDropzoneInsertHoverMatch(" in timeline
     assert "isDropzoneInsertHoverMatch(" in timeline
     assert "Number(activeEdit.liveInsertIndex)" in timeline
 
 
 def test_dropzone_insert_mode_draws_ghost_preview_for_drag_and_move():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "const insertGhostFromResourceDrag = dropzoneHoverFromResourceDrag" in timeline
     assert "const insertGhostFromClipMove = dropzoneHoverFromClipMove" in timeline
     assert "const insertGhost = insertGhostFromResourceDrag || insertGhostFromClipMove;" in timeline
@@ -202,7 +214,7 @@ def test_dropzone_insert_mode_draws_ghost_preview_for_drag_and_move():
 
 
 def test_track_context_menu_temporarily_disables_canvas_pointer_events():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "state.canvas.style.pointerEvents = \"none\";" in timeline
     assert "state.canvas.style.pointerEvents = menuState.prevCanvasPointerEvents;" in timeline
     assert "function releaseTimelinePointerCaptures(state)" in timeline
@@ -264,29 +276,29 @@ def test_monitor_transform_phase5_polish_has_gizmo_hint_and_context_hotkeys():
 
 
 def test_seek_sanitizes_time_and_duration_before_clamp():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function resolvePlaybackDurationSec(state)" in timeline
     assert "const safeDurationSec = resolvePlaybackDurationSec(state);" in timeline
-    assert "const safeTimeSec = Number(toFiniteNumber(timeSec, fallbackPlayhead) ?? fallbackPlayhead);" in timeline
-    assert "state.playheadSec = clamp(safeTimeSec, 0, safeDurationSec);" in timeline
-    assert "state.audio.currentTime = clamp(state.playheadSec, 0, Math.max(0, mediaClampMax));" in timeline
+    assert "const safeTimeSec = Number(Utils.toFiniteNumber(timeSec, fallbackPlayhead) ?? fallbackPlayhead);" in timeline
+    assert "state.playheadSec = Utils.clamp(safeTimeSec, 0, safeDurationSec);" in timeline
+    assert "state.audio.currentTime = Utils.clamp(state.playheadSec, 0, Math.max(0, mediaClampMax));" in timeline
 
 
 def test_track_audio_sync_uses_resolved_playback_duration():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "const playbackDurationSec = resolvePlaybackDurationSec(state);" in timeline
-    assert "const t = clamp(Number(state.playheadSec || 0), 0, playbackDurationSec);" in timeline
+    assert "const t = Utils.clamp(Number(state.playheadSec || 0), 0, playbackDurationSec);" in timeline
 
 
 def test_playback_tick_uses_resolved_duration_for_clock_and_fallback_paths():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
-    assert "state.playheadSec = clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);" in timeline
+    timeline = _read_timeline_bundle()
+    assert "state.playheadSec = Utils.clamp(clockAudio.currentTime || 0, 0, playbackDurationSec);" in timeline
     assert "if (clockAudio.ended || state.playheadSec >= playbackDurationSec) {" in timeline
     assert "if (next >= playbackDurationSec) {" in timeline
 
 
 def test_clip_edit_commit_refreshes_track_audio_players():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "if (acceptedAny && typeof state.onResolveAudioUrl === \"function\") {" in timeline
     assert "setupTrackAudioPlayers(state, state.onResolveAudioUrl);" in timeline
     assert "syncTrackAudioPlayersToPlayhead(state, { play: Boolean(state.isPlaying), forceSeek: true });" in timeline
@@ -310,29 +322,29 @@ def test_drop_and_move_share_unified_insert_index_resolution():
 
 
 def test_track_audio_active_event_pick_is_hardened_for_seek_edges():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "const TRACK_AUDIO_EVENT_EDGE_EPS_SEC = 1 / 90;" in timeline
-    assert "const eps = TRACK_AUDIO_EVENT_EDGE_EPS_SEC;" in timeline
+    assert "const eps = CONSTANTS.TRACK_AUDIO_EVENT_EDGE_EPS_SEC;" in timeline
     assert "if (t < start - eps) continue;" in timeline
     assert "if (t >= end - eps * 0.25) continue;" in timeline
 
 
 def test_track_context_selection_count_includes_primary_clip_fallback():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function collectSelectedClipIdsForTrack(state, trackName)" in timeline
     assert "const primary = state?.selection && typeof state.selection === \"object\" ? state.selection : null;" in timeline
     assert "if (primaryTrack === safeTrackName && primaryClipId) out.push(primaryClipId);" in timeline
 
 
 def test_move_commit_remaps_selected_clip_keys_when_track_changes():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "function replaceClipSelectionTrackKey(state, clipId, fromTrackName, toTrackName)" in timeline
     assert "replaceClipSelectionTrackKey(state, memberClipId, memberTrackName, committedTrackName);" in timeline
     assert "replaceClipSelectionTrackKey(state, session.clipId, session.trackName, committedTrackName);" in timeline
 
 
 def test_filmstrip_draw_reports_real_frame_coverage_and_fallbacks_per_tile():
-    timeline = (_repo_root() / "web" / "features" / "studio_engine" / "timeline.js").read_text(encoding="utf-8")
+    timeline = _read_timeline_bundle()
     assert "let drewAny = false;" in timeline
     assert "if (!tileDrawn && frame !== list[0]) tileDrawn = drawFrameInTileContain(ctx, list[0], tile.x, innerY, tile.w, tileH);" in timeline
     assert "return drewAny;" in timeline

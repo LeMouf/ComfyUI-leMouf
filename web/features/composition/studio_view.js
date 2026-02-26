@@ -3,6 +3,21 @@ import { createIcon, setButtonIcon } from "../../shared/ui/icons.js";
 import { api } from "/scripts/api.js";
 import { clearStudioTimeline, prewarmTimelineVideoBuffers, renderStudioTimeline } from "../studio_engine/timeline.js";
 import {
+  buildComfyViewUrl,
+  buildResourceTooltip,
+  clamp,
+  cloneJsonSafe,
+  collectAssetMeta,
+  entryIsApproved,
+  extractMediaOutputs,
+  formatClipDuration,
+  inferVideoHasAudio,
+  isTextLikeTarget,
+  safeJsonResponse,
+  toFiniteNumber,
+  toNumber,
+} from "./modules/studio_view_utils.js";
+import {
   applyCompositionScopeSnapshot as applyCompositionScopeSnapshotInStore,
   appendManualResources as appendManualResourcesInStore,
   clearManualResources as clearManualResourcesInStore,
@@ -68,11 +83,27 @@ const MONITOR_OVERLAY_OPACITY_MIN = 0.1;
 const MONITOR_OVERLAY_OPACITY_MAX = 1;
 const MONITOR_OVERLAY_OPACITY_STEP = 0.05;
 
-function isTextLikeTarget(target) {
-  if (!target || typeof target !== "object") return false;
-  if (target.isContentEditable) return true;
-  const tag = String(target.tagName || "").toLowerCase();
-  return tag === "input" || tag === "textarea" || tag === "select";
+function isTransportStressDebugEnabled() {
+  try {
+    const raw = String(localStorage.getItem("lemoufTransportStressDebug") || "").trim().toLowerCase();
+    return raw === "1" || raw === "true" || raw === "on";
+  } catch {
+    return false;
+  }
+}
+
+function logTransportStressMonitor(type, payload = {}, throttleKey = "", throttleMs = 0) {
+  if (!isTransportStressDebugEnabled()) return;
+  const key = String(throttleKey || type || "monitor");
+  const nowMs = Date.now();
+  if (!logTransportStressMonitor._throttleByKey) logTransportStressMonitor._throttleByKey = new Map();
+  const last = Number(logTransportStressMonitor._throttleByKey.get(key) || 0);
+  if (throttleMs > 0 && nowMs - last < throttleMs) return;
+  logTransportStressMonitor._throttleByKey.set(key, nowMs);
+  try {
+    // eslint-disable-next-line no-console
+    console.debug(`[LeMouf Monitor] ${String(type || "event")}`, payload);
+  } catch {}
 }
 
 function clampOverlayOpacity(value, fallback = 1) {
@@ -308,14 +339,6 @@ function persistCompositionLayoutState(scopeKey, state) {
   setCompositionLayoutStateInStore(scopeKey, normalized);
 }
 
-function cloneJsonSafe(value, fallback = null) {
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch {
-    return fallback;
-  }
-}
-
 function compositionSnapshotSignature(snapshot) {
   try {
     return JSON.stringify(snapshot || null);
@@ -418,221 +441,6 @@ function redoCompositionHistory(scopeKey) {
     history.applying = false;
   }
   return true;
-}
-
-function toNumber(value, fallback = 0) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : fallback;
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function buildComfyViewUrl(asset, { preview = false } = {}) {
-  if (!asset || typeof asset !== "object") return "";
-  const filename = String(asset.filename || "").trim();
-  if (!filename) return "";
-  const params = new URLSearchParams();
-  params.set("filename", filename);
-  const type = String(asset.type || "").trim();
-  const subfolder = String(asset.subfolder || "").trim();
-  if (type) params.set("type", type);
-  if (subfolder) params.set("subfolder", subfolder);
-  if (preview) params.set("preview", "webp;90");
-  return `/view?${params.toString()}`;
-}
-
-function toFiniteNumber(value) {
-  const numeric = Number(value);
-  return Number.isFinite(numeric) ? numeric : null;
-}
-
-async function safeJsonResponse(res) {
-  if (!res) return null;
-  let text = "";
-  try {
-    text = await res.text();
-  } catch {
-    return null;
-  }
-  if (!text) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-function parseRateToNumber(value) {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  const text = String(value || "").trim();
-  if (!text) return null;
-  if (text.includes("/")) {
-    const [nRaw, dRaw] = text.split("/", 2);
-    const n = Number(nRaw);
-    const d = Number(dRaw);
-    if (Number.isFinite(n) && Number.isFinite(d) && Math.abs(d) > 1e-9) {
-      const out = n / d;
-      return Number.isFinite(out) ? out : null;
-    }
-  }
-  return toFiniteNumber(text);
-}
-
-function toReadableBytes(value) {
-  const bytes = toFiniteNumber(value);
-  if (bytes == null || bytes < 0) return "";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let num = bytes;
-  let idx = 0;
-  while (num >= 1024 && idx < units.length - 1) {
-    num /= 1024;
-    idx += 1;
-  }
-  const decimals = idx === 0 ? 0 : (num >= 10 ? 1 : 2);
-  return `${num.toFixed(decimals)} ${units[idx]}`;
-}
-
-function formatClipDuration(valueSec) {
-  const sec = toFiniteNumber(valueSec);
-  if (sec == null || sec <= 0) return "";
-  if (sec < 10) return `${sec.toFixed(1)}s`;
-  if (sec < 60) return `${sec.toFixed(0)}s`;
-  const minutes = Math.floor(sec / 60);
-  const seconds = Math.floor(sec - minutes * 60);
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
-}
-
-function inferVideoHasAudio(meta = {}) {
-  const hasAudioKeys = ["has_audio", "contains_audio", "with_audio"];
-  for (const key of hasAudioKeys) {
-    if (typeof meta?.[key] === "boolean") return meta[key];
-  }
-  const numericAudioHints = ["audio_tracks", "audio_streams", "audio_channels", "channels"];
-  for (const key of numericAudioHints) {
-    const count = toFiniteNumber(meta?.[key]);
-    if (count != null && count > 0) return true;
-  }
-  const codecHints = ["audio_codec", "audio_format"];
-  for (const key of codecHints) {
-    if (String(meta?.[key] || "").trim()) return true;
-  }
-  const streams = Array.isArray(meta?.streams) ? meta.streams : [];
-  if (streams.some((stream) => String(stream?.codec_type || stream?.type || "").toLowerCase() === "audio")) {
-    return true;
-  }
-  return null;
-}
-
-function collectAssetMeta(asset = {}, fileMeta = null) {
-  const fpsParsed =
-    parseRateToNumber(asset?.fps) ??
-    parseRateToNumber(asset?.frame_rate);
-  const durationFromFrames = (() => {
-    const frames =
-      toFiniteNumber(asset?.frame_count) ??
-      toFiniteNumber(asset?.frames) ??
-      toFiniteNumber(asset?.num_frames);
-    if (frames == null || fpsParsed == null || fpsParsed <= 0) return null;
-    return frames / fpsParsed;
-  })();
-  const durationFromMs = (() => {
-    const ms =
-      toFiniteNumber(asset?.duration_ms) ??
-      toFiniteNumber(asset?.duration_msec) ??
-      toFiniteNumber(asset?.duration_milliseconds) ??
-      toFiniteNumber(asset?.length_ms);
-    if (ms == null) return null;
-    return ms / 1000;
-  })();
-  const meta = {
-    filename: String(asset?.filename || fileMeta?.name || "").trim(),
-    mime: String(asset?.mime || asset?.content_type || fileMeta?.mime || "").trim(),
-    sizeBytes:
-      toFiniteNumber(asset?.size) ??
-      toFiniteNumber(asset?.file_size) ??
-      toFiniteNumber(asset?.filesize) ??
-      toFiniteNumber(fileMeta?.size),
-    durationSec:
-      toFiniteNumber(asset?.duration) ??
-      toFiniteNumber(asset?.duration_s) ??
-      toFiniteNumber(asset?.duration_sec) ??
-      toFiniteNumber(asset?.duration_seconds) ??
-      toFiniteNumber(asset?.length_sec) ??
-      toFiniteNumber(asset?.media_duration_sec) ??
-      durationFromMs ??
-      durationFromFrames,
-    fps: fpsParsed,
-    width: toFiniteNumber(asset?.width),
-    height: toFiniteNumber(asset?.height),
-    sampleRate:
-      toFiniteNumber(asset?.sample_rate) ??
-      toFiniteNumber(asset?.samplerate) ??
-      toFiniteNumber(asset?.audio_sample_rate),
-    channels:
-      toFiniteNumber(asset?.channels) ??
-      toFiniteNumber(asset?.audio_channels),
-    bitrate:
-      toFiniteNumber(asset?.bitrate) ??
-      toFiniteNumber(asset?.audio_bitrate) ??
-      toFiniteNumber(asset?.video_bitrate),
-  };
-  return meta;
-}
-
-function buildResourceTooltip(resource) {
-  const lines = [];
-  const kind = String(resource?.kind || "resource").toUpperCase();
-  const source = String(resource?.source || "pipeline");
-  if (resource?.kind === "video") {
-    const state = resource?.videoAudioState || "unknown";
-    const audioLabel = state === "with_audio" ? "with audio" : (state === "no_audio" ? "silent" : "audio unknown");
-    lines.push(`Type: ${kind} (${audioLabel})`);
-  } else {
-    lines.push(`Type: ${kind}`);
-  }
-  lines.push(`Source: ${source}`);
-  if (resource?.cycle >= 0) lines.push(`Cycle: ${Number(resource.cycle) + 1}`);
-  lines.push(`Retry: r${Number(resource?.retry || 0)}`);
-  if (resource?.label) lines.push(`Label: ${resource.label}`);
-
-  const meta = resource?.meta || {};
-  if (meta.filename) lines.push(`File: ${meta.filename}`);
-  if (meta.mime) lines.push(`MIME: ${meta.mime}`);
-  if (meta.width && meta.height) lines.push(`Resolution: ${meta.width}x${meta.height}`);
-  if (meta.durationSec != null) lines.push(`Duration: ${meta.durationSec.toFixed(2)} s`);
-  if (meta.fps != null) lines.push(`FPS: ${meta.fps}`);
-  if (meta.sampleRate != null) lines.push(`Sample rate: ${meta.sampleRate} Hz`);
-  if (meta.channels != null) lines.push(`Channels: ${meta.channels}`);
-  if (meta.bitrate != null) lines.push(`Bitrate: ${Math.round(meta.bitrate)} bps`);
-  const sizeText = toReadableBytes(meta.sizeBytes);
-  if (sizeText) lines.push(`Size: ${sizeText}`);
-  return lines.join("\n");
-}
-
-function entryIsApproved(entry) {
-  const decision = String(entry?.decision || "").toLowerCase();
-  const status = String(entry?.status || "").toLowerCase();
-  return (
-    decision === "approve" ||
-    decision === "approved" ||
-    status === "approve" ||
-    status === "approved"
-  );
-}
-
-function extractMediaOutputs(entry) {
-  const outputs = entry?.outputs && typeof entry.outputs === "object" ? entry.outputs : {};
-  const images = Array.isArray(outputs.images) ? outputs.images : [];
-  const audios = Array.isArray(outputs.audio)
-    ? outputs.audio
-    : (Array.isArray(outputs.audios) ? outputs.audios : []);
-  const videos = Array.isArray(outputs.video)
-    ? outputs.video
-    : (Array.isArray(outputs.videos) ? outputs.videos : []);
-  return { images, audios, videos };
 }
 
 function scopeKeyFromDetail(detail) {
@@ -3059,7 +2867,7 @@ export function renderLoopCompositionStudioView({
   };
   const isCompositionStudioVisible = () => {
     const compositionPanel = panelBody.closest(".lemouf-loop-composition-panel");
-    const dock = panelBody.closest(".lemouf-song2daw-dock");
+    const dock = panelBody.closest(".lemouf-studio-dock");
     if (!isElementActuallyVisible(panelBody)) return false;
     if (compositionPanel && !isElementActuallyVisible(compositionPanel)) return false;
     if (dock && !isElementActuallyVisible(dock)) return false;
@@ -3069,8 +2877,8 @@ export function renderLoopCompositionStudioView({
     const target = event?.target;
     if (!target || typeof target.closest !== "function") return false;
     return Boolean(
-      target.closest(".lemouf-song2daw-arrange-canvas-wrap") ||
-      target.closest(".lemouf-song2daw-arrange-canvas")
+      target.closest(".lemouf-studio-arrange-canvas-wrap") ||
+      target.closest(".lemouf-studio-arrange-canvas")
     );
   };
   const handleExternalFileDragOver = (event) => {
@@ -3197,12 +3005,12 @@ export function renderLoopCompositionStudioView({
   const resourcesById = new Map(resources.map((resource) => [String(resource?.id || ""), resource]));
   panelBody.innerHTML = "";
 
-  const summary = el("div", { class: "lemouf-song2daw-studio-meta" });
+  const summary = el("div", { class: "lemouf-studio-meta" });
   summary.textContent = `resources ${resources.length}  |  duration ${studio.durationSec.toFixed(1)}s  |  tracks ${studio.tracks.length}`;
 
   const manualCount = getManualResources(scopeKey).length;
   const resourceHeader = el("div", { class: "lemouf-loop-composition-resources-head" }, [
-    el("div", { class: "lemouf-song2daw-step-title", text: "Resources" }),
+    el("div", { class: "lemouf-studio-step-title", text: "Resources" }),
     el("div", { class: "lemouf-loop-composition-resources-meta", text: `${resources.length} item(s)` }),
   ]);
 
@@ -3284,7 +3092,7 @@ export function renderLoopCompositionStudioView({
   const resourceRail = el("div", { class: "lemouf-loop-composition-resources-rail" });
   if (!resources.length) {
     resourceRail.appendChild(
-      el("div", { class: "lemouf-song2daw-step-empty", text: "No approved images yet. Add media manually if needed." })
+      el("div", { class: "lemouf-studio-step-empty", text: "No approved images yet. Add media manually if needed." })
     );
   } else {
     for (const resource of resources) {
@@ -4908,7 +4716,7 @@ export function renderLoopCompositionStudioView({
   monitorPanel.append(monitorHead, monitorStage, monitorActions);
 
   const editorBody = el("div", {
-    class: "lemouf-song2daw-studio-body lemouf-loop-composition-editor-body",
+    class: "lemouf-studio-body lemouf-loop-composition-editor-body",
   });
 
   const resolvedMonitorHost = monitorHost && typeof monitorHost.appendChild === "function"
@@ -5122,7 +4930,15 @@ export function renderLoopCompositionStudioView({
   let monitorPendingPlay = false;
   let monitorPendingScrub = false;
   let monitorAllowAudio = false;
+  let monitorTransportClockKind = "none";
+  let monitorFrameLoopToken = 0;
+  let monitorFrameLoopKind = "";
+  let monitorLastAppliedLocalTimeSec = Number.NaN;
+  let monitorLastAppliedAtMs = 0;
   const MONITOR_EDGE_EPS_SEC = 1 / 90;
+  const MONITOR_BOUNDARY_RECOVERY_EPS_SEC = 1 / 24;
+  const MONITOR_SCRUB_SEEK_MIN_INTERVAL_MS = 24;
+  const MONITOR_SCRUB_MIN_DELTA_SEC = 1 / 120;
   const pickMonitorEvent = (events, playheadSec, { isPlaying = false, isScrubbing = false } = {}) => {
     const rows = Array.isArray(events) ? events : [];
     const time = Math.max(0, toNumber(playheadSec, 0));
@@ -5141,6 +4957,43 @@ export function renderLoopCompositionStudioView({
         return a.trackName.localeCompare(b.trackName);
       });
       return active[0] || null;
+    }
+    // Recovery pass: during heavy scrub / boundary jitter, keep a stable nearest
+    // clip rather than flashing to "no visual clip".
+    const recoveryEps = Math.max(
+      eps,
+      isPlaying || isScrubbing ? MONITOR_BOUNDARY_RECOVERY_EPS_SEC : MONITOR_EDGE_EPS_SEC
+    );
+    const near = rows
+      .map((event) => {
+        const start = Math.max(0, toNumber(event.start, 0));
+        const end = Math.max(start + MONITOR_EDGE_EPS_SEC * 0.25, toNumber(event.end, start));
+        const distToStart = Math.abs(time - start);
+        const distToEnd = Math.abs(time - end);
+        const nearStart = distToStart <= recoveryEps;
+        const nearEnd = distToEnd <= recoveryEps;
+        if (!nearStart && !nearEnd) return null;
+        return {
+          event,
+          nearStart,
+          nearEnd,
+          distance: Math.min(distToStart, distToEnd),
+        };
+      })
+      .filter(Boolean);
+    if (near.length) {
+      near.sort((a, b) => {
+        if (a.nearStart !== b.nearStart) return a.nearStart ? -1 : 1;
+        if (a.distance !== b.distance) return a.distance - b.distance;
+        const ao = Number(a.event?.trackOrder || 0);
+        const bo = Number(b.event?.trackOrder || 0);
+        if (ao !== bo) return bo - ao;
+        const as = Number(a.event?.start || 0);
+        const bs = Number(b.event?.start || 0);
+        if (as !== bs) return bs - as;
+        return String(a.event?.trackName || "").localeCompare(String(b.event?.trackName || ""));
+      });
+      return near[0]?.event || null;
     }
     return null;
   };
@@ -5182,6 +5035,8 @@ export function renderLoopCompositionStudioView({
     return pick({ strictTrack: true }) || pick({ strictTrack: false });
   };
   const applyMonitorTransport = () => {
+    if (monitorCurrentMediaKind !== "video") return;
+    const nowMs = performance.now();
     const duration = Number(monitorVideo.duration || 0);
     const maxLocal = Number.isFinite(duration) && duration > 0.05
       ? Math.max(0, duration - 0.02)
@@ -5190,31 +5045,81 @@ export function renderLoopCompositionStudioView({
     monitorVideo.muted = !monitorAllowAudio;
     const currentLocal = Number(monitorVideo.currentTime || 0);
     const drift = Math.abs(currentLocal - targetLocal);
-    const seekThreshold = monitorPendingScrub ? 0.008 : (monitorPendingPlay ? 0.18 : 0.03);
+    const shouldPlayNow = Boolean(monitorPendingPlay && !monitorPendingScrub);
+    const seekThreshold = monitorPendingScrub
+      ? 0.004
+      : (monitorPendingPlay
+        ? (monitorTransportClockKind === "webaudio" ? 0.032 : 0.05)
+        : 0.02);
+    const sinceLastApplyMs = nowMs - Number(monitorLastAppliedAtMs || 0);
+    const deltaSinceLastApply = Math.abs(targetLocal - Number(monitorLastAppliedLocalTimeSec || 0));
+    const skipScrubSeek = Boolean(
+      monitorPendingScrub &&
+      sinceLastApplyMs < MONITOR_SCRUB_SEEK_MIN_INTERVAL_MS &&
+      deltaSinceLastApply < MONITOR_SCRUB_MIN_DELTA_SEC
+    );
     try {
-      if (drift > seekThreshold) {
+      if (!skipScrubSeek && drift > seekThreshold) {
         if (monitorPendingScrub && typeof monitorVideo.fastSeek === "function") {
           monitorVideo.fastSeek(targetLocal);
         } else {
           monitorVideo.currentTime = targetLocal;
         }
+        monitorLastAppliedLocalTimeSec = targetLocal;
+        monitorLastAppliedAtMs = nowMs;
       }
     } catch {}
-    if (monitorPendingPlay) {
-      const p = monitorVideo.play();
-      if (p && typeof p.catch === "function") {
-        p.catch(() => {
-          // Deterministic fallback: if autoplay-with-audio is blocked, keep monitor video playing muted.
-          if (monitorAllowAudio) {
-            monitorVideo.muted = true;
-            const retry = monitorVideo.play();
-            if (retry && typeof retry.catch === "function") retry.catch(() => {});
-          }
-        });
+    if (!shouldPlayNow) {
+      if (!monitorVideo.paused) {
+        try { monitorVideo.pause(); } catch {}
       }
-    } else {
-      try { monitorVideo.pause(); } catch {}
     }
+    if (shouldPlayNow) {
+      if (monitorVideo.paused) {
+        const p = monitorVideo.play();
+        if (p && typeof p.catch === "function") {
+          p.catch(() => {
+            // Deterministic fallback: if autoplay-with-audio is blocked, keep monitor video playing muted.
+            if (monitorAllowAudio) {
+              monitorVideo.muted = true;
+              const retry = monitorVideo.play();
+              if (retry && typeof retry.catch === "function") retry.catch(() => {});
+            }
+          });
+        }
+      }
+    }
+  };
+  const stopMonitorFrameLoop = () => {
+    if (monitorFrameLoopKind === "rvfc" && monitorFrameLoopToken) {
+      try { monitorVideo.cancelVideoFrameCallback?.(monitorFrameLoopToken); } catch {}
+    } else if (monitorFrameLoopKind === "raf" && monitorFrameLoopToken) {
+      try { cancelAnimationFrame(monitorFrameLoopToken); } catch {}
+    }
+    monitorFrameLoopToken = 0;
+    monitorFrameLoopKind = "";
+  };
+  const scheduleMonitorFrameLoop = () => {
+    if (!monitorPendingPlay || monitorCurrentMediaKind !== "video") {
+      stopMonitorFrameLoop();
+      return;
+    }
+    if (monitorFrameLoopToken) return;
+    if (typeof monitorVideo.requestVideoFrameCallback === "function") {
+      monitorFrameLoopKind = "rvfc";
+      monitorFrameLoopToken = monitorVideo.requestVideoFrameCallback(() => {
+        monitorFrameLoopToken = 0;
+        applyMonitorTransport();
+        scheduleMonitorFrameLoop();
+      });
+      return;
+    }
+    monitorFrameLoopKind = "raf";
+    monitorFrameLoopToken = requestAnimationFrame(() => {
+      monitorFrameLoopToken = 0;
+      applyMonitorTransport();
+      scheduleMonitorFrameLoop();
+    });
   };
   monitorVideo.addEventListener("loadedmetadata", applyMonitorTransport);
   monitorVideo.addEventListener("canplay", applyMonitorTransport);
@@ -5242,11 +5147,17 @@ export function renderLoopCompositionStudioView({
     isScrubbing = false,
     mutedTracks = [],
     hasAudibleTimelineAudio = false,
+    transport = null,
     selection = null,
     previewClipEdits = null,
   } = {}) => {
+    const monitorDebugEnabled = (() => {
+      try { return String(localStorage.getItem("lemoufTransportDebug") || "") === "1"; } catch { return false; }
+    })();
+    monitorTransportClockKind = String(transport?.clockKind || "none").toLowerCase();
     if (monitorDataDirty) rebuildMonitorData();
     const previewMap = previewClipEdits && typeof previewClipEdits === "object" ? previewClipEdits : {};
+    const hasPreviewEdits = Boolean(previewMap && Object.keys(previewMap).length);
     const previewFor = (event) => {
       const key = String(event?.clipId || "").trim();
       if (!key) return null;
@@ -5256,21 +5167,23 @@ export function renderLoopCompositionStudioView({
       const preview = previewMap[key];
       return preview && typeof preview === "object" ? preview : null;
     };
-    const materializedEvents = visualEvents.map((event) => {
-      const preview = previewFor(event);
-      if (!preview) return event;
-      const start = Math.max(0, toNumber(preview.start, event.start));
-      const end = Math.max(start + 0.01, toNumber(preview.end, event.end));
-      return {
-        ...event,
-        trackName: String(preview.trackName || event.trackName),
-        start,
-        end,
-        duration: end - start,
-        startOffsetSec: Math.max(0, toNumber(preview.startOffsetSec, event.startOffsetSec)),
-        sourceDurationSec: Math.max(0.01, toNumber(preview.sourceDurationSec, event.sourceDurationSec)),
-      };
-    });
+    const materializedEvents = hasPreviewEdits
+      ? visualEvents.map((event) => {
+          const preview = previewFor(event);
+          if (!preview) return event;
+          const start = Math.max(0, toNumber(preview.start, event.start));
+          const end = Math.max(start + 0.01, toNumber(preview.end, event.end));
+          return {
+            ...event,
+            trackName: String(preview.trackName || event.trackName),
+            start,
+            end,
+            duration: end - start,
+            startOffsetSec: Math.max(0, toNumber(preview.startOffsetSec, event.startOffsetSec)),
+            sourceDurationSec: Math.max(0.01, toNumber(preview.sourceDurationSec, event.sourceDurationSec)),
+          };
+        })
+      : visualEvents;
     const mutedTrackSet = new Set((Array.isArray(mutedTracks) ? mutedTracks : []).map((name) => String(name || "").trim()));
     const selectionPayload = selection && typeof selection === "object" ? selection : {};
     const selectionRefs = Array.isArray(selectionPayload.selectedClipRefs) ? selectionPayload.selectedClipRefs : [];
@@ -5279,6 +5192,9 @@ export function renderLoopCompositionStudioView({
       monitorAllowAudio = false;
       monitorPendingScrub = false;
       monitorPendingPlay = false;
+      monitorLastAppliedLocalTimeSec = Number.NaN;
+      monitorLastAppliedAtMs = 0;
+      stopMonitorFrameLoop();
       monitorCurrentKey = "";
       monitorCurrentMediaKind = "";
       monitorSelectedTrackName = "";
@@ -5324,16 +5240,35 @@ export function renderLoopCompositionStudioView({
       monitorAllowAudio = false;
       monitorPendingPlay = false;
       monitorPendingScrub = false;
+      monitorLastAppliedLocalTimeSec = Number.NaN;
+      monitorLastAppliedAtMs = 0;
+      stopMonitorFrameLoop();
       try { monitorVideo.pause(); } catch {}
       clearMonitorImageSource();
       setMonitorStageState("empty", { isGap: true, emptyText: "" });
       applyMonitorHeadFeedback(
         "No visual clip at playhead.",
-        `${modeLabel} · ${Number(playheadSec || 0).toFixed(2)}s`,
+        `${modeLabel} · ${Number(playheadSec || 0).toFixed(2)}s${
+          monitorDebugEnabled
+            ? ` · clock ${monitorTransportClockKind || "none"} · drift ${(Number(transport?.driftSec || 0)).toFixed(3)}s`
+            : ""
+        }`,
         "neutral"
       );
       monitorPanel.classList.remove("is-selection-solo", "is-selection-group");
       applySelectedPlacementTransformFromStore();
+      logTransportStressMonitor(
+        "monitor_gap",
+        {
+          playheadSec: Number(playheadSec || 0),
+          isPlaying: Boolean(isPlaying),
+          isScrubbing: Boolean(isScrubbing),
+          clockKind: String(monitorTransportClockKind || "none"),
+          driftSec: Number(transport?.driftSec || 0),
+        },
+        "monitor_gap",
+        120
+      );
       return;
     }
     const eventKey = `${selected.trackName}:${selected.clipId || selected.resourceId}:${selected.start.toFixed(4)}`;
@@ -5365,6 +5300,7 @@ export function renderLoopCompositionStudioView({
       : normalizeMediaSrcForCompare(monitorImage.src);
     const mediaKindChanged = monitorCurrentMediaKind !== String(selected.mediaKind || "video");
     const sourceChanged = normalizedMonitorSrc !== normalizedSelectedSrc;
+    const previousMonitorKey = String(monitorCurrentKey || "");
     monitorCurrentKey = eventKey;
     monitorCurrentMediaKind = String(selected.mediaKind || "video");
     monitorSelectedTrackName = String(selected.trackName || "");
@@ -5373,21 +5309,47 @@ export function renderLoopCompositionStudioView({
     monitorSelectedClipCount = selectedClipCount;
     monitorPanel.classList.toggle("is-selection-group", selectedClipCount > 1);
     monitorPanel.classList.toggle("is-selection-solo", selectedClipCount <= 1);
+    if (previousMonitorKey !== eventKey) {
+      logTransportStressMonitor(
+        "monitor_clip_change",
+        {
+          from: previousMonitorKey,
+          to: eventKey,
+          mediaKind: String(selected.mediaKind || "video"),
+          trackName: String(selected.trackName || ""),
+          clipId: String(selected.clipId || ""),
+          playheadSec: Number(playheadSec || 0),
+          localTimeSec: Number(localTime || 0),
+          isPlaying: Boolean(isPlaying),
+          isScrubbing: Boolean(isScrubbing),
+          clockKind: String(monitorTransportClockKind || "none"),
+          driftSec: Number(transport?.driftSec || 0),
+        },
+        "monitor_clip_change",
+        60
+      );
+    }
     if (monitorIsVideo) {
       clearMonitorImageSource();
       if (mediaKindChanged || sourceChanged) {
+        monitorLastAppliedLocalTimeSec = Number.NaN;
+        monitorLastAppliedAtMs = 0;
         monitorVideo.src = selected.src;
         try { monitorVideo.load(); } catch {}
         applyMonitorTransport();
       } else {
         applyMonitorTransport();
       }
+      scheduleMonitorFrameLoop();
     } else {
       try { monitorVideo.pause(); } catch {}
+      stopMonitorFrameLoop();
       if (mediaKindChanged) clearMonitorVideoSource();
       if (mediaKindChanged || sourceChanged) {
         monitorImage.src = selected.src;
       }
+      monitorLastAppliedLocalTimeSec = Number.NaN;
+      monitorLastAppliedAtMs = 0;
       monitorPendingPlay = false;
       monitorPendingScrub = false;
       monitorAllowAudio = false;
@@ -5398,6 +5360,10 @@ export function renderLoopCompositionStudioView({
       `${selected.trackName} · ${selected.label}${selectedClipCount > 1 ? ` · group ${selectedClipCount}` : ""}`,
       `${modeLabel} · clip ${selected.start.toFixed(2)}-${selected.end.toFixed(2)}s · local ${localTime.toFixed(2)}s${
         monitorAllowAudio ? " · monitor audio" : ""
+      }${
+        monitorDebugEnabled
+          ? ` · clock ${monitorTransportClockKind || "none"} · drift ${(Number(transport?.driftSec || 0)).toFixed(3)}s`
+          : ""
       }`,
       "neutral"
     );
